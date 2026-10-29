@@ -1,0 +1,216 @@
+namespace Bdxl;
+
+/// <summary>
+/// Password rules for encrypting files: at least 12 characters and at least 3 of the 4 classes
+/// lowercase / uppercase / digit / special character.
+/// </summary>
+public static class PasswordPolicy
+{
+    public const int MinLength = 12;
+
+    public static bool Check(string password, out string problem)
+    {
+        if (password.Length < MinLength)
+        {
+            problem = $"The password must be at least {MinLength} characters long (it has {password.Length}).";
+            return false;
+        }
+
+        int classes = 0;
+        if (password.Any(char.IsLower)) classes++;
+        if (password.Any(char.IsUpper)) classes++;
+        if (password.Any(char.IsDigit)) classes++;
+        if (password.Any(ch => !char.IsLetterOrDigit(ch))) classes++;
+        if (classes < 3)
+        {
+            problem = "The password must use at least 3 of: lowercase letters, uppercase letters, digits, special characters.";
+            return false;
+        }
+        problem = "";
+        return true;
+    }
+}
+
+/// <summary>Derives (and remembers) the AES key for a password + salt, so thousands of files do not each pay for PBKDF2.</summary>
+public sealed class KeyCache
+{
+    readonly string password;
+    readonly Dictionary<string, byte[]> keys = new();
+
+    public KeyCache(string password) { this.password = password; }
+
+    public byte[] GetKey(byte[] salt, int iterations)
+    {
+        string id = Convert.ToHexString(salt) + ":" + iterations;
+        if (!keys.TryGetValue(id, out var key))
+        {
+            key = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, 32);
+            keys[id] = key;
+        }
+        return key;
+    }
+}
+
+/// <summary>
+/// File format "BDXLENC1" (no compression, no archive - one encrypted file per original file):
+///   magic(8) | PBKDF2 iterations (int32) | salt(16) | nonce prefix(8) |
+///   chunks: length(uint32) | AES-256-GCM ciphertext(length) | tag(16)
+/// Chunks are 1 MiB of plaintext. The nonce is prefix + chunk number; the chunk number and a "last chunk" flag are
+/// authenticated, so reordering, cutting off or extending a file is detected as well as a wrong password.
+/// </summary>
+public static class FileCrypto
+{
+    public const string Suffix = ".enc";
+    const string Magic = "BDXLENC1";
+    const int ChunkSize = 1 << 20;
+    const int TagSize = 16;
+    public const int DefaultIterations = 600_000;
+
+    public static byte[] NewSalt() => RandomNumberGenerator.GetBytes(16);
+
+    static byte[] Nonce(byte[] prefix, uint counter)
+    {
+        var nonce = new byte[12];
+        Buffer.BlockCopy(prefix, 0, nonce, 0, 8);
+        BitConverter.GetBytes(counter).CopyTo(nonce, 8);
+        return nonce;
+    }
+
+    static byte[] Aad(uint counter, bool last)
+    {
+        var aad = new byte[5];
+        BitConverter.GetBytes(counter).CopyTo(aad, 0);
+        aad[4] = last ? (byte)1 : (byte)0;
+        return aad;
+    }
+
+    static int ReadFull(Stream s, byte[] buffer, int count)
+    {
+        int total = 0;
+        while (total < count)
+        {
+            int n = s.Read(buffer, total, count - total);
+            if (n == 0) break;
+            total += n;
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// Encrypts src (or length bytes from offset - one part of a split file) into dst (which must not exist).
+    /// Returns the SHA-256 of the PLAINTEXT that was read. length -1 = to the end.
+    /// </summary>
+    public static string Encrypt(string srcPath, string dstPath, KeyCache keys, byte[] salt, long offset = 0, long length = -1)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
+        using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
+        using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
+        using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        input.Seek(offset, SeekOrigin.Begin);
+        long remaining = length < 0 ? long.MaxValue : length;
+        int ReadNext(byte[] buffer)
+        {
+            int got = ReadFull(input, buffer, (int)Math.Min(ChunkSize, remaining));
+            remaining -= got;
+            return got;
+        }
+
+        byte[] key = keys.GetKey(salt, DefaultIterations);
+        byte[] prefix = RandomNumberGenerator.GetBytes(8);
+        output.Write(Encoding.ASCII.GetBytes(Magic));
+        output.Write(BitConverter.GetBytes(DefaultIterations));
+        output.Write(salt);
+        output.Write(prefix);
+
+        using var aes = new AesGcm(key, TagSize);
+        var current = new byte[ChunkSize];
+        var next = new byte[ChunkSize];
+        int currentLen = ReadNext(current);
+        uint counter = 0;
+
+        while (true)
+        {
+            // only a full chunk can be followed by more data; read ahead so we know which chunk is the last one
+            int nextLen = currentLen == ChunkSize ? ReadNext(next) : 0;
+            bool last = nextLen == 0;
+
+            plainHash.AppendData(current, 0, currentLen);
+            var cipher = new byte[currentLen];
+            var tag = new byte[TagSize];
+            aes.Encrypt(Nonce(prefix, counter), current.AsSpan(0, currentLen), cipher, tag, Aad(counter, last));
+            output.Write(BitConverter.GetBytes((uint)currentLen));
+            output.Write(cipher);
+            output.Write(tag);
+
+            if (last) break;
+            (current, next) = (next, current);
+            currentLen = nextLen;
+            counter++;
+        }
+        return Convert.ToHexString(plainHash.GetHashAndReset());
+    }
+
+    /// <summary>Decrypts src into dst (which must not exist). Returns the SHA-256 of the plaintext. Throws InvalidDataException on a wrong password or damage.</summary>
+    public static string Decrypt(string srcPath, string dstPath, KeyCache keys)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
+        using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
+        using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
+        using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+        var header = new byte[8 + 4 + 16 + 8];
+        if (ReadFull(input, header, header.Length) != header.Length || Encoding.ASCII.GetString(header, 0, 8) != Magic)
+            throw new InvalidDataException("not a bdxl-encrypted file");
+        int iterations = BitConverter.ToInt32(header, 8);
+        if (iterations < 1000 || iterations > 100_000_000) throw new InvalidDataException("unreasonable key-derivation settings in the header");
+        var salt = header.AsSpan(12, 16).ToArray();
+        var prefix = header.AsSpan(28, 8).ToArray();
+
+        using var aes = new AesGcm(keys.GetKey(salt, iterations), TagSize);
+        var lengthBytes = new byte[4];
+        var tag = new byte[TagSize];
+        uint counter = 0;
+
+        while (true)
+        {
+            if (ReadFull(input, lengthBytes, 4) != 4) throw new InvalidDataException("file is truncated");
+            uint length = BitConverter.ToUInt32(lengthBytes, 0);
+            if (length > ChunkSize) throw new InvalidDataException("corrupt chunk length");
+
+            var cipher = new byte[length];
+            if (ReadFull(input, cipher, (int)length) != (int)length || ReadFull(input, tag, TagSize) != TagSize)
+                throw new InvalidDataException("file is truncated");
+            bool last = input.Position == input.Length;
+
+            var plain = new byte[length];
+            try
+            {
+                aes.Decrypt(Nonce(prefix, counter), cipher, tag, plain, Aad(counter, last));
+            }
+            catch (CryptographicException)
+            {
+                throw new InvalidDataException("wrong password, or the file is damaged");
+            }
+            plainHash.AppendData(plain);
+            output.Write(plain);
+
+            if (last) break;
+            counter++;
+        }
+        return Convert.ToHexString(plainHash.GetHashAndReset());
+    }
+
+    /// <summary>Bytes an encrypted copy of a file of this size occupies on the disc (header + 20 bytes per chunk).</summary>
+    public static long StoredSize(long plainSize)
+    {
+        long chunks = Math.Max(1, (plainSize + ChunkSize - 1) / ChunkSize);
+        return 36 + plainSize + chunks * (4 + TagSize);
+    }
+
+    /// <summary>Largest plaintext whose encrypted copy still fits in storedSize bytes (the inverse of StoredSize).</summary>
+    public static long MaxPlainSize(long storedSize)
+    {
+        long plain = storedSize - 36 - Math.Max(1, (storedSize + ChunkSize - 1) / ChunkSize) * (4 + TagSize);
+        return Math.Max(0, plain);
+    }
+}
