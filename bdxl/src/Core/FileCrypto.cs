@@ -100,13 +100,14 @@ public static class FileCrypto
     /// Encrypts src (or length bytes from offset - one part of a split file) into dst (which must not exist).
     /// Returns the SHA-256 of the PLAINTEXT that was read. length -1 = to the end.
     /// </summary>
-    public static string Encrypt(string srcPath, string dstPath, KeyCache keys, byte[] salt, long offset = 0, long length = -1)
+    public static string Encrypt(string srcPath, string dstPath, KeyCache keys, byte[] salt, long offset = 0, long length = -1,
+                                 CancellationToken ct = default)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
         using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
         using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
         input.Seek(offset, SeekOrigin.Begin);
-        return Encrypt(input, output, keys, salt, length);
+        return Encrypt(input, output, keys, salt, length, ct);
     }
 
     /// <summary>Encrypts small metadata (manifest, catalog backup) without its plaintext ever touching a disk.</summary>
@@ -118,7 +119,7 @@ public static class FileCrypto
     }
 
     /// <summary>Encrypts length bytes (-1 = to the end) from the current position of input. Returns the plaintext's SHA-256.</summary>
-    public static string Encrypt(Stream input, Stream output, KeyCache keys, byte[] salt, long length = -1)
+    public static string Encrypt(Stream input, Stream output, KeyCache keys, byte[] salt, long length = -1, CancellationToken ct = default)
     {
         using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long remaining = length < 0 ? long.MaxValue : length;
@@ -144,6 +145,7 @@ public static class FileCrypto
 
         while (true)
         {
+            ct.ThrowIfCancellationRequested();
             // only a full chunk can be followed by more data; read ahead so we know which chunk is the last one
             int nextLen = currentLen == ChunkSize ? ReadNext(next) : 0;
             bool last = nextLen == 0;
@@ -165,12 +167,12 @@ public static class FileCrypto
     }
 
     /// <summary>Decrypts src into dst (which must not exist). Returns the SHA-256 of the plaintext. Throws InvalidDataException on a wrong password or damage.</summary>
-    public static string Decrypt(string srcPath, string dstPath, KeyCache keys)
+    public static string Decrypt(string srcPath, string dstPath, KeyCache keys, CancellationToken ct = default)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
         using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
         using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
-        return Decrypt(input, output, keys);
+        return Decrypt(input, output, keys, firstChunkOnly: false, ct);
     }
 
     /// <summary>Decrypts small metadata in memory. Throws InvalidDataException on a wrong password or damage.</summary>
@@ -182,7 +184,8 @@ public static class FileCrypto
     }
 
     /// <summary>Decrypts a whole BDXLENC1 stream (input must be seekable: the last chunk is recognised by its position).</summary>
-    public static string Decrypt(Stream input, Stream output, KeyCache keys) => Decrypt(input, output, keys, firstChunkOnly: false);
+    public static string Decrypt(Stream input, Stream output, KeyCache keys, CancellationToken ct = default) =>
+        Decrypt(input, output, keys, firstChunkOnly: false, ct);
 
     /// <summary>True if the password opens this encrypted file (only its first chunk is decrypted, so this is quick).</summary>
     public static bool OpensWith(string path, KeyCache keys)
@@ -190,13 +193,13 @@ public static class FileCrypto
         try
         {
             using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            Decrypt(input, Stream.Null, keys, firstChunkOnly: true);
+            Decrypt(input, Stream.Null, keys, firstChunkOnly: true, CancellationToken.None);
             return true;
         }
         catch (InvalidDataException) { return false; }
     }
 
-    static string Decrypt(Stream input, Stream output, KeyCache keys, bool firstChunkOnly)
+    static string Decrypt(Stream input, Stream output, KeyCache keys, bool firstChunkOnly, CancellationToken ct)
     {
         using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
@@ -215,6 +218,7 @@ public static class FileCrypto
 
         while (true)
         {
+            ct.ThrowIfCancellationRequested();
             if (ReadFull(input, lengthBytes, 4) != 4) throw new InvalidDataException("file is truncated");
             uint length = BitConverter.ToUInt32(lengthBytes, 0);
             if (length > ChunkSize) throw new InvalidDataException("corrupt chunk length");

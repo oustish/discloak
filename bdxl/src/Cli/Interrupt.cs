@@ -15,12 +15,23 @@ public static class Interrupt
     static int critical;
     static string command = "";
     static volatile bool requested;
+    static CancellationTokenSource source = new();
 
     /// <summary>Set once Ctrl+C was pressed; interruptible commands check it at safe points.</summary>
     public static bool Requested => requested;
 
+    /// <summary>Cancelled together with Requested: long copies, hashes and decryptions stop mid-file (OperationCanceledException).</summary>
+    public static CancellationToken Token { get { lock (gate) return source.Token; } }
+
     /// <summary>Asks an interruptible command to stop, as the first Ctrl+C does.</summary>
-    public static void Request() => requested = true;
+    public static void Request()
+    {
+        lock (gate)
+        {
+            requested = true;
+            source.Cancel();
+        }
+    }
 
     public static void Begin(ICommand cmd)
     {
@@ -37,7 +48,13 @@ public static class Interrupt
     /// <summary>Back to the idle state after a command (several commands can run in one process, e.g. in tests).</summary>
     public static void End()
     {
-        lock (gate) { requested = false; cooperative = false; command = ""; }
+        lock (gate)
+        {
+            requested = false;
+            cooperative = false;
+            command = "";
+            if (source.IsCancellationRequested) source = new CancellationTokenSource();
+        }
     }
 
     /// <summary>A stretch of work that must not be cut in half (writing the catalog files).</summary>
@@ -75,6 +92,7 @@ public static class Interrupt
             if (cooperative && !requested)
             {
                 requested = true;
+                source.Cancel();
                 Console.Error.WriteLine($"\nInterrupting '{command}': finishing the current step and saving. Press Ctrl+C again to stop at once.");
                 return;
             }

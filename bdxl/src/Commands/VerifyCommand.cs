@@ -6,10 +6,12 @@ public sealed class VerifyCommand : ICommand
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Re-read a disc and compare it with the catalog";
     public string Usage => "verify <label> <mountedDiscPath> [--deep] [--password-env VAR]";
+    public bool Interruptible => true;
     public string Details => """
         Hashes every file on the disc. Encrypted files are checked against the hash of the stored file, so no
         password is needed; --deep decrypts them as well and compares the original content.
         Entries recorded by 'scandisc' without hashing are marked 'unverified' until this has run.
+        Ctrl+C stops after the file being read and reports what was checked so far.
         """;
 
     public int Run(Ctx c)
@@ -25,8 +27,11 @@ public sealed class VerifyCommand : ICommand
         var items = c.Cat.Files.SelectMany(rec => rec.Backups.Where(bk => bk.Disc == disc.Label))
             .GroupBy(bk => bk.DiscPath, StringComparer.Ordinal).Select(g => g.First()).ToList();
 
+        int finished = 0;   // files fully checked, whatever the outcome
         foreach (var bk in items)
         {
+            if (Interrupt.Requested) break;
+            finished++;
             string p = Path.Combine(mount, bk.DiscPath);
             if (!File.Exists(p)) { Console.WriteLine($"MISSING  {bk.DiscPath}"); miss++; continue; }
 
@@ -37,11 +42,16 @@ public sealed class VerifyCommand : ICommand
                 Console.WriteLine($"UNCHECKED {bk.DiscPath}  (no stored hash recorded; use --deep to decrypt and compare)");
                 unchecked_++;
             }
-            else if (!Hashing.SameHash(Hashing.HashFile(p), expected))
+            else
             {
-                Console.WriteLine($"CORRUPT  {bk.DiscPath}");
-                bad++;
-                continue;
+                string got = HashOrStop(p);
+                if (Interrupt.Requested) { finished--; break; }   // cut off in the middle: not judged
+                if (!Hashing.SameHash(got, expected))
+                {
+                    Console.WriteLine($"CORRUPT  {bk.DiscPath}");
+                    bad++;
+                    continue;
+                }
             }
 
             if (deep && bk.Encrypted)
@@ -49,6 +59,7 @@ public sealed class VerifyCommand : ICommand
                 keys ??= new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: false));
                 if (!DeepCheck(p, bk, keys)) { bad++; continue; }
             }
+            if (deep && bk.Encrypted && Interrupt.Requested) { finished--; break; }   // decrypting was cut off: not judged
 
             if (expected.Length > 0 || deep)
             {
@@ -63,7 +74,19 @@ public sealed class VerifyCommand : ICommand
 
         Console.WriteLine($"\n{disc.Label}: {ok} OK, {bad} corrupt, {miss} missing, {unchecked_} unchecked (of {items.Count}).");
         if (changed) c.Cat.Save();   // a plain re-check changes nothing and should not use up a history slot
+        if (Interrupt.Requested)
+        {
+            Console.WriteLine($"Stopped by Ctrl+C: {items.Count - finished:N0} of {items.Count:N0} file(s) were not checked.");
+            return Interrupt.ExitCode;
+        }
         return bad + miss == 0 ? 0 : 3;
+    }
+
+    // "" when Ctrl+C cut the hash off; the caller stops right after it
+    static string HashOrStop(string path)
+    {
+        try { return Hashing.HashFile(path, Interrupt.Token); }
+        catch (OperationCanceledException) { return ""; }
     }
 
     static bool DeepCheck(string storedPath, BackupRef bk, KeyCache keys)
@@ -71,7 +94,7 @@ public sealed class VerifyCommand : ICommand
         string tempDir = Path.Combine(Path.GetTempPath(), "bdxl-" + Guid.NewGuid().ToString("N"));
         try
         {
-            string plain = FileCrypto.Decrypt(storedPath, Path.Combine(tempDir, "x"), keys);
+            string plain = FileCrypto.Decrypt(storedPath, Path.Combine(tempDir, "x"), keys, Interrupt.Token);
             if (Hashing.SameHash(plain, bk.ContentSha256)) return true;
             Console.WriteLine($"CORRUPT  {bk.DiscPath}  (decrypts, but the content differs from the catalog)");
             return false;
@@ -80,6 +103,10 @@ public sealed class VerifyCommand : ICommand
         {
             Console.WriteLine($"CORRUPT  {bk.DiscPath}  ({ex.Message})");
             return false;
+        }
+        catch (OperationCanceledException)
+        {
+            return true;   // not judged: the loop stops right after it
         }
         finally
         {

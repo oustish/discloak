@@ -27,13 +27,16 @@ public static class Hashing
         return Convert.ToHexString(sha.GetHashAndReset());
     }
 
+    /// <summary>The same, stopping with OperationCanceledException when ct is cancelled (checked every block).</summary>
+    public static string HashFile(string path, CancellationToken ct) => HashFile(path, _ => ct.ThrowIfCancellationRequested());
+
     public static string HashBytes(byte[] data) => Convert.ToHexString(SHA256.HashData(data));
 
     /// <summary>
     /// Copies a file (or length bytes from offset - one part of a split file) and hashes the bytes that were actually
-    /// written, in a single pass. Fails if dst exists. length -1 = to the end.
+    /// written, in a single pass. Fails if dst exists. length -1 = to the end. ct is checked every block.
     /// </summary>
-    public static string CopyAndHash(string src, string dst, long offset = 0, long length = -1)
+    public static string CopyAndHash(string src, string dst, long offset = 0, long length = -1, CancellationToken ct = default)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
         using var input = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.SequentialScan);
@@ -45,6 +48,7 @@ public static class Hashing
         int n;
         while (remaining > 0 && (n = input.Read(buf, 0, (int)Math.Min(buf.Length, remaining))) > 0)
         {
+            ct.ThrowIfCancellationRequested();
             hash.AppendData(buf, 0, n);
             output.Write(buf, 0, n);
             remaining -= n;

@@ -6,10 +6,13 @@ public sealed class RestoreCommand : ICommand
     public string Group => CommandGroup.Recovery;
     public string Summary => "Copy files back from mounted discs into a folder";
     public string Usage => "restore <destDir> <text|hashPrefix|*> --mount F:\\;G:\\ [--disc label] [--source alias] [--flat] [--overwrite]";
+    public bool Interruptible => true;
     public string Details => """
         Finds the files in the catalog, tells you which discs it needs, and copies them from the discs you mounted.
         Discs are recognised by disc.json (or --disc for a single mount). Every file is verified by hash; encrypted
         files are decrypted (password from BDXL_PASSWORD or typed). Layout: <destDir>/<alias>/<path>, or --flat.
+        Ctrl+C stops after the file being copied (that one is removed; parts of split files already verified are
+        kept) and lists what is left; running the same command again continues (restored files show as EXISTS).
         """;
 
     /// <summary>Copies files back from mounted discs. Layout under destDir: source alias/relative path (or --flat).</summary>
@@ -60,13 +63,16 @@ public sealed class RestoreCommand : ICommand
         // copies (or decrypts) one stored file to dst; returns the plaintext hash
         string Fetch(BackupRef copy, string src, string dst)
         {
-            if (!copy.Encrypted) return Hashing.CopyAndHash(src, dst);
+            if (!copy.Encrypted) return Hashing.CopyAndHash(src, dst, ct: Interrupt.Token);
             keys ??= new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: false));
-            return FileCrypto.Decrypt(src, dst, keys);
+            return FileCrypto.Decrypt(src, dst, keys, Interrupt.Token);
         }
 
+        int handled = 0;
         foreach (var (f, copy) in jobs.OrderBy(j => j.Copy[0].Disc, StringComparer.Ordinal).ThenBy(j => j.Copy[0].DiscPath, StringComparer.Ordinal))
         {
+            if (Interrupt.Requested) break;
+            handled++;
             string rel = flat ? Path.GetFileName(f.RelPath) : f.RootName + "/" + f.RelPath;
             string target = Path.GetFullPath(Path.Combine(dest, rel));
             if (!target.StartsWith(destPrefix, StringComparison.OrdinalIgnoreCase))
@@ -149,7 +155,12 @@ public sealed class RestoreCommand : ICommand
                     {
                         using var input = File.OpenRead(h);
                         int n;
-                        while ((n = input.Read(buf, 0, buf.Length)) > 0) { hash.AppendData(buf, 0, n); output.Write(buf, 0, n); }
+                        while ((n = input.Read(buf, 0, buf.Length)) > 0)
+                        {
+                            Interrupt.Token.ThrowIfCancellationRequested();
+                            hash.AppendData(buf, 0, n);
+                            output.Write(buf, 0, n);
+                        }
                     }
                     joinedHash = Convert.ToHexString(hash.GetHashAndReset());
                 }
@@ -166,6 +177,13 @@ public sealed class RestoreCommand : ICommand
                 foreach (string h in held) File.Delete(h);
                 done++;
                 Console.WriteLine($"restored {rel}  (joined {copy.Count} parts)");
+            }
+            catch (OperationCanceledException)
+            {
+                if (inProgress != null && File.Exists(inProgress)) File.Delete(inProgress);
+                Console.WriteLine($"STOPPED  {rel}  (Ctrl+C, not restored)");
+                handled--;
+                break;
             }
             catch (InvalidDataException ex)
             {
@@ -184,6 +202,12 @@ public sealed class RestoreCommand : ICommand
 
         Console.WriteLine($"\n{done:N0} restored, {skipped:N0} skipped (already exist), {failed:N0} failed" +
                           (waiting > 0 ? $", {waiting:N0} waiting for more parts." : "."));
+        if (Interrupt.Requested)
+        {
+            Console.WriteLine($"Stopped by Ctrl+C: {jobs.Count - handled:N0} file(s) were not looked at. Run the same command again to continue " +
+                              "(files already restored show as EXISTS).");
+            return Interrupt.ExitCode;
+        }
         if (needDiscs.Count > 0)
         {
             Console.WriteLine("Insert / mount these discs and run the same command again with --mount:");

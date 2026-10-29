@@ -6,6 +6,7 @@ public sealed class ScanDiscCommand : ICommand
     public string Group => CommandGroup.ExistingDiscs;
     public string Summary => "Record an already burned disc in the catalog";
     public string Usage => "scandisc <mountPath> [--label L] [--method auto|manifest|hash|quick] [--date D] [--capacity S] [--cost P] [--update] [--dry-run] [--write-disc-json]";
+    public bool Interruptible => true;
     public string Details => """
         Reads a mounted disc (or a folder laid out like one) and links its files to the catalog.
           --method manifest  trust the disc's manifest (fast; entries stay 'unverified' until 'verify'). An encrypted
@@ -18,6 +19,7 @@ public sealed class ScanDiscCommand : ICommand
         Files the catalog does not know yet get new entries. --update merges into a disc already in the catalog.
         --write-disc-json writes disc.json (+ manifest.jsonl) onto the disc if it can still be written to
         (open session / not finalized); otherwise the label is recorded in the catalog only.
+        Ctrl+C while hashing stops without recording anything (the catalog stays unchanged).
         """;
 
     /// <summary>
@@ -100,9 +102,17 @@ public sealed class ScanDiscCommand : ICommand
         {
             foreach (var f in onDisc)
             {
+                if (Interrupt.Requested) break;
                 Console.WriteLine($"hashing {f.Path} ({SizeText.Bytes(f.Size)} bytes)");
-                try { found.Add(new DiscFile(f.Path, f.Size, f.Mtime, Hashing.HashFile(Path.Combine(mount, f.Path)), false)); }
+                try { found.Add(new DiscFile(f.Path, f.Size, f.Mtime, Hashing.HashFile(Path.Combine(mount, f.Path), Interrupt.Token), false)); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { problems.Add($"{f.Path}: {ex.Message}"); }
+                catch (OperationCanceledException) { break; }
+            }
+            if (Interrupt.Requested)   // a disc recorded with only some of its files would look complete
+            {
+                Console.WriteLine($"\nStopped by Ctrl+C after hashing {found.Count:N0} of {onDisc.Count:N0} file(s). Nothing was recorded; " +
+                                  "the catalog is unchanged. Run scandisc again to read the whole disc.");
+                return Interrupt.ExitCode;
             }
             if (onDisc.Any(f => f.Path.EndsWith(FileCrypto.Suffix, StringComparison.OrdinalIgnoreCase)))
                 Console.WriteLine("Note: *.enc files look encrypted; hashing cannot see their original content. Use the disc's manifest (--method manifest) to link them to known files.");

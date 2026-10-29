@@ -18,7 +18,7 @@
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 152 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 154 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -47,7 +47,11 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 2. Add `new FooCommand()` to `CommandTable.All` where it should appear in `bdxl help`.
 3. New boolean options go into `Options.Flags`.
 4. A long-running command that can stop cleanly: `Interruptible => true`, check `Interrupt.Requested` at safe points,
-   save, say what was left undone and return `Interrupt.ExitCode`. Only `scan` does so far.
+   save, say what was left undone and return `Interrupt.ExitCode`. Long copies/hashes/decryptions take
+   `Interrupt.Token` (checked every 1 MiB, throws OperationCanceledException). Interruptible now: scan, stage,
+   restage, restore, verify, scandisc. On Ctrl+C: `stage` finishes the current disc/session with what was copied;
+   `restage` keeps `<label>.partial` (reuse with --from), catalog unchanged; `restore` stops after the file;
+   `verify` reports what was checked; `scandisc --method hash` records nothing.
 
 Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --with-catalog` calls `CatalogCommand.WriteBackup`;
 `stage`/`restage` write `DiscFiles.Write`, `scandisc`/`discjson` use `DiscFiles.TryWriteDiscJson`.
@@ -145,7 +149,7 @@ Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below
 | `ArchiveTests` | `CompleteCopy` (layouts never mix), dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
 | `FileCryptoTests` | round trips around chunk boundaries, byte ranges, wrong password, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy, key check, `OpensWith` |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
-| `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes (own non-parallel collection: `Interrupt` is process-wide) |
+| `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done (own non-parallel collection: `Interrupt` is process-wide) |
 | `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |

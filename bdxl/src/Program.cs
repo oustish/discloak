@@ -17,6 +17,11 @@ public static class Program
             Console.Error.WriteLine("Error: " + ex.Message);
             return 1;
         }
+        catch (OperationCanceledException)   // an interruptible command that did not handle its own stop
+        {
+            Console.Error.WriteLine("\nINTERRUPTED: stopped by Ctrl+C before it finished. The catalog is as it was after its last save.");
+            return Interrupt.ExitCode;
+        }
     }
 
     static int Run(string[] argv)

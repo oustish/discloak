@@ -6,6 +6,7 @@ public sealed class StageCommand : ICommand
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
     public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--password-env VAR] [--split] [--with-catalog] [--append <label> [--mount <path>]]";
+    public bool Interruptible => true;
     public string Details => """
         Creates <destDir>/<label>/ for each disc, copying files as they are (no archive, no compression) and checking
         every copy against its hash. Also writes a manifest and disc.json so the disc describes itself.
@@ -37,6 +38,8 @@ public sealed class StageCommand : ICommand
                            reports is used if it is smaller, and an encrypted disc without a password check value in
                            the catalog has its password checked against the disc.
         Labels are <prefix><counter>, e.g. BDXL-0007 (see 'settings').
+        Ctrl+C stops after the file being copied (that one is removed): the disc (or session) is finished with the
+        files copied so far - a complete, smaller folder you can burn or 'discard' - and no further disc is started.
         """;
 
     public int Run(Ctx c)
@@ -81,8 +84,9 @@ public sealed class StageCommand : ICommand
         }
 
         int overfull = 0;
-        foreach (var bin in chosen)
+        for (int n = 0; n < chosen.Count; n++)
         {
+            var bin = chosen[n];
             string label = c.Arc.NextLabel();
             string dir = Path.Combine(destDir, label);
             if (Directory.Exists(dir)) throw new UserException($"Folder already exists: {dir}");
@@ -96,12 +100,15 @@ public sealed class StageCommand : ICommand
             byte[]? salt = encrypt ? FileCrypto.NewSalt() : null;
             int hidden = 0;
             var manifest = StorePieces(disc, dir, bin.Pieces, p => encrypt ? DiscFiles.HiddenName(++hidden) : p.Name, keys, salt);
+            bool cutShort = Interrupt.Requested;
+            int notStarted = chosen.Count - n - 1;
 
             if (disc.FileCount == 0)
             {
                 c.Cat.Discs.Remove(disc);
                 if (Directory.Exists(dir)) Directory.Delete(dir, true);
                 Console.WriteLine($"{label}: nothing could be staged.");
+                if (cutShort) return Stopped($"Nothing was staged on {label}.", notStarted + 1);
                 continue;
             }
 
@@ -118,6 +125,13 @@ public sealed class StageCommand : ICommand
                                   $"then 'discard {label}' and stage again.");
                 overfull++;
             }
+
+            if (Interrupt.Requested)
+                return Stopped(cutShort
+                    ? $"{label} holds {disc.FileCount:N0} of its {bin.Pieces.Count:N0} planned files ({SizeText.Bytes(disc.UsedBytes)} of " +
+                      $"{SizeText.Bytes(bin.Used)} bytes); its folder is complete for what it holds. Burn it as it is, or " +
+                      $"'discard {label}' and stage again to fill it."
+                    : $"{label} is complete.", notStarted);
         }
 
         Console.WriteLine("\nBurn each staged folder, then run:  burned <label>   (and optionally: verify <label> <mountPath>)");
@@ -176,6 +190,7 @@ public sealed class StageCommand : ICommand
         disc.PendingAppend = session;
         disc.Sessions = session.Number;
         StorePieces(disc, dir, bin.Pieces, p => disc.Encrypted ? DiscFiles.HiddenName(++hidden) : FreeName(p, taken), keys, salt);
+        bool cutShort = Interrupt.Requested;
 
         if (disc.FileCount == session.FileCountBefore)
         {
@@ -183,7 +198,7 @@ public sealed class StageCommand : ICommand
             disc.Sessions = session.Number - 1;
             if (Directory.Exists(dir)) Directory.Delete(dir, true);
             Console.WriteLine($"{disc.Label}: nothing could be staged.");
-            return 2;
+            return cutShort ? Stopped($"Nothing was staged for {disc.Label}.", 0) : 2;
         }
 
         // the new manifest replaces the old one on the disc, so it lists every file, old and new
@@ -203,6 +218,10 @@ public sealed class StageCommand : ICommand
                               "(without --with-catalog if the catalog backup does not fit into the reserve).");
             return 2;
         }
+        if (cutShort)
+            return Stopped($"Session {session.Number} holds {disc.FileCount - session.FileCountBefore:N0} of its {bin.Pieces.Count:N0} planned " +
+                           "files; its folder is complete for what it holds. Burn it as it is (see below), or " +
+                           $"'discard {disc.Label}' and append again.\n\nBurn the folder onto {disc.Label} as its next session, then run:  burned {disc.Label}", 0);
         Console.WriteLine($"\nBurn the folder onto {disc.Label} as its next session - the burning program must continue the disc's " +
                           $"file system (multisession / import previous session) - then run:  burned {disc.Label}");
         return 0;
@@ -220,6 +239,7 @@ public sealed class StageCommand : ICommand
         var manifest = new List<ManifestLine>();
         foreach (var p in pieces)
         {
+            if (Interrupt.Requested) break;
             var f = p.File;
             string storedPath = storedPathFor(p);
             string src = Path.Combine(f.Root, f.RelPath);
@@ -237,8 +257,14 @@ public sealed class StageCommand : ICommand
             string plainHash;
             try
             {
-                plainHash = encrypt ? FileCrypto.Encrypt(src, dst, keys!, salt!, p.Offset, p.Length)
-                                    : Hashing.CopyAndHash(src, dst, p.Offset, p.Length);
+                plainHash = encrypt ? FileCrypto.Encrypt(src, dst, keys!, salt!, p.Offset, p.Length, Interrupt.Token)
+                                    : Hashing.CopyAndHash(src, dst, p.Offset, p.Length, Interrupt.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (File.Exists(dst)) File.Delete(dst);
+                Console.WriteLine("  stopped (Ctrl+C) - not staged");
+                break;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -312,6 +338,12 @@ public sealed class StageCommand : ICommand
         for (int n = 2; taken.Contains(name); n++) name = $"{path[..^ext.Length]}~{n}{ext}{suffix}";
         taken.Add(name);
         return name;
+    }
+
+    static int Stopped(string what, int notStarted)
+    {
+        Console.WriteLine($"\nStopped by Ctrl+C. {what}" + (notStarted > 0 ? $" {notStarted} more planned disc(s) were not started." : ""));
+        return Interrupt.ExitCode;
     }
 
     static bool SameAsScanned(string path, FileRecord f)
