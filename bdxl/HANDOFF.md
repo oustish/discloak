@@ -3,7 +3,7 @@
 ## Status
 - C# / .NET 10 console app (`net10.0`), 57 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
 - Builds cleanly (0 warnings). Smoke-tested by hand on 2026-10-29 in a temp folder: every command was run, including
-  encryption, tamper detection, lost/restage, catalog rollback, backup repair and scandisc. There are still no automated tests.
+  encryption, tamper detection, lost/restage, catalog rollback, backup repair and scandisc. Automated tests: `tests/Bdxl.Tests` (xUnit, see below).
 - Fixed during that smoke test: UTF-8 console output, `--date` stored one day early (local midnight to UTC), false
   "DATA LOST" for moved files (lost + status), `verify` writing a history snapshot even when nothing changed,
   `find`/`restore` not matching `alias/path` or on-disc names, restore listing ignored files as lost, and `stage`
@@ -14,6 +14,7 @@
 ## Build / run
 ```
 dotnet build -c Release
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 129 tests, about a second
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -84,17 +85,22 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - A folder that can't be read: files under it are not marked missing.
   - An unreachable location during a rescan of everything: skipped completely.
 
+## Tests (`tests/Bdxl.Tests`, xUnit, references `bdxl/Bdxl.csproj`)
+Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below its folder.
+| File | Covers |
+|---|---|
+| `GitIgnoreTests` | anchoring, `**`, `?`, classes, dir-only rules, negation, no re-include inside an ignored folder |
+| `PackerTests` | best-fit order, nothing dropped, never overfilled, stored size via `sizeOf`, determinism |
+| `SplitLayoutTests` | parts cover the file, suffixes, `PartSizeOf` from any part |
+| `ArchiveTests` | `CompleteCopy` (layouts never mix), dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
+| `FileCryptoTests` | round trips around chunk boundaries, byte ranges, wrong password, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy |
+| `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
+| `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
+| `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
+| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
+
 ## Suggested next steps
-1. Add a small test project (xUnit) with these tests:
-   - `GitIgnore`
-   - `Packer`
-   - `Rs` round trip
-   - `FileCrypto` round trip (including wrong password and truncated file)
-   - `Catalog` integrity and snapshots
-   - `Options` parsing
-2. Smoke test on a temporary folder: `blanks add` → `scan` → `plan` → `stage` (with and without `--encrypt`)
-   → `verify` against the staged folder → `burned` → `restore` → `lost` → `restage`.
-3. Ideas not built yet:
+Ideas not built yet:
    - `burn` command that runs an external burner from a configurable command template, then `verify` + `burned`.
    - ISO/UDF image creation by calling oscdimg / mkudffs (UDF 2.50 or later is needed for files over 4 GiB).
    - Encrypting the `_catalog` backup and the manifest on encrypted discs (file names are currently readable).
