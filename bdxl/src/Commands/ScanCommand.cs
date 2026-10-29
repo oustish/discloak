@@ -24,7 +24,8 @@ public sealed class ScanCommand : ICommand
         Files matching an ignore rule (see 'ignore') are added to the catalog and marked as ignored, but are not
         hashed and never staged.
         Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
-        files take long, their progress is printed every 10 seconds. The catalog is saved every 2 minutes.
+        files take long, a status line below shows how far they are (rewritten in place, not written when the output
+        is redirected). The catalog is saved every 2 minutes.
         """;
 
     sealed class WorkItem
@@ -40,7 +41,39 @@ public sealed class ScanCommand : ICommand
         public long BytesRead;                     // written by the hashing thread, read for progress
     }
 
-    static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(10);   // say something while large files keep every thread busy
+    static readonly TimeSpan StatusEvery = TimeSpan.FromSeconds(2);   // refresh of the status line while large files are hashed
+
+    /// <summary>
+    /// One line at the bottom of the console, rewritten in place (the files already done stay printed above it).
+    /// Nothing is written when the output goes to a file or pipe.
+    /// </summary>
+    sealed class StatusLine
+    {
+        readonly bool live = !Console.IsOutputRedirected;
+        int width;
+
+        public void Show(string text)
+        {
+            if (!live) return;
+            int max = Math.Max(20, WindowWidth() - 1);   // a wrapped line could not be overwritten
+            if (text.Length > max) text = text[..(max - 3)] + "...";
+            Console.Write("\r" + text.PadRight(width));
+            width = Math.Max(width, text.Length);
+        }
+
+        public void Clear()
+        {
+            if (width == 0) return;
+            Console.Write("\r" + new string(' ', width) + "\r");
+            width = 0;
+        }
+
+        static int WindowWidth()
+        {
+            try { return Console.WindowWidth > 0 ? Console.WindowWidth : 120; }
+            catch (IOException) { return 120; }
+        }
+    }
 
     sealed class Totals
     {
@@ -236,11 +269,14 @@ public sealed class ScanCommand : ICommand
         int done = 0;
         var added = new List<(int Index, FileRecord Rec)>();
         var clock = Stopwatch.StartNew();
+        var status = new StatusLine();
+        TimeSpan lastStatus = TimeSpan.Zero;
         DateTime lastSave = DateTime.UtcNow;
         while (!results.IsCompleted)
         {
-            if (results.TryTake(out var w, Heartbeat))
+            if (results.TryTake(out var w, TimeSpan.FromMilliseconds(500)))
             {
+                status.Clear();
                 done++;
                 doneBytes += w.Size;
                 if (w.Error != null)
@@ -272,11 +308,11 @@ public sealed class ScanCommand : ICommand
                     Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes)");
                 }
             }
-            else
+            if (clock.Elapsed - lastStatus >= StatusEvery && !active.IsEmpty)
             {
-                foreach (var a in active.Keys.OrderBy(a => a.Index))
-                    Console.WriteLine($"  ... {a.Rel}: {Percent(Volatile.Read(ref a.BytesRead), a.Size)} of {SizeText.Bytes(a.Size)} bytes " +
-                                      $"[{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}]");
+                status.Show($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] hashing " +
+                            string.Join(", ", active.Keys.OrderBy(a => a.Index).Select(a => $"{a.Rel} ({Percent(Volatile.Read(ref a.BytesRead), a.Size)})")));
+                lastStatus = clock.Elapsed;
             }
 
             if (DateTime.UtcNow - lastSave > TimeSpan.FromMinutes(2))   // don't lose hours of hashing on a crash
@@ -285,6 +321,7 @@ public sealed class ScanCommand : ICommand
                 lastSave = DateTime.UtcNow;
             }
         }
+        status.Clear();
         Task.WaitAll(workers);
 
         // new files were added in the order they finished: put them back in folder order, as with one thread

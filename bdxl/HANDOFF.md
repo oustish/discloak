@@ -13,7 +13,7 @@
 - Since then: one class per command (`ICommand`), one file per model type, xUnit tests, and encrypted discs hide
   everything but `disc.json`: file names, manifest and `_catalog` backup (see Key rules).
   Then `stage --append <label>`: a burned disc that is not full gets another session (see Key rules).
-  `scan` prints every file as soon as it is hashed (progress by bytes, speed, time left; heartbeat every 10 s).
+  `scan` prints every file as soon as it is hashed (progress by bytes, speed, time left), with a status line rewritten in place while large files are hashed.
 
 ## Build / run
 ```
