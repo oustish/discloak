@@ -1,7 +1,7 @@
 # bdxl – handoff notes (state as of 2026-10-29)
 
 ## Status
-- C# / .NET 10 console app (`net10.0`), 45 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
+- C# / .NET 10 console app (`net10.0`), 57 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
 - Builds cleanly (0 warnings). Smoke-tested by hand on 2026-10-29 in a temp folder: every command was run, including
   encryption, tamper detection, lost/restage, catalog rollback, backup repair and scandisc. There are still no automated tests.
 - Fixed during that smoke test: UTF-8 console output, `--date` stored one day early (local midnight to UTC), false
@@ -28,7 +28,7 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 | `src/Cli/ICommand.cs` | `ICommand`: `Name`, `Group` (a `CommandGroup` constant), `Summary`, `Usage`, `Details` (help text), `AllowBrokenCatalog` / `NeedsCatalog` (default false / true), `Run(Ctx)` |
 | `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
 | `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing) |
-| `src/Model/Models.cs` | `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `RepairMeta`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
+| `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
 | `src/Storage/Catalog.cs` | Load/Save, integrity (`catalog.hash.json`), snapshots in `history/`, rollback |
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
