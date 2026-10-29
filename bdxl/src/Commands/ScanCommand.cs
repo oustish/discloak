@@ -360,13 +360,13 @@ public sealed class ScanCommand : ICommand
 
     /// <summary>
     /// The files being hashed, as "path (34.6%)", in room characters: the room is shared equally, long paths are
-    /// shortened in the middle (start and file name stay), and if not all fit, the ones with the most left to hash are
+    /// shortened in the middle (start and file name stay), and if not all fit, the ones closest to finishing are
     /// shown, followed by "+N more".
     /// </summary>
     static string ActiveFiles(List<WorkItem> active, int room)
     {
         var items = active.Select(a => (a.Rel, Pct: Percent(Volatile.Read(ref a.BytesRead), a.Size), Left: a.Size - Volatile.Read(ref a.BytesRead)))
-                          .OrderByDescending(x => x.Left).ToList();
+                          .OrderBy(x => x.Left).ToList();
         string Label(string rel, string pct) => $"{rel} ({pct})";
         string all = string.Join(", ", items.Select(x => Label(x.Rel, x.Pct)));
         if (all.Length <= room || items.Count == 0) return all;
