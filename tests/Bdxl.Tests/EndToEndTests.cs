@@ -50,6 +50,20 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
+    public void Scanning_with_several_threads_gives_the_same_catalog_as_one_thread()
+    {
+        tmp.RandomFile("src/big.bin", 3_000_000, seed: 100);   // finishes last, while the others are hashed beside it
+        for (int i = 0; i < 40; i++) tmp.RandomFile($"src/d{i % 3}/f{i}.bin", 1_000 + i * 997, seed: i);
+
+        Assert.Equal(0, Program.Main(["scan", tmp.File("src"), "--name", "S", "--threads", "1", "--catalog", tmp.File("c1")]));
+        Assert.Equal(0, Program.Main(["scan", tmp.File("src"), "--name", "S", "--threads", "4", "--catalog", tmp.File("c4")]));
+
+        var one = Catalog.Load(tmp.File("c1"), "test").Files;
+        var four = Catalog.Load(tmp.File("c4"), "test").Files;
+        Assert.Equal(one.Select(f => (f.RelPath, f.Sha256, f.Size)), four.Select(f => (f.RelPath, f.Sha256, f.Size)));
+    }
+
+    [Fact]
     public void A_corrupted_disc_fails_verify()
     {
         tmp.RandomFile("src/a.bin", 100_000);

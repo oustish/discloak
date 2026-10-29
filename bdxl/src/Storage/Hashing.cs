@@ -10,6 +10,23 @@ public static class Hashing
         return Convert.ToHexString(SHA256.HashData(fs));
     }
 
+    /// <summary>The same, telling progress how many bytes were read so far after every block (progress of large files).</summary>
+    public static string HashFile(string path, Action<long> progress)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, BufferSize, FileOptions.SequentialScan);
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[BufferSize];
+        long read = 0;
+        int n;
+        while ((n = fs.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            sha.AppendData(buffer, 0, n);
+            read += n;
+            progress(read);
+        }
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
     public static string HashBytes(byte[] data) => Convert.ToHexString(SHA256.HashData(data));
 
     /// <summary>

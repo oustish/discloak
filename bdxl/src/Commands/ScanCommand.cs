@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+
 namespace Bdxl;
 
 /// <summary>scan [folder] [--name alias] [--threads N] [--full]  -  index files; without a folder every known location is rescanned.</summary>
@@ -20,10 +23,13 @@ public sealed class ScanCommand : ICommand
 
         Files matching an ignore rule (see 'ignore') are added to the catalog and marked as ignored, but are not
         hashed and never staged.
+        Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
+        files take long, their progress is printed every 10 seconds. The catalog is saved every 2 minutes.
         """;
 
     sealed class WorkItem
     {
+        public int Index;                          // position in the folder walk (keeps the catalog order deterministic)
         public string FullPath = "";
         public string Rel = "";
         public long Size;
@@ -31,7 +37,10 @@ public sealed class ScanCommand : ICommand
         public FileRecord? Rec;
         public string? Hash;
         public string? Error;
+        public long BytesRead;                     // written by the hashing thread, read for progress
     }
+
+    static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(10);   // say something while large files keep every thread busy
 
     sealed class Totals
     {
@@ -190,52 +199,84 @@ public sealed class ScanCommand : ICommand
                     t.Unchanged++;
                     continue;
                 }
-                work.Add(new WorkItem { FullPath = fi.FullName, Rel = rel, Size = size, Mtime = mtime, Rec = rec });
+                work.Add(new WorkItem { Index = work.Count, FullPath = fi.FullName, Rel = rel, Size = size, Mtime = mtime, Rec = rec });
             }
         }
 
-        // 2. hash in batches with the requested number of threads; apply results one batch at a time
-        int batchSize = Math.Max(16, threads * 4);
-        int done = 0;
-        DateTime lastSave = DateTime.UtcNow;
-        for (int start = 0; start < work.Count; start += batchSize)
+        // 2. hash with the requested number of threads, each taking the next file as soon as it is free; the results
+        //    are applied to the catalog (and printed) on this thread, one by one, in the order they finish
+        long totalBytes = work.Sum(w => w.Size), doneBytes = 0;
+        if (work.Count > 0)
+            Console.WriteLine($"  {work.Count:N0} file(s), {SizeText.Bytes(totalBytes)} bytes to hash");
+        var results = new BlockingCollection<WorkItem>();
+        var active = new ConcurrentDictionary<WorkItem, byte>();   // being hashed right now
+        int next = -1, running = threads;
+        var workers = work.Count == 0 ? [] : Enumerable.Range(0, threads).Select(worker => Task.Factory.StartNew(() =>
         {
-            var slice = work.GetRange(start, Math.Min(batchSize, work.Count - start));
-            Parallel.ForEach(slice, new ParallelOptions { MaxDegreeOfParallelism = threads }, w =>
+            try
             {
-                try { w.Hash = Hashing.HashFile(w.FullPath); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { w.Error = ex.Message; }
-            });
+                int i;
+                while ((i = Interlocked.Increment(ref next)) < work.Count)
+                {
+                    var w = work[i];
+                    active[w] = 0;
+                    try { w.Hash = Hashing.HashFile(w.FullPath, read => Volatile.Write(ref w.BytesRead, read)); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { w.Error = ex.Message; }
+                    active.TryRemove(w, out _);
+                    results.Add(w);
+                }
+            }
+            finally
+            {
+                if (Interlocked.Decrement(ref running) == 0) results.CompleteAdding();
+            }
+        }, TaskCreationOptions.LongRunning)).ToArray();
+        if (workers.Length == 0) results.CompleteAdding();
 
-            foreach (var w in slice)
+        int done = 0;
+        var added = new List<(int Index, FileRecord Rec)>();
+        var clock = Stopwatch.StartNew();
+        DateTime lastSave = DateTime.UtcNow;
+        while (!results.IsCompleted)
+        {
+            if (results.TryTake(out var w, Heartbeat))
             {
                 done++;
+                doneBytes += w.Size;
                 if (w.Error != null)
                 {
                     Console.WriteLine($"  skipped {w.Rel}: {w.Error}");
                     t.Skipped++;
-                    continue;
                 }
-
-                string hash = w.Hash!;
-                var rec = w.Rec;
-                if (rec == null)
+                else
                 {
-                    rec = new FileRecord { Root = root, RootName = name, RelPath = w.Rel, AddedUtc = now };
-                    c.Cat.Files.Add(rec);
-                    byPath[w.Rel] = rec;
-                    t.Added++;
-                }
-                else if (rec.Sha256.Length == 0) t.Added++;
-                else if (!Hashing.SameHash(rec.Sha256, hash)) t.Changed++;
-                else t.Unchanged++;
+                    string hash = w.Hash!;
+                    var rec = w.Rec;
+                    if (rec == null)
+                    {
+                        rec = new FileRecord { Root = root, RootName = name, RelPath = w.Rel, AddedUtc = now };
+                        c.Cat.Files.Add(rec);
+                        added.Add((w.Index, rec));
+                        byPath[w.Rel] = rec;
+                        t.Added++;
+                    }
+                    else if (rec.Sha256.Length == 0) t.Added++;
+                    else if (!Hashing.SameHash(rec.Sha256, hash)) t.Changed++;
+                    else t.Unchanged++;
 
-                rec.Size = w.Size;
-                rec.ModifiedUtc = w.Mtime;
-                rec.Sha256 = hash;
-                rec.MissingSinceUtc = null;
-                rec.Ignored = false;
-                Console.WriteLine($"  [{done}/{work.Count}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes)");
+                    rec.Size = w.Size;
+                    rec.ModifiedUtc = w.Mtime;
+                    rec.Sha256 = hash;
+                    rec.MissingSinceUtc = null;
+                    rec.Ignored = false;
+                    Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes)");
+                }
+            }
+            else
+            {
+                foreach (var a in active.Keys.OrderBy(a => a.Index))
+                    Console.WriteLine($"  ... {a.Rel}: {Percent(Volatile.Read(ref a.BytesRead), a.Size)} of {SizeText.Bytes(a.Size)} bytes " +
+                                      $"[{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}]");
             }
 
             if (DateTime.UtcNow - lastSave > TimeSpan.FromMinutes(2))   // don't lose hours of hashing on a crash
@@ -243,6 +284,15 @@ public sealed class ScanCommand : ICommand
                 c.Cat.Save();
                 lastSave = DateTime.UtcNow;
             }
+        }
+        Task.WaitAll(workers);
+
+        // new files were added in the order they finished: put them back in folder order, as with one thread
+        if (threads > 1 && added.Count > 1)
+        {
+            var newOnes = added.Select(a => a.Rec).ToHashSet();
+            c.Cat.Files.RemoveAll(newOnes.Contains);
+            c.Cat.Files.AddRange(added.OrderBy(a => a.Index).Select(a => a.Rec));
         }
 
         // 3. files that vanished (but never guess about folders we could not read)
@@ -254,4 +304,23 @@ public sealed class ScanCommand : ICommand
             t.Missing++;
         }
     }
+
+    /// <summary>"1,234/50,000  12.4%  85.3 MB/s  ~3h 12m left" - by bytes, counting what the threads have read of their current files.</summary>
+    static string Progress(int done, int count, long doneBytes, long totalBytes, IEnumerable<WorkItem> active, TimeSpan elapsed)
+    {
+        long read = doneBytes + active.Sum(a => Volatile.Read(ref a.BytesRead));
+        double perSecond = elapsed.TotalSeconds > 0 ? read / elapsed.TotalSeconds : 0;
+        string text = $"{done.ToString("N0", CultureInfo.InvariantCulture)}/{count.ToString("N0", CultureInfo.InvariantCulture)}  " +
+                      $"{Percent(read, totalBytes)}  {(perSecond / 1e6).ToString("F1", CultureInfo.InvariantCulture)} MB/s";
+        if (perSecond > 0 && read < totalBytes && elapsed > TimeSpan.FromSeconds(5))
+            text += $"  ~{Duration(TimeSpan.FromSeconds((totalBytes - read) / perSecond))} left";
+        return text;
+    }
+
+    static string Percent(long part, long whole) =>
+        (whole > 0 ? 100.0 * part / whole : 100.0).ToString("F1", CultureInfo.InvariantCulture) + "%";
+
+    static string Duration(TimeSpan d) =>
+        d.TotalHours >= 1 ? $"{(int)d.TotalHours}h {d.Minutes:D2}m" :
+        d.TotalMinutes >= 1 ? $"{d.Minutes}m {d.Seconds:D2}s" : $"{d.Seconds}s";
 }
