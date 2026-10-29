@@ -1,164 +1,19 @@
 namespace Bdxl;
 
-/// <summary>restage (rebuild a disc folder) and restore (copy files back from mounted discs)</summary>
-public static class RestageRestoreCommands
+public sealed class RestoreCommand : ICommand
 {
-    // ---- restage --------------------------------------------------------------------------
-
-    /// <summary>
-    /// Rebuilds the folder for an existing disc (same label, same paths, same content) so it can be burned again.
-    /// Data comes from the current source files if their hash still matches, otherwise from --from folders.
-    /// Files that are ignored now are still included: the disc is rebuilt the way it was.
-    /// </summary>
-    public static int Restage(Ctx c)
-    {
-        if (c.Args.Count != 2) throw new UserException("Usage: restage <label> <destDir> [--from dirA;dirB] [--allow-partial]");
-        var disc = c.Arc.FindDisc(c.Args[0]);
-        string dir = Path.Combine(Path.GetFullPath(c.Args[1]), disc.Label);
-        if (Directory.Exists(dir)) throw new UserException($"Folder already exists: {dir}");
-        var fromDirs = (c.Opt.Get("from") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        bool allowPartial = c.Opt.Has("allow-partial");
-
-        var entries = c.Cat.Files.SelectMany(f => f.Backups.Where(b => b.Disc == disc.Label).Select(b => (File: f, Copy: b)))
-            .GroupBy(x => x.Copy.DiscPath, StringComparer.Ordinal).Select(g => g.First()).ToList();
-        if (entries.Count == 0) throw new UserException($"The catalog has no files for {disc.Label}.");
-        var onSource = c.Cat.Files.Where(f => f.MissingSinceUtc == null && f.Sha256.Length > 0)
-            .ToLookup(f => f.Sha256, StringComparer.OrdinalIgnoreCase);
-
-        var manifest = new List<ManifestLine>();
-        var missing = new List<BackupRef>();
-        KeyCache? keys = null;
-        byte[]? salt = null;
-
-        foreach (var (file, entry) in entries)
-        {
-            string dst = Path.Combine(dir, entry.DiscPath);
-            var sourceFiles = onSource[entry.Sha256].Select(f => Path.Combine(f.Root, f.RelPath)).Where(File.Exists).ToList();
-            var fromFiles = fromDirs.Select(fd => Path.Combine(fd, entry.DiscPath)).Where(File.Exists).ToList();
-            long offset = entry.Offset, length = entry.IsPart ? entry.Length : -1;   // a part is cut from the whole source file
-            bool restored = false;
-            string? storedHash = null;
-
-            if (entry.Encrypted)
-            {
-                // 1. an existing encrypted copy is taken over unchanged if it is intact
-                foreach (var src in fromFiles)
-                {
-                    if (TryCopy(src, dst, entry.StoredSha256)) { restored = true; storedHash = entry.StoredSha256; break; }
-                }
-                // 2. otherwise encrypt the source again (new salt/nonces, so the stored hash changes)
-                if (!restored && sourceFiles.Count > 0)
-                {
-                    keys ??= new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: true));
-                    salt ??= FileCrypto.NewSalt();
-                    foreach (var src in sourceFiles)
-                    {
-                        try
-                        {
-                            string plain = FileCrypto.Encrypt(src, dst, keys, salt, offset, length);
-                            if (Hashing.SameHash(plain, entry.ContentSha256))
-                            {
-                                File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));
-                                storedHash = Hashing.HashFile(dst);
-                                restored = true;
-                                break;
-                            }
-                            File.Delete(dst);
-                        }
-                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                        {
-                            Console.WriteLine($"  {src}: {ex.Message}");
-                            if (File.Exists(dst)) File.Delete(dst);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                foreach (var src in sourceFiles)
-                {
-                    if (TryCopy(src, dst, entry.ContentSha256, offset, length)) { restored = true; break; }
-                }
-                if (!restored)
-                    foreach (var src in fromFiles)   // --from holds disc copies: already just the part
-                    {
-                        if (TryCopy(src, dst, entry.ContentSha256)) { restored = true; break; }
-                    }
-            }
-
-            if (restored)
-            {
-                Console.WriteLine($"[{disc.Label}] {entry.DiscPath}");
-                if (entry.Encrypted && !Hashing.SameHash(storedHash!, entry.StoredSha256 ?? ""))
-                    foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label && b.DiscPath == entry.DiscPath))
-                        b.StoredSha256 = storedHash;   // includes entry itself
-                manifest.Add(ManifestLine.For(entry, new FileInfo(dst).Length, file.Size));
-            }
-            else missing.Add(entry);
-        }
-
-        if (missing.Count > 0)
-        {
-            Console.WriteLine($"\n{missing.Count:N0} file(s) could not be rebuilt (no source file with identical content, none found under --from):");
-            foreach (var m in missing.Take(50)) Console.WriteLine("  " + m.DiscPath);
-            if (!allowPartial)
-            {
-                if (Directory.Exists(dir)) Directory.Delete(dir, true);
-                Console.WriteLine("\nNothing staged and the catalog is unchanged. Add --from <folder;folder> to point at other copies, " +
-                                  "or --allow-partial to restage without those files.");
-                return 3;
-            }
-            var gonePaths = missing.Select(m => m.DiscPath).ToHashSet(StringComparer.Ordinal);
-            foreach (var f in c.Cat.Files) f.Backups.RemoveAll(b => b.Disc == disc.Label && gonePaths.Contains(b.DiscPath));
-        }
-
-        if (manifest.Count == 0)
-        {
-            if (Directory.Exists(dir)) Directory.Delete(dir, true);
-            throw new UserException("No file could be rebuilt; the catalog is unchanged.");
-        }
-
-        disc.State = "staged";           // it has to be burned again
-        disc.BurnedUtc = null;
-        disc.LostUtc = null;
-        disc.RestagedUtc = DateTime.UtcNow;
-        disc.FileCount = manifest.Count;
-        disc.UsedBytes = manifest.Sum(x => x.Size);
-        foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
-
-        DiscFiles.Write(dir, disc, manifest);
-        c.Arc.LinkDuplicates();
-        c.Cat.Save();
-        Console.WriteLine($"\n{disc.Label}: {manifest.Count:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes rebuilt in {dir}");
-        Console.WriteLine($"Burn it, then run:  burned {disc.Label}");
-        return 0;
-    }
-
-    /// <summary>Copies src (or a byte range of it) to dst if the copy has the expected hash; otherwise removes dst and returns false.</summary>
-    static bool TryCopy(string src, string dst, string? expectedHash, long offset = 0, long length = -1)
-    {
-        try
-        {
-            string got = Hashing.CopyAndHash(src, dst, offset, length);
-            if (expectedHash != null && Hashing.SameHash(got, expectedHash))
-            {
-                File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));
-                return true;
-            }
-            File.Delete(dst);   // wrong content (changed / damaged) - try the next candidate
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Console.WriteLine($"  {src}: {ex.Message}");
-            if (File.Exists(dst)) File.Delete(dst);
-        }
-        return false;
-    }
-
-    // ---- restore --------------------------------------------------------------------------
+    public string Name => "restore";
+    public string Group => CommandGroup.Recovery;
+    public string Summary => "Copy files back from mounted discs into a folder";
+    public string Usage => "restore <destDir> <text|hashPrefix|*> --mount F:\\;G:\\ [--disc label] [--source alias] [--flat] [--overwrite]";
+    public string Details => """
+        Finds the files in the catalog, tells you which discs it needs, and copies them from the discs you mounted.
+        Discs are recognised by disc.json (or --disc for a single mount). Every file is verified by hash; encrypted
+        files are decrypted (password from BDXL_PASSWORD or typed). Layout: <destDir>/<alias>/<path>, or --flat.
+        """;
 
     /// <summary>Copies files back from mounted discs. Layout under destDir: source alias/relative path (or --flat).</summary>
-    public static int Restore(Ctx c)
+    public int Run(Ctx c)
     {
         if (c.Args.Count != 2) throw new UserException("Usage: restore <destDir> <text|hashPrefix|*> --mount F:\\;G:\\ [--disc label] [--source name] [--flat] [--overwrite]");
         string dest = Path.GetFullPath(c.Args[0]);

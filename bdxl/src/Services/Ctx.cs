@@ -15,4 +15,11 @@ public sealed class Ctx
     public Archive Arc { get; }
     public Settings Settings => Cat.Settings;
     public List<string> Args => Opt.Args;
+
+    /// <summary>Positional argument `index`, or a usage error.</summary>
+    public string Arg(int index, string usage)
+    {
+        if (Args.Count <= index) throw new UserException("Usage: " + usage);
+        return Args[index];
+    }
 }

@@ -4,9 +4,24 @@ namespace Bdxl;
 /// ignore [list] | add &lt;pattern&gt;... | remove &lt;pattern&gt;... | test &lt;path&gt; | apply
 /// Rules use .gitignore syntax, are stored in settings.json, and are matched against paths relative to each source folder.
 /// </summary>
-public static class IgnoreCommand
+public sealed class IgnoreCommand : ICommand
 {
-    public static int Run(Ctx c)
+    public string Name => "ignore";
+    public string Group => CommandGroup.Indexing;
+    public string Summary => "Define ignored files and folders (.gitignore syntax)";
+    public string Usage => "ignore [list] | add <pattern>... | remove <pattern|number>... | test <path> | apply";
+    public string Details => """
+        Rules live in settings.json inside the catalog and are matched against paths relative to each scanned folder.
+          ignore add "node_modules/" "*.tmp" "/cache/**" "!keep.tmp"
+          ignore test photos/2020/Thumbs.db
+        Ignored files stay in the catalog (marked 'ignored') but are not hashed and never staged. When a rule starts
+        matching files that are already catalogued:
+          - not on any disc: they are marked ignored and will not be staged;
+          - already burned: no new backup is made, but 'restage' of the old disc still includes them.
+        Changing rules re-evaluates the catalog immediately ('ignore apply' repeats that).
+        """;
+
+    public int Run(Ctx c)
     {
         string sub = c.Args.Count > 0 ? c.Args[0].ToLowerInvariant() : "list";
         var rules = c.Settings.IgnoreRules;

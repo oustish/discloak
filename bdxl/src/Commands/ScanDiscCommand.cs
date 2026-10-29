@@ -1,27 +1,22 @@
 namespace Bdxl;
 
-/// <summary>scandisc (record an already burned disc in the catalog) and discjson (write disc.json onto a disc that still accepts data)</summary>
-public static class DiscImportCommands
+public sealed class ScanDiscCommand : ICommand
 {
-    static DriveInfo? FindDrive(string path)
-    {
-        try
-        {
-            return DriveInfo.GetDrives()
-                .Where(d => path.StartsWith(d.RootDirectory.FullName, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(d => d.RootDirectory.FullName.Length).FirstOrDefault();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-    }
-
-    static bool IsDriveRoot(string path, DriveInfo d) =>
-        string.Equals(path.TrimEnd('\\', '/'), d.RootDirectory.FullName.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
-
-    static bool IsDiscMeta(string rel) =>
-        rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || rel.Equals("manifest.jsonl", StringComparison.OrdinalIgnoreCase) ||
-        rel.StartsWith("_catalog/", StringComparison.OrdinalIgnoreCase) ||
-        rel.StartsWith("System Volume Information/", StringComparison.OrdinalIgnoreCase) ||
-        rel.StartsWith("$RECYCLE.BIN/", StringComparison.OrdinalIgnoreCase);
+    public string Name => "scandisc";
+    public string Group => CommandGroup.ExistingDiscs;
+    public string Summary => "Record an already burned disc in the catalog";
+    public string Usage => "scandisc <mountPath> [--label L] [--method auto|manifest|hash|quick] [--date D] [--capacity S] [--cost P] [--update] [--dry-run] [--write-disc-json]";
+    public string Details => """
+        Reads a mounted disc (or a folder laid out like one) and links its files to the catalog.
+          --method manifest  trust the disc's manifest.jsonl (fast; entries stay 'unverified' until 'verify')
+          --method hash      read and SHA-256 every file (slow, authoritative, finds files nobody listed)
+          --method quick     no hashing: match path + size + time against the catalog
+          --method auto      manifest if the disc has one, otherwise hash (default)
+        The label comes from --label, else disc.json, else the drive's volume label.
+        Files the catalog does not know yet get new entries. --update merges into a disc already in the catalog.
+        --write-disc-json writes disc.json (+ manifest.jsonl) onto the disc if it can still be written to
+        (open session / not finalized); otherwise the label is recorded in the catalog only.
+        """;
 
     /// <summary>
     /// Reads a mounted disc (or any folder laid out like one) and records it in the catalog.
@@ -32,7 +27,7 @@ public static class DiscImportCommands
     ///   --dry-run          show what would happen, change nothing
     ///   --write-disc-json  if the disc can still be written to, put disc.json (+ manifest.jsonl) on it
     /// </summary>
-    public static int ScanDisc(Ctx c)
+    public int Run(Ctx c)
     {
         if (c.Args.Count != 1) throw new UserException("Usage: scandisc <mountPath> [--label L] [--method auto|manifest|hash|quick] [--date D] [--capacity S] [--cost P] [--update] [--dry-run] [--write-disc-json]");
         string mount = Path.GetFullPath(c.Args[0]);
@@ -41,7 +36,7 @@ public static class DiscImportCommands
         string method = c.Opt.GetOr("method", "auto").ToLowerInvariant();
         if (method is not ("auto" or "manifest" or "hash" or "quick"))
             throw new UserException("--method must be auto, manifest, hash or quick.");
-        var drive = FindDrive(mount);
+        var drive = DiscFiles.FindDrive(mount);
 
         // 1. which disc is this?
         DiscInfo? info = null;
@@ -245,7 +240,7 @@ public static class DiscImportCommands
         if (existing == null) c.Cat.Discs.Add(disc);
         if (c.Opt.Has("write-disc-json"))
         {
-            if (TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), out string why))
+            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), out string why))
                 Console.WriteLine("\ndisc.json (and manifest.jsonl if it was missing) written onto the disc. If your burning software needs it, close the session/disc now.");
             else
                 Console.WriteLine($"\nCould not write disc.json: {why}. The label is recorded in the catalog only.");
@@ -254,55 +249,12 @@ public static class DiscImportCommands
         return problems.Count > 0 ? 3 : 0;
     }
 
-    static bool TryWriteDiscJson(string mount, DiscRecord disc, List<ManifestLine> manifest, bool overwrite, out string why)
-    {
-        string infoPath = Path.Combine(mount, "disc.json");
-        if (File.Exists(infoPath) && !overwrite) { why = "disc.json is already there (use --overwrite to replace it)"; return false; }
+    static bool IsDriveRoot(string path, DriveInfo d) =>
+        string.Equals(path.TrimEnd('\\', '/'), d.RootDirectory.FullName.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
-        var drive = FindDrive(mount);
-        try
-        {
-            if (drive != null && drive.AvailableFreeSpace < (1L << 20)) { why = "the disc has no free space left (it looks finalized)"; return false; }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-
-        try
-        {
-            JsonStore.WriteObjectDirect(infoPath, new DiscInfo(disc.Label, disc.CreatedUtc, disc.FileCount, disc.UsedBytes));
-            string manifestPath = Path.Combine(mount, "manifest.jsonl");
-            if (!File.Exists(manifestPath) && manifest.Count > 0)
-                File.WriteAllLines(manifestPath, manifest.Select(m => JsonSerializer.Serialize(m, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            why = "the disc cannot be written to (" + ex.Message + ")";
-            return false;
-        }
-        why = "";
-        return true;
-    }
-
-    /// <summary>discjson &lt;label&gt; &lt;mountPath&gt;: writes disc.json (and manifest.jsonl if missing) onto a disc that can still be written to.</summary>
-    public static int DiscJson(Ctx c)
-    {
-        if (c.Args.Count != 2) throw new UserException("Usage: discjson <label> <mountPath> [--overwrite]");
-        var disc = c.Arc.FindDisc(c.Args[0]);
-        string mount = Path.GetFullPath(c.Args[1]);
-        if (!Directory.Exists(mount)) throw new UserException($"Not a directory: {mount}");
-
-        var manifest = c.Cat.Files.SelectMany(f => f.Backups.Where(b => b.Disc == disc.Label).Select(b => (File: f, Copy: b)))
-            .GroupBy(x => x.Copy.DiscPath, StringComparer.Ordinal).Select(g => g.First())
-            .Select(x => (x.File, x.Copy, FullPath: Path.Combine(mount, x.Copy.DiscPath)))
-            .Where(x => File.Exists(x.FullPath))
-            .Select(x => ManifestLine.For(x.Copy, new FileInfo(x.FullPath).Length, x.File.Size))
-            .ToList();
-
-        if (TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), out string why))
-        {
-            Console.WriteLine($"disc.json written for {disc.Label} ({manifest.Count:N0} file(s) found on the disc).");
-            return 0;
-        }
-        Console.WriteLine($"Could not write disc.json: {why}.");
-        return 3;
-    }
+    static bool IsDiscMeta(string rel) =>
+        rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || rel.Equals("manifest.jsonl", StringComparison.OrdinalIgnoreCase) ||
+        rel.StartsWith("_catalog/", StringComparison.OrdinalIgnoreCase) ||
+        rel.StartsWith("System Volume Information/", StringComparison.OrdinalIgnoreCase) ||
+        rel.StartsWith("$RECYCLE.BIN/", StringComparison.OrdinalIgnoreCase);
 }

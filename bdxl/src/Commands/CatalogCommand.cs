@@ -4,9 +4,26 @@ namespace Bdxl;
 /// catalog check | accept | history | rollback &lt;id&gt; | backup create &lt;dir&gt; | backup verify &lt;dir&gt; [--repair] | backup restore &lt;dir&gt; [--force]
 /// Integrity and versions of the catalog itself, and catalog backups with Reed-Solomon repair data.
 /// </summary>
-public static class CatalogCommand
+public sealed class CatalogCommand : ICommand
 {
-    public static int Run(Ctx c)
+    public string Name => "catalog";
+    public string Group => CommandGroup.Catalog;
+    public string Summary => "Integrity check, older versions, backups with repair data";
+    public string Usage => "catalog check | accept | history | rollback <id> | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force]";
+    public string Details => """
+        The catalog is checked against catalog.hash.json every time it is loaded; if it was changed outside bdxl or
+        is damaged, other commands refuse to run.
+          catalog check              verify only, nothing else
+          catalog accept             you edited the .jsonl files by hand: record the new hashes (previous state kept)
+          catalog history            older versions (one copy is kept before each command that changes the catalog)
+          catalog rollback <id>      go back to one of them (the current state is saved first)
+          catalog backup create <dir>            copy + Reed-Solomon repair data (--parity-percent 25)
+          catalog backup verify <dir> [--repair] check / fix a backup
+          catalog backup restore <dir> [--force] put a backup back
+        """;
+    public bool AllowBrokenCatalog => true;
+
+    public int Run(Ctx c)
     {
         string sub = c.Args.Count > 0 ? c.Args[0].ToLowerInvariant() : "";
         switch (sub)

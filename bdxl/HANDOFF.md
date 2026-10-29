@@ -1,7 +1,7 @@
 # bdxl – handoff notes (state as of 2026-10-29)
 
 ## Status
-- C# / .NET 10 console app (`net10.0`), 28 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
+- C# / .NET 10 console app (`net10.0`), 45 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
 - Builds cleanly (0 warnings). Smoke-tested by hand on 2026-10-29 in a temp folder: every command was run, including
   encryption, tamper detection, lost/restage, catalog rollback, backup repair and scandisc. There are still no automated tests.
 - Fixed during that smoke test: UTF-8 console output, `--date` stored one day early (local midnight to UTC), false
@@ -25,31 +25,24 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 |---|---|
 | `src/Program.cs` | `Main`: parse args → find command → load + integrity-check catalog → run. Exit codes: 0 ok, 1 error, 2 partial/not everything fits, 3 problems found, 4 catalog broken |
 | `src/Cli/Options.cs` | Arg parser. `Flags` set = options without a value (add new boolean options there!) |
-| `src/Cli/CommandTable.cs` | `CommandSpec` list: name, group, summary, usage, help text, handler, `allowBrokenCatalog`, `needsCatalog`. Also `HelpCommand` |
+| `src/Cli/ICommand.cs` | `ICommand`: `Name`, `Group` (a `CommandGroup` constant), `Summary`, `Usage`, `Details` (help text), `AllowBrokenCatalog` / `NeedsCatalog` (default false / true), `Run(Ctx)` |
+| `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
 | `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing) |
 | `src/Model/Models.cs` | `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `RepairMeta`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
 | `src/Storage/Catalog.cs` | Load/Save, integrity (`catalog.hash.json`), snapshots in `history/`, rollback |
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
 | `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (+`PasswordPolicy`, `KeyCache`), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
-| `src/Services/` | `Ctx` (what every command gets), `Archive` (dedup, planning, labels, ignore application) |
-| `src/Commands/` | One file per command group (see table below) |
+| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest.jsonl + disc.json, writing them onto a mounted disc) |
+| `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
 
-## Commands → files
-| Command | File |
-|---|---|
-| scan | ScanCommand.cs |
-| plan, stage | PlanStageCommands.cs (also `DiscFiles.Write`: manifest.jsonl + disc.json) |
-| burned, verify, discard, discs, lost, destroyed, found | DiscCommands.cs |
-| restage, restore | RestageRestoreCommands.cs |
-| scandisc, discjson | DiscImportCommands.cs |
-| find, status | InfoCommands.cs |
-| blanks | BlankCommands.cs |
-| ignore | IgnoreCommand.cs |
-| cost | CostCommand.cs |
-| purge, alias, settings | MaintenanceCommands.cs |
-| catalog (check/accept/history/rollback/backup create\|verify\|restore) | CatalogCommand.cs |
-| workflow | WorkflowCommand.cs |
+## Adding a command
+1. `src/Commands/FooCommand.cs`: `public sealed class FooCommand : ICommand` with Name/Group/Summary/Usage/Details and `Run`.
+2. Add `new FooCommand()` to `CommandTable.All` where it should appear in `bdxl help`.
+3. New boolean options go into `Options.Flags`.
+
+Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --with-catalog` calls `CatalogCommand.WriteBackup`;
+`stage`/`restage` write `DiscFiles.Write`, `scandisc`/`discjson` use `DiscFiles.TryWriteDiscJson`.
 
 ## Key rules / invariants
 - **Catalog files:** `files.jsonl`, `discs.jsonl`, `blanks.jsonl`, `settings.json` (`Catalog.CoveredFiles`).

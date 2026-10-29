@@ -1,67 +1,30 @@
 namespace Bdxl;
 
-public static class PlanCommand
+public sealed class StageCommand : ICommand
 {
-    /// <summary>
-    /// Allocates pending files to the registered blank discs (see 'blanks') and reports whether everything fits.
-    /// Changes nothing; 'stage' uses exactly the same allocation.
-    /// </summary>
-    public static int Run(Ctx c)
-    {
-        var plan = c.Arc.MakePlan(c.Opt.Has("encrypt"), c.Opt.Has("split"));
-        Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes");
-        int splitFiles = plan.Pending.Where(p => p.IsPart).Select(p => p.File).Distinct().Count();
-        if (splitFiles > 0)
-            Console.WriteLine($"({splitFiles:N0} file(s) are split across discs: {plan.Pending.Count(p => p.IsPart):N0} part(s) still to store.)");
+    public string Name => "stage";
+    public string Group => CommandGroup.MakingDiscs;
+    public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
+    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--password-env VAR] [--split] [--with-catalog]";
+    public string Details => """
+        Creates <destDir>/<label>/ for each disc, copying files as they are (no archive, no compression) and checking
+        every copy against its hash. Also writes manifest.jsonl and disc.json so the disc describes itself.
+          --max-discs N    stage up to N discs (default 1)
+          --min-fill 0.9   only stage discs that would be at least 90% full
+          --encrypt        encrypt every file (AES-256-GCM, one .enc file per file). The password comes from the
+                           environment variable BDXL_PASSWORD (or --password-env VAR) or is typed in. It needs at
+                           least 12 characters and 3 of: lowercase, uppercase, digit, special character.
+                           File NAMES stay readable in manifest.jsonl.
+          --split          a file larger than every blank disc is cut into parts, one per disc: name.001, name.002 ...
+                           (each part is encrypted on its own with --encrypt). Without bdxl the parts are simply
+                           joined in order (copy /b a.001+a.002 a). 'restore' collects the parts disc by disc and
+                           joins them; the file counts as backed up only when every part is on a disc. Once a file
+                           has parts on discs, its remaining parts are staged even without --split.
+          --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
+        Labels are <prefix><counter>, e.g. BDXL-0007 (see 'settings').
+        """;
 
-        int ignored = c.Cat.Files.Count(f => f.Ignored);
-        if (ignored > 0) Console.WriteLine($"({ignored:N0} catalogued file(s) are ignored by rules and not part of the plan.)");
-
-        if (c.Cat.Blanks.Count == 0)
-        {
-            if (plan.Pending.Count > 0)
-                Console.WriteLine("No blank discs are registered, so nothing can be allocated. Register some, e.g.:\n" +
-                                  "  blanks add 5 --size 96882130944 --reserve 200MB");
-            return plan.Pending.Count > 0 ? 2 : 0;
-        }
-
-        Console.WriteLine($"Blank discs: {c.Cat.Blanks.Count} ({SizeText.Bytes(c.Cat.Blanks.Sum(b => b.Usable))} usable bytes)\n");
-        foreach (var bin in plan.Bins.Where(b => b.Pieces.Count > 0))
-        {
-            int parts = bin.Pieces.Count(p => p.IsPart);
-            Console.WriteLine($"  {bin.Blank.Id}  {bin.Blank.Capacity,18:N0} B disc: {bin.Pieces.Count,8:N0} files, {bin.Used,18:N0} bytes " +
-                              $"({100.0 * bin.Used / bin.Usable:F1}% of usable)" + (parts > 0 ? $"  incl. {parts} part(s) of split files" : ""));
-        }
-        int unused = plan.Bins.Count(b => b.Pieces.Count == 0);
-        if (unused > 0) Console.WriteLine($"  {unused} blank disc(s) would stay unused.");
-
-        if (plan.Unplaced.Count == 0)
-        {
-            Console.WriteLine("\nAll pending data fits on the designated blank discs.");
-            return 0;
-        }
-
-        long left = plan.Unplaced.Sum(p => p.Length);
-        Console.WriteLine($"\nNOT ALL DATA FITS: {plan.Unplaced.Count:N0} file(s), {SizeText.Bytes(left)} bytes cannot be placed on the {c.Cat.Blanks.Count} designated blank disc(s).");
-        Archive.PrintTooBig(plan.TooBig);
-        var rest = plan.Unplaced.Where(p => !plan.TooBig.Contains(p.File)).ToList();
-        if (rest.Count > 0)
-        {
-            // more discs only help with what fits on one disc; files larger than any disc need --split (or bigger discs)
-            long restBytes = rest.Sum(p => p.Length), biggest = c.Cat.Blanks.Max(b => b.Usable);
-            Console.WriteLine($"Roughly {(restBytes + biggest - 1) / biggest} more disc(s) of the largest size would be needed for the rest.");
-            Console.WriteLine("Left over (do not fit in the remaining space):");
-            foreach (var p in rest.OrderByDescending(x => x.Length).Take(20))
-                Console.WriteLine($"  {p.Name}  ({SizeText.Bytes(p.Length)} bytes)");
-            if (rest.Count > 20) Console.WriteLine($"  ... and {rest.Count - 20:N0} more");
-        }
-        return 2;
-    }
-}
-
-public static class StageCommand
-{
-    public static int Run(Ctx c)
+    public int Run(Ctx c)
     {
         if (c.Args.Count != 1) throw new UserException("Usage: stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--split] [--with-catalog]");
         string destDir = Path.GetFullPath(c.Args[0]);
@@ -208,15 +171,5 @@ public static class StageCommand
     {
         var fi = new FileInfo(path);
         return fi.Exists && fi.Length == f.Size && fi.LastWriteTimeUtc == f.ModifiedUtc;
-    }
-}
-
-/// <summary>Files every staged disc carries so it can describe itself.</summary>
-public static class DiscFiles
-{
-    public static void Write(string dir, DiscRecord disc, List<ManifestLine> manifest)
-    {
-        JsonStore.WriteLines(Path.Combine(dir, "manifest.jsonl"), manifest);
-        JsonStore.WriteObject(Path.Combine(dir, "disc.json"), new DiscInfo(disc.Label, disc.CreatedUtc, disc.FileCount, disc.UsedBytes));
     }
 }

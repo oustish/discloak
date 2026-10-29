@@ -5,12 +5,22 @@ namespace Bdxl;
 /// cost set &lt;label&gt; &lt;amount&gt;   record what a disc cost (also for imported / pre-existing discs)
 /// (blank discs get their price with 'blanks add --cost' / 'blanks cost'; it is copied to the disc when it is staged)
 /// </summary>
-public static class CostCommand
+public sealed class CostCommand : ICommand
 {
+    public string Name => "cost";
+    public string Group => CommandGroup.LookingUp;
+    public string Summary => "What the discs cost: per disc, per GB and per TB";
+    public string Usage => "cost [report] | cost set <label> <amount>";
+    public string Details => """
+        Prices come from 'blanks add --cost', 'blanks cost', 'scandisc --cost' and 'cost set <label> <amount>' (also for
+        discs you bought earlier). 'cost report' shows cost per disc, per GB and per TB of data stored and of
+        capacity, and the value of the blank discs in stock. GB = 10^9 bytes, TB = 10^12 bytes.
+        """;
+
     const decimal GB = 1_000_000_000m;
     const decimal TB = 1_000_000_000_000m;
 
-    public static int Run(Ctx c)
+    public int Run(Ctx c)
     {
         string sub = c.Args.Count > 0 ? c.Args[0].ToLowerInvariant() : "report";
         if (sub == "set")

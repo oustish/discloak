@@ -7,11 +7,24 @@ namespace Bdxl;
 /// blanks cost &lt;amount&gt; [--size S]        change the price of the known blank discs
 /// blanks remove &lt;id|all&gt; [--size S]
 /// </summary>
-public static class BlankCommands
+public sealed class BlanksCommand : ICommand
 {
+    public string Name => "blanks";
+    public string Group => CommandGroup.Indexing;
+    public string Summary => "Register the blank discs you own (sizes, reserve, price)";
+    public string Usage => "blanks [list] | add <count> [--size S] [--reserve R] [--cost P] | reserve <R> [--size S] | cost <P> [--size S] | remove <id|all> [--size S]";
+    public string Details => """
+          blanks add 5 --size 96882130944 --reserve 200MB --cost 45    five discs; sizes accept 25GB, 90GiB, bytes ...
+          blanks reserve 300MB            change the reserve of ALL blank discs   (--size S: only discs of that size)
+          blanks cost 39.99               change the price of all blank discs
+          blanks remove B0003 | all       forget a blank disc
+        The reserve is space deliberately left free (filesystem overhead, a catalog backup with --with-catalog).
+        A blank disc is used up when a disc is staged from it; 'discard' gives it back.
+        """;
+
     const string DefaultSize = "96882130944";
 
-    public static int Run(Ctx c)
+    public int Run(Ctx c)
     {
         var a = c.Args;
         string sub = a.Count > 0 ? a[0].ToLowerInvariant() : "list";

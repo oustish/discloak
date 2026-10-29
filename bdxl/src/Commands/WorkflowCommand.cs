@@ -1,9 +1,17 @@
 namespace Bdxl;
 
 /// <summary>workflow - prints a sample session from first scan to a verified, burned disc.</summary>
-public static class WorkflowCommand
+public sealed class WorkflowCommand : ICommand
 {
-    public static int Run(Ctx c)
+    public string Name => "workflow";
+    public string Group => CommandGroup.Help;
+    public string Summary => "Show a sample workflow from first scan to a verified disc";
+    public string Usage => "workflow";
+    public string Details => "Prints example commands only; nothing is executed.";
+    public bool AllowBrokenCatalog => true;
+    public bool NeedsCatalog => false;
+
+    public int Run(Ctx c)
     {
         Console.WriteLine("""
             SAMPLE WORKFLOW  (nothing here is executed - copy the commands you need)

@@ -1,39 +1,14 @@
 namespace Bdxl;
 
-/// <summary>find and status</summary>
-public static class InfoCommands
+public sealed class StatusCommand : ICommand
 {
-    public static int Find(Ctx c)
-    {
-        if (c.Args.Count != 1) throw new UserException("Usage: find <text|hashPrefix|*>");
-        string text = c.Args[0];
-        var hits = c.Cat.Files.Where(f => Archive.Matches(f, text))
-            .OrderBy(f => f.RootName, StringComparer.Ordinal).ThenBy(f => f.RelPath, StringComparer.Ordinal)
-            .ToList();
+    public string Name => "status";
+    public string Group => CommandGroup.LookingUp;
+    public string Summary => "Summary of sources, pending data, blank discs and discs";
+    public string Usage => "status";
+    public string Details => "Also warns about files that exist nowhere any more.";
 
-        foreach (var f in hits)
-        {
-            string hashText = f.Sha256.Length >= 16 ? f.Sha256[..16] + "..." : "(not hashed)";
-            Console.WriteLine($"{f.RootName}/{f.RelPath}  {SizeText.Bytes(f.Size)} bytes  sha256 {hashText}  " +
-                              (f.Ignored ? "[ignored] " : "") +
-                              (f.MissingSinceUtc != null ? $"[gone from source since {f.MissingSinceUtc:yyyy-MM-dd}]" : ""));
-            if (f.Backups.Count == 0) Console.WriteLine("    not backed up");
-            foreach (var b in f.Backups)
-            {
-                var d = c.Cat.Discs.FirstOrDefault(x => x.Label == b.Disc);
-                string when = b.BackedUpUtc is { } t ? t.ToString("yyyy-MM-dd") : "not burned yet";
-                string ver = Hashing.SameHash(b.Sha256, f.Sha256) ? "current version" : "OLDER version";
-                string via = b.Alias ? $" - same content stored as {b.DiscPath}" : "";
-                string enc = (b.IsPart ? $" [part {b.Part}/{b.Parts}]" : "") + (b.Encrypted ? " [encrypted]" : "");
-                string unv = b.Unverified ? " [taken from manifest/catalog, not re-hashed - run 'verify']" : "";
-                Console.WriteLine($"    {b.Disc} ({d?.State ?? "?"}, {when}) {ver}{via}{enc}{unv}");
-            }
-        }
-        Console.WriteLine($"\n{hits.Count} match(es).");
-        return hits.Count > 0 ? 0 : 1;
-    }
-
-    public static int Status(Ctx c)
+    public int Run(Ctx c)
     {
         Console.WriteLine($"Catalog: {c.Cat.Dir}  (integrity: {c.Cat.Integrity.State})");
         foreach (var g in c.Cat.Files.GroupBy(f => f.RootName))

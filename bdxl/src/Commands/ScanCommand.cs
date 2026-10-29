@@ -1,8 +1,27 @@
 namespace Bdxl;
 
 /// <summary>scan [folder] [--name alias] [--threads N] [--full]  -  index files; without a folder every known location is rescanned.</summary>
-public static class ScanCommand
+public sealed class ScanCommand : ICommand
 {
+    public string Name => "scan";
+    public string Group => CommandGroup.Indexing;
+    public string Summary => "Index files (a folder, or every known location)";
+    public string Usage => "scan [<folder>] [--name <alias>] [--threads N] [--full]";
+    public string Details => """
+        With a folder: adds it to the catalog (first time) or rescans it. Every file gets a SHA-256 hash; unchanged
+        files (same size and modified time) are not read again. Files that disappeared are marked as missing.
+        Without a folder: rescans ALL known locations. A location that is not reachable (unplugged drive) is
+        skipped, nothing is marked as missing.
+
+          --name <alias>   name of the folder on discs and in the catalog (default: the folder name)
+          --threads N      hash with N threads (default: 'settings' default-threads, 1)
+          --full           ignore size/time and hash everything again
+          --catalog <dir>  where the catalog lives (default ./catalog)
+
+        Files matching an ignore rule (see 'ignore') are added to the catalog and marked as ignored, but are not
+        hashed and never staged.
+        """;
+
     sealed class WorkItem
     {
         public string FullPath = "";
@@ -27,7 +46,7 @@ public static class ScanCommand
         return root;
     }
 
-    public static int Run(Ctx c)
+    public int Run(Ctx c)
     {
         if (c.Args.Count > 1) throw new UserException("scan takes at most one folder.");
 
