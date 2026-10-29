@@ -8,7 +8,9 @@ public sealed class ScanDiscCommand : ICommand
     public string Usage => "scandisc <mountPath> [--label L] [--method auto|manifest|hash|quick] [--date D] [--capacity S] [--cost P] [--update] [--dry-run] [--write-disc-json]";
     public string Details => """
         Reads a mounted disc (or a folder laid out like one) and links its files to the catalog.
-          --method manifest  trust the disc's manifest.jsonl (fast; entries stay 'unverified' until 'verify')
+          --method manifest  trust the disc's manifest (fast; entries stay 'unverified' until 'verify'). An encrypted
+                             disc's manifest (manifest.jsonl.enc) needs its password: BDXL_PASSWORD, --password-env
+                             or typed. It is the only way to link the hidden file names of such a disc.
           --method hash      read and SHA-256 every file (slow, authoritative, finds files nobody listed)
           --method quick     no hashing: match path + size + time against the catalog
           --method auto      manifest if the disc has one, otherwise hash (default)
@@ -81,10 +83,12 @@ public sealed class ScanDiscCommand : ICommand
             if (!IsDiscMeta(rel)) onDisc.Add((rel, fi.Length, fi.LastWriteTimeUtc));
         }
 
-        string manifestPath = Path.Combine(mount, "manifest.jsonl");
-        if (method == "auto") method = File.Exists(manifestPath) ? "manifest" : "hash";
-        if (method == "manifest" && !File.Exists(manifestPath))
-            throw new UserException("There is no manifest.jsonl on this disc; use --method hash or quick.");
+        bool hasManifest = DiscFiles.HasManifest(mount);
+        if (method == "auto") method = hasManifest ? "manifest" : "hash";
+        if (method == "manifest" && !hasManifest)
+            throw new UserException("There is no manifest on this disc; use --method hash or quick.");
+        if (method != "manifest" && File.Exists(Path.Combine(mount, DiscFiles.EncryptedManifestName)))
+            Console.WriteLine("Note: this disc hides its file names; only its encrypted manifest (--method manifest) links them to real paths.");
         Console.WriteLine($"Method: {method}; {onDisc.Count:N0} file(s), {SizeText.Bytes(onDisc.Sum(x => x.Size))} bytes on the disc.");
 
         var found = new List<DiscFile>();
@@ -100,15 +104,15 @@ public sealed class ScanDiscCommand : ICommand
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { problems.Add($"{f.Path}: {ex.Message}"); }
             }
             if (onDisc.Any(f => f.Path.EndsWith(FileCrypto.Suffix, StringComparison.OrdinalIgnoreCase)))
-                Console.WriteLine("Note: *.enc files look encrypted; hashing cannot see their original content. Use the disc's manifest.jsonl (--method manifest) to link them to known files.");
+                Console.WriteLine("Note: *.enc files look encrypted; hashing cannot see their original content. Use the disc's manifest (--method manifest) to link them to known files.");
             if (onDisc.Any(f => Regex.IsMatch(f.Path, @"\.\d{3,}(\.enc)?$")))
-                Console.WriteLine("Note: *.001, *.002 ... files may be parts of split files; only the disc's manifest.jsonl (--method manifest) records them as parts.");
+                Console.WriteLine("Note: *.001, *.002 ... files may be parts of split files; only the disc's manifest (--method manifest) records them as parts.");
         }
         else if (method == "manifest")
         {
             var diskByPath = onDisc.ToDictionary(x => x.Path, x => x, StringComparer.Ordinal);
             var listed = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var line in JsonStore.ReadLines<ManifestLine>(manifestPath))
+            foreach (var line in DiscFiles.ReadManifest(mount, c.Opt)!)
             {
                 listed.Add(line.Path);
                 if (!diskByPath.TryGetValue(line.Path, out var onThisDisc)) { problems.Add($"{line.Path}: listed in the manifest but not on the disc"); continue; }
@@ -116,10 +120,10 @@ public sealed class ScanDiscCommand : ICommand
                 bool isPart = line is { Part: > 0, Parts: > 0, Offset: not null, Length: not null, FileSha256: not null };
                 if (line.Encrypted && line.PlainSha256 != null)
                     found.Add(new DiscFile(line.Path, onThisDisc.Size, onThisDisc.Mtime, (isPart ? line.FileSha256! : line.PlainSha256).ToUpperInvariant(),
-                                           true, true, line.Sha256.ToUpperInvariant()) { SplitLine = isPart ? line : null });
+                                           true, true, line.Sha256.ToUpperInvariant()) { SplitLine = isPart ? line : null, Source = line.Source });
                 else
                     found.Add(new DiscFile(line.Path, onThisDisc.Size, onThisDisc.Mtime, (isPart ? line.FileSha256! : line.Sha256).ToUpperInvariant(), true)
-                              { SplitLine = isPart ? line : null });
+                              { SplitLine = isPart ? line : null, Source = line.Source });
             }
             notListed = onDisc.Where(x => !listed.Contains(x.Path)).Select(x => x.Path).ToList();
         }
@@ -143,10 +147,11 @@ public sealed class ScanDiscCommand : ICommand
         {
             FileRecord? rec;
             string sha;
-            // the catalog knows the file without ".enc" and without a part's ".001"
+            // the catalog knows the file without ".enc" and without a part's ".001" (a hidden name: from the manifest)
             string logical = df.Encrypted && df.Path.EndsWith(FileCrypto.Suffix, StringComparison.OrdinalIgnoreCase)
                 ? df.Path[..^FileCrypto.Suffix.Length] : df.Path;
-            if (df.SplitLine is { } split)
+            if (df.Source != null) logical = df.Source;
+            else if (df.SplitLine is { } split)
             {
                 string suffix = SplitLayout.Suffix(split.Part!.Value, split.Parts!.Value);
                 if (logical.EndsWith(suffix, StringComparison.Ordinal)) logical = logical[..^suffix.Length];
@@ -200,7 +205,7 @@ public sealed class ScanDiscCommand : ICommand
                 copy.Part = part.Part!.Value; copy.Parts = part.Parts!.Value; copy.Offset = part.Offset!.Value; copy.Length = part.Length!.Value;
                 copy.PartSha256 = (part.Encrypted ? part.PlainSha256 ?? "" : part.Sha256).ToUpperInvariant();
             }
-            manifest.Add(ManifestLine.For(copy, df.Size, rec.Size));
+            manifest.Add(ManifestLine.For(copy, df.Size, rec));
             if (rec.Backups.Any(b => b.Disc == label && b.DiscPath == df.Path)) { already++; continue; }
             rec.Backups.Add(copy);
         }
@@ -240,8 +245,8 @@ public sealed class ScanDiscCommand : ICommand
         if (existing == null) c.Cat.Discs.Add(disc);
         if (c.Opt.Has("write-disc-json"))
         {
-            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), out string why))
-                Console.WriteLine("\ndisc.json (and manifest.jsonl if it was missing) written onto the disc. If your burning software needs it, close the session/disc now.");
+            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), null, null, out string why))
+                Console.WriteLine("\ndisc.json (and the manifest if it was missing) written onto the disc. If your burning software needs it, close the session/disc now.");
             else
                 Console.WriteLine($"\nCould not write disc.json: {why}. The label is recorded in the catalog only.");
         }
@@ -253,7 +258,8 @@ public sealed class ScanDiscCommand : ICommand
         string.Equals(path.TrimEnd('\\', '/'), d.RootDirectory.FullName.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
     static bool IsDiscMeta(string rel) =>
-        rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || rel.Equals("manifest.jsonl", StringComparison.OrdinalIgnoreCase) ||
+        rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || rel.Equals(DiscFiles.ManifestName, StringComparison.OrdinalIgnoreCase) ||
+        rel.Equals(DiscFiles.EncryptedManifestName, StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("_catalog/", StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("System Volume Information/", StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("$RECYCLE.BIN/", StringComparison.OrdinalIgnoreCase);

@@ -36,6 +36,8 @@ public class EndToEndTests : IDisposable
         Assert.False(File.Exists(Path.Combine(disc, "S", "docs", "a_copy.bin")));   // dedup: stored once
         Assert.False(File.Exists(Path.Combine(disc, "S", "skip.tmp")));              // ignored
         Assert.True(File.Exists(Path.Combine(disc, "disc.json")));
+        Assert.True(File.Exists(Path.Combine(disc, "manifest.jsonl")));                 // plain disc: plain manifest
+        Assert.DoesNotContain("encrypted", File.ReadAllText(Path.Combine(disc, "disc.json")));
 
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", disc));
         Assert.Equal(0, Bdxl("burned", "BDXL-0001", "--date", "2026-10-01"));
@@ -76,7 +78,7 @@ public class EndToEndTests : IDisposable
 
         var discs = new[] { "BDXL-0001", "BDXL-0002", "BDXL-0003" };
         Assert.All(discs, d => Assert.Equal(0, Bdxl("verify", d, Disc(d), "--deep")));
-        Assert.True(File.Exists(Path.Combine(Disc("BDXL-0001"), "S", "big.bin.001.enc")));
+        Assert.True(File.Exists(Path.Combine(Disc("BDXL-0001"), "data", "000", "000001.enc")));   // hidden name
 
         // one drive: restore what is there, run again with the next disc, ...
         Assert.Equal(2, Bdxl("restore", tmp.File("out"), "big.bin", "--mount", Disc("BDXL-0002")));

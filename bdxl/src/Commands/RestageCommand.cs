@@ -10,7 +10,9 @@ public sealed class RestageCommand : ICommand
         Takes the data from the current source files (if their hash still matches) or from the --from folders, checks
         every file against the catalog and writes the folder again. Files that are ignored now are included: the
         disc is rebuilt the way it was. Encrypted discs: intact encrypted copies are reused, other files are
-        encrypted again with a password you type. Afterwards the disc is 'staged' until you run 'burned'.
+        encrypted again; the password (BDXL_PASSWORD, --password-env or typed) is always needed for an
+        encrypted disc, because its manifest is written encrypted. Afterwards the disc is 'staged' until you run
+        'burned'.
         Without --allow-partial nothing is staged if any file cannot be rebuilt.
         """;
 
@@ -38,6 +40,11 @@ public sealed class RestageCommand : ICommand
         var missing = new List<BackupRef>();
         KeyCache? keys = null;
         byte[]? salt = null;
+        if (disc.Encrypted)   // the manifest of an encrypted disc is always written encrypted
+        {
+            keys = new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: true));
+            salt = FileCrypto.NewSalt();
+        }
 
         foreach (var (file, entry) in entries)
         {
@@ -67,7 +74,6 @@ public sealed class RestageCommand : ICommand
                             string plain = FileCrypto.Encrypt(src, dst, keys, salt, offset, length);
                             if (Hashing.SameHash(plain, entry.ContentSha256))
                             {
-                                File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));
                                 storedHash = Hashing.HashFile(dst);
                                 restored = true;
                                 break;
@@ -101,7 +107,7 @@ public sealed class RestageCommand : ICommand
                 if (entry.Encrypted && !Hashing.SameHash(storedHash!, entry.StoredSha256 ?? ""))
                     foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label && b.DiscPath == entry.DiscPath))
                         b.StoredSha256 = storedHash;   // includes entry itself
-                manifest.Add(ManifestLine.For(entry, new FileInfo(dst).Length, file.Size));
+                manifest.Add(ManifestLine.For(entry, new FileInfo(dst).Length, file));
             }
             else missing.Add(entry);
         }
@@ -135,7 +141,7 @@ public sealed class RestageCommand : ICommand
         disc.UsedBytes = manifest.Sum(x => x.Size);
         foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
 
-        DiscFiles.Write(dir, disc, manifest);
+        DiscFiles.Write(dir, disc, manifest, keys, salt);
         c.Arc.LinkDuplicates();
         c.Cat.Save();
         Console.WriteLine($"\n{disc.Label}: {manifest.Count:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes rebuilt in {dir}");

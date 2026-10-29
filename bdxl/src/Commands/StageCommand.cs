@@ -8,16 +8,18 @@ public sealed class StageCommand : ICommand
     public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--password-env VAR] [--split] [--with-catalog]";
     public string Details => """
         Creates <destDir>/<label>/ for each disc, copying files as they are (no archive, no compression) and checking
-        every copy against its hash. Also writes manifest.jsonl and disc.json so the disc describes itself.
+        every copy against its hash. Also writes a manifest and disc.json so the disc describes itself.
           --max-discs N    stage up to N discs (default 1)
           --min-fill 0.9   only stage discs that would be at least 90% full
           --encrypt        encrypt every file (AES-256-GCM, one .enc file per file). The password comes from the
                            environment variable BDXL_PASSWORD (or --password-env VAR) or is typed in. It needs at
                            least 12 characters and 3 of: lowercase, uppercase, digit, special character.
-                           File NAMES stay readable in manifest.jsonl.
+                           File names are hidden too: files are stored as data/000/000001.enc ..., and the
+                           manifest (manifest.jsonl.enc) and the catalog backup (_catalog/*.enc) are encrypted
+                           with the same password. Only disc.json (label, file count, size) stays readable.
           --split          a file larger than every blank disc is cut into parts, one per disc: name.001, name.002 ...
-                           (each part is encrypted on its own with --encrypt). Without bdxl the parts are simply
-                           joined in order (copy /b a.001+a.002 a). 'restore' collects the parts disc by disc and
+                           (with --encrypt each part is encrypted on its own). Without bdxl, unencrypted parts are
+                           simply joined in order (copy /b a.001+a.002 a). 'restore' collects the parts disc by disc and
                            joins them; the file counts as backed up only when every part is on a disc. Once a file
                            has parts on discs, its remaining parts are staged even without --split.
           --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
@@ -57,8 +59,9 @@ public sealed class StageCommand : ICommand
         if (encrypt)
         {
             keys = new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: true));
-            Console.WriteLine("Files will be encrypted (AES-256-GCM). File names stay readable in manifest.jsonl / disc.json" +
-                              (c.Opt.Has("with-catalog") ? " and in the catalog backup" : "") + " on the disc.\n");
+            Console.WriteLine("Files will be encrypted (AES-256-GCM) and stored under hidden names; the manifest" +
+                              (c.Opt.Has("with-catalog") ? " and the catalog backup are" : " is") +
+                              " encrypted too. Only disc.json (label, file count, size) stays readable.\n");
         }
 
         int overfull = 0;
@@ -76,14 +79,15 @@ public sealed class StageCommand : ICommand
             c.Cat.Discs.Add(disc);
             var manifest = new List<ManifestLine>();
             byte[]? salt = encrypt ? FileCrypto.NewSalt() : null;
+            int hidden = 0;
 
             foreach (var p in bin.Pieces)
             {
                 var f = p.File;
-                string storedPath = p.Name + (encrypt ? FileCrypto.Suffix : "");
+                string storedPath = encrypt ? DiscFiles.HiddenName(++hidden) : p.Name;
                 string src = Path.Combine(f.Root, f.RelPath);
                 string dst = Path.Combine(dir, storedPath);
-                Console.WriteLine($"[{label}] {storedPath}");
+                Console.WriteLine($"[{label}] {p.Name}" + (encrypt ? $"  ->  {storedPath}" : ""));
 
                 // a part cannot be checked against the whole file's hash, so the source must be exactly as scanned
                 // (same size and time - the rule 'scan' uses), before and after the copy
@@ -113,7 +117,7 @@ public sealed class StageCommand : ICommand
                     continue;
                 }
 
-                File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));
+                if (!encrypt) File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));   // a hidden file does not show its date either
                 long storedSize = new FileInfo(dst).Length;
                 string? storedHash = encrypt ? Hashing.HashFile(dst) : null;
 
@@ -129,7 +133,7 @@ public sealed class StageCommand : ICommand
                 f.Backups.Add(copy);
                 disc.FileCount++;
                 disc.UsedBytes += storedSize;
-                manifest.Add(ManifestLine.For(copy, storedSize, f.Size));
+                manifest.Add(ManifestLine.For(copy, storedSize, f));
             }
 
             if (disc.FileCount == 0)
@@ -141,13 +145,13 @@ public sealed class StageCommand : ICommand
             }
 
             c.Cat.Blanks.Remove(bin.Blank);                 // this blank disc is now spoken for
-            DiscFiles.Write(dir, disc, manifest);           // disc describes itself (manifest.jsonl + disc.json)
+            DiscFiles.Write(dir, disc, manifest, keys, salt); // disc describes itself (manifest + disc.json)
             int dups = c.Arc.LinkDuplicates();              // other files with identical content now point at this disc too
             c.Cat.Save();
             if (c.Opt.Has("with-catalog"))                  // leave room for it in the blank discs' reserve
             {
                 Console.WriteLine("Writing catalog backup into the disc folder:");
-                CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"));
+                CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"), keys, salt);
             }
             Console.WriteLine($"{label}: {disc.FileCount:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes staged in {dir}" +
                               (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));

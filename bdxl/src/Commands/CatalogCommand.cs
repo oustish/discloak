@@ -1,7 +1,7 @@
 namespace Bdxl;
 
 /// <summary>
-/// catalog check | accept | history | rollback &lt;id&gt; | backup create &lt;dir&gt; | backup verify &lt;dir&gt; [--repair] | backup restore &lt;dir&gt; [--force]
+/// catalog check | accept | history | rollback &lt;id&gt; | backup create &lt;dir&gt; [--encrypt] | backup verify &lt;dir&gt; [--repair] | backup restore &lt;dir&gt; [--force]
 /// Integrity and versions of the catalog itself, and catalog backups with Reed-Solomon repair data.
 /// </summary>
 public sealed class CatalogCommand : ICommand
@@ -9,7 +9,7 @@ public sealed class CatalogCommand : ICommand
     public string Name => "catalog";
     public string Group => CommandGroup.Catalog;
     public string Summary => "Integrity check, older versions, backups with repair data";
-    public string Usage => "catalog check | accept | history | rollback <id> | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force]";
+    public string Usage => "catalog check | accept | history | rollback <id> | backup create <dir> [--encrypt] | backup verify <dir> [--repair] | backup restore <dir> [--force]";
     public string Details => """
         The catalog is checked against catalog.hash.json every time it is loaded; if it was changed outside bdxl or
         is damaged, other commands refuse to run.
@@ -18,8 +18,10 @@ public sealed class CatalogCommand : ICommand
           catalog history            older versions (one copy is kept before each command that changes the catalog)
           catalog rollback <id>      go back to one of them (the current state is saved first)
           catalog backup create <dir>            copy + Reed-Solomon repair data (--parity-percent 25)
-          catalog backup verify <dir> [--repair] check / fix a backup
-          catalog backup restore <dir> [--force] put a backup back
+                  --encrypt                      encrypt the copy (password: BDXL_PASSWORD, --password-env or typed)
+          catalog backup verify <dir> [--repair] check / fix a backup (also an encrypted one: no password needed)
+          catalog backup restore <dir> [--force] put a backup back (asks for the password if it is encrypted)
+        A catalog backup on a disc staged with --encrypt is encrypted with that disc's password.
         """;
     public bool AllowBrokenCatalog => true;
 
@@ -34,11 +36,11 @@ public sealed class CatalogCommand : ICommand
             case "rollback": return Rollback(c);
             case "backup":
                 string action = c.Args.Count > 1 ? c.Args[1].ToLowerInvariant() : "";
-                if (c.Args.Count != 3) throw new UserException("Usage: catalog backup create <dir> | verify <dir> [--repair] | restore <dir> [--force]");
+                if (c.Args.Count != 3) throw new UserException("Usage: catalog backup create <dir> [--encrypt] | verify <dir> [--repair] | restore <dir> [--force]");
                 if (action == "create") return BackupCreate(c, c.Args[2]);
                 if (action == "verify") return BackupVerify(c, c.Args[2]);
                 if (action == "restore") return BackupRestore(c, c.Args[2]);
-                throw new UserException("Usage: catalog backup create <dir> | verify <dir> [--repair] | restore <dir> [--force]");
+                throw new UserException("Usage: catalog backup create <dir> [--encrypt] | verify <dir> [--repair] | restore <dir> [--force]");
             default:
                 throw new UserException("Usage: catalog check | accept | history | rollback <id> | backup create|verify|restore <dir>");
         }
@@ -129,14 +131,19 @@ public sealed class CatalogCommand : ICommand
         if (c.Cat.Integrity.State == IntegrityState.Broken)
             throw new UserException("The catalog is broken; a backup of it would be worthless. Run 'catalog check'.");
         string dir = Path.Combine(Path.GetFullPath(destArg), $"catalog-{DateTime.Now:yyyyMMdd-HHmmss}");
-        Console.WriteLine($"Catalog backup -> {dir}");
-        WriteBackup(c, dir);
+        KeyCache? keys = c.Opt.Has("encrypt") ? new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: true)) : null;
+        Console.WriteLine($"Catalog backup -> {dir}" + (keys != null ? "  (encrypted)" : ""));
+        WriteBackup(c, dir, keys, keys != null ? FileCrypto.NewSalt() : null);
         Console.WriteLine("Keep it on a different medium than the catalog (or burn it onto the next disc: stage --with-catalog).");
         return 0;
     }
 
-    /// <summary>Copies the catalog files into dir and adds .repair.json + .par (Reed-Solomon) next to each. Also used by 'stage --with-catalog'.</summary>
-    public static void WriteBackup(Ctx c, string dir)
+    /// <summary>
+    /// Copies the catalog files into dir and adds .repair.json + .par (Reed-Solomon) next to each. Also used by
+    /// 'stage --with-catalog'. With keys every file is stored encrypted (name.enc); the repair data then covers the
+    /// encrypted bytes, so a backup can be checked and repaired without the password.
+    /// </summary>
+    public static void WriteBackup(Ctx c, string dir, KeyCache? keys = null, byte[]? salt = null)
     {
         int pct = c.Opt.GetInt("parity-percent", 25);
         if (pct < 1 || pct > 50) throw new UserException("--parity-percent must be between 1 and 50.");
@@ -147,18 +154,28 @@ public sealed class CatalogCommand : ICommand
             string src = Path.Combine(c.Cat.Dir, name);
             if (!File.Exists(src)) continue;
             byte[] data = File.ReadAllBytes(src);
-            var meta = Rs.Protect(name, data, pct, out byte[] parity);
-            File.WriteAllBytes(Path.Combine(dir, name), data);
-            File.WriteAllBytes(Path.Combine(dir, name + ".par"), parity);
-            JsonStore.WriteObject(Path.Combine(dir, name + ".repair.json"), meta);
-            Console.WriteLine($"  {name}: {SizeText.Bytes(data.Length)} bytes + {SizeText.Bytes(parity.Length)} bytes repair data " +
+            string stored = name;
+            if (keys != null)
+            {
+                data = FileCrypto.EncryptBytes(data, keys, salt!);
+                stored = name + FileCrypto.Suffix;
+            }
+            var meta = Rs.Protect(stored, data, pct, out byte[] parity);
+            File.WriteAllBytes(Path.Combine(dir, stored), data);
+            File.WriteAllBytes(Path.Combine(dir, stored + ".par"), parity);
+            JsonStore.WriteObject(Path.Combine(dir, stored + ".repair.json"), meta);
+            Console.WriteLine($"  {stored}: {SizeText.Bytes(data.Length)} bytes + {SizeText.Bytes(parity.Length)} bytes repair data " +
                               $"(can rebuild up to {meta.ParityBlocks} damaged blocks of {SizeText.Bytes(meta.BlockSize)} bytes)");
         }
 
         File.WriteAllText(Path.Combine(dir, "README.txt"),
             $"BDXL catalog backup, created {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC.\n\n" +
-            "files.jsonl, discs.jsonl, blanks.jsonl, settings.json   the catalog (JSON, readable in any text editor)\n" +
-            "*.repair.json, *.par       repair data: per-block SHA-256 + Reed-Solomon parity blocks (GF(256), Cauchy matrix)\n\n" +
+            (keys == null
+                ? "files.jsonl, discs.jsonl, blanks.jsonl, settings.json   the catalog (JSON, readable in any text editor)\n"
+                : "files.jsonl.enc, discs.jsonl.enc, blanks.jsonl.enc, settings.json.enc   the catalog, ENCRYPTED\n" +
+                  "    (AES-256-GCM, bdxl's BDXLENC1 format; restoring asks for the password the disc was staged with)\n") +
+            "*.repair.json, *.par       repair data: per-block SHA-256 + Reed-Solomon parity blocks (GF(256), Cauchy matrix)\n" +
+            (keys == null ? "\n" : "    (computed over the encrypted files: checking and repairing need no password)\n\n") +
             "Check:    bdxl catalog backup verify <this folder>\n" +
             "Repair:   bdxl catalog backup verify <this folder> --repair\n" +
             "Restore:  bdxl catalog backup restore <this folder> --catalog <catalog folder> [--force]\n");
@@ -221,12 +238,18 @@ public sealed class CatalogCommand : ICommand
         bool force = c.Opt.Has("force");
         string target = c.Cat.Dir;
         var loaded = new List<(string Name, byte[] Data, RsStatus Status)>();
+        KeyCache? keys = null;
 
+        // everything is checked (and decrypted) before anything is written, so a failure leaves the catalog as it was
         foreach (string name in RepairNames(dir))
         {
             var r = Load(dir, name);
             if (r.Status == RsStatus.Unrecoverable) throw new UserException($"{name} is damaged beyond repair; nothing was restored.");
-            loaded.Add((name, r.Data, r.Status));
+            if (!name.EndsWith(FileCrypto.Suffix, StringComparison.OrdinalIgnoreCase)) { loaded.Add((name, r.Data, r.Status)); continue; }
+
+            keys ??= new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: false));
+            try { loaded.Add((name[..^FileCrypto.Suffix.Length], FileCrypto.DecryptBytes(r.Data, keys), r.Status)); }
+            catch (InvalidDataException ex) { throw new UserException($"{name}: {ex.Message}; nothing was restored."); }
         }
 
         bool existing = Catalog.CoveredFiles.Any(n => File.Exists(Path.Combine(target, n)));

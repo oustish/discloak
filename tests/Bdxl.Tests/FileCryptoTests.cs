@@ -44,6 +44,16 @@ public class FileCryptoTests : IDisposable
     }
 
     [Fact]
+    public void In_memory_round_trip_for_metadata()
+    {
+        byte[] plain = Encoding.UTF8.GetBytes("{\"path\":\"Zdjęcia/łódź.jpg\"}\n");
+        byte[] stored = FileCrypto.EncryptBytes(plain, Keys, Salt);
+        Assert.Equal(FileCrypto.StoredSize(plain.Length), stored.Length);
+        Assert.Equal(plain, FileCrypto.DecryptBytes(stored, Keys));
+        Assert.Throws<InvalidDataException>(() => FileCrypto.DecryptBytes(stored[..^1], Keys));
+    }
+
+    [Fact]
     public void A_byte_range_encrypts_just_that_part()
     {
         byte[] plain = new byte[Chunk + 5000];

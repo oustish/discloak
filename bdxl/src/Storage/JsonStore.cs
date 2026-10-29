@@ -21,12 +21,19 @@ public static class JsonStore
         File.Move(tmp, path, overwrite: true);
     }
 
-    public static List<T> ReadLines<T>(string path)
+    /// <summary>The same JSON lines WriteLines would write, as UTF-8 bytes (for content that is encrypted before it is stored).</summary>
+    public static byte[] LinesToBytes<T>(IEnumerable<T> items) =>
+        Encoding.UTF8.GetBytes(string.Concat(items.Select(i => JsonSerializer.Serialize(i, Compact) + Environment.NewLine)));
+
+    public static List<T> ReadLines<T>(string path) =>
+        File.Exists(path) ? ParseLines<T>(File.ReadLines(path), Path.GetFileName(path)) : new List<T>();
+
+    /// <summary>Parses JSON lines; name is only used in error messages.</summary>
+    public static List<T> ParseLines<T>(IEnumerable<string> lines, string name)
     {
         var result = new List<T>();
-        if (!File.Exists(path)) return result;
         int lineNo = 0;
-        foreach (string line in File.ReadLines(path))
+        foreach (string line in lines)
         {
             lineNo++;
             if (string.IsNullOrWhiteSpace(line)) continue;
@@ -37,7 +44,7 @@ public static class JsonStore
             }
             catch (JsonException ex)
             {
-                throw new JsonException($"{Path.GetFileName(path)} line {lineNo}: {ex.Message}");
+                throw new JsonException($"{name} line {lineNo}: {ex.Message}");
             }
         }
         return result;

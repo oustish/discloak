@@ -10,11 +10,13 @@
   now warns (exit 2) when the staged folder (with manifest/_catalog) is larger than the disc.
 - Later the same day: `--split` added (see below) and the last small issues fixed (`plan` disc estimate ignores
   files larger than any disc, `ignore remove` of an unknown rule exits 1, `stage` exits 2 when nothing could be staged).
+- Since then: one class per command (`ICommand`), one file per model type, xUnit tests, and encrypted discs hide
+  everything but `disc.json`: file names, manifest and `_catalog` backup (see Key rules).
 
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 129 tests, about a second
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 136 tests, about a second
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -34,7 +36,7 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 | `src/Storage/Catalog.cs` | Load/Save, integrity (`catalog.hash.json`), snapshots in `history/`, rollback |
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
 | `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (+`PasswordPolicy`, `KeyCache`), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
-| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest.jsonl + disc.json, writing them onto a mounted disc) |
+| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json, encrypted manifest, hidden names, writing onto a mounted disc) |
 | `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
 
 ## Adding a command
@@ -58,10 +60,22 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - "Live" disc = state is not `lost` or `destroyed`.
 - **Ignored files:** `Sha256 = ""` (never hashed), `Ignored = true`. Any code that uses the hash must skip empty hashes.
   `restage` ignores the `Ignored` flag on purpose.
-- **Encryption:** stored path = `<alias>/<rel>.enc`.
+- **Encryption (`stage --encrypt`):** nothing but `disc.json` is readable without the password.
+  - Stored path = hidden name `data/NNN/NNNNNN.enc` (`DiscFiles.HiddenName`, numbered in staging order, 1000 per
+    folder; no source mtime). Discs staged before this keep `<alias>/<rel>.enc`; both work, since everything
+    uses `BackupRef.DiscPath`.
   - `BackupRef.Sha256` = hash of the plaintext; `StoredSha256` = hash of the ciphertext (used by `verify` without a password).
   - Format `BDXLENC1`: header (iterations, salt, nonce prefix), then 1 MiB AES-GCM chunks; the AAD is the chunk number plus a last-chunk flag.
-  - One salt per staged disc; keys are cached per salt.
+    `FileCrypto.EncryptBytes/DecryptBytes` do the same in memory (metadata never touches a disk in plaintext).
+  - One salt per staged disc; keys are cached per salt. Manifest and `_catalog` use the disc's password and salt.
+  - Manifest: `manifest.jsonl.enc`; its lines carry `Source` (alias/relative path), the only link from hidden
+    names to real paths besides the catalog. `DiscFiles.Write` refuses to write a plain manifest for an encrypted
+    disc. Readers: `DiscFiles.ReadManifest` (asks for the password). `restage`/`discjson` of an encrypted disc
+    therefore always need the password.
+  - `disc.json` stays plain (`restore` identifies discs before any password is known) and has `"encrypted": true`.
+  - `_catalog` (and `catalog backup create --encrypt`): `<name>.enc` per catalog file; Reed-Solomon data covers the
+    encrypted bytes, so `catalog backup verify --repair` needs no password. `backup restore` decrypts everything
+    before writing anything.
 - **Split files (`plan/stage --split`):** only files larger than every blank disc. Stored as `<path>.001`, `.002` ...
   (`.001.enc` when encrypted, each part on its own). A part is a `BackupRef` with `Part/Parts/Offset/Length/PartSha256`;
   `Sha256` stays the whole-file hash. `ContentSha256` = what the stored file holds (use it for verify/restage).
@@ -98,12 +112,11 @@ Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below
 | `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
+| `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, verify + restore, `scandisc` rebuild from the encrypted manifest (wrong/no password), `_catalog` repaired without and restored with the password, standalone `--encrypt` backup, restage, discjson |
 
 ## Suggested next steps
 Ideas not built yet:
    - `burn` command that runs an external burner from a configurable command template, then `verify` + `burned`.
-   - ISO/UDF image creation by calling oscdimg / mkudffs (UDF 2.50 or later is needed for files over 4 GiB).
-   - Encrypting the `_catalog` backup and the manifest on encrypted discs (file names are currently readable).
    - Restore-time progress output.
    - Faster disc reads (`restore`, `verify`, `scandisc --method hash`). Do NOT read several files from the same
      optical disc in parallel: a CD/DVD/BD drive has one read head, so concurrent reads make it seek back and forth

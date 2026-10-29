@@ -105,8 +105,22 @@ public static class FileCrypto
         Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
         using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
         using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
-        using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         input.Seek(offset, SeekOrigin.Begin);
+        return Encrypt(input, output, keys, salt, length);
+    }
+
+    /// <summary>Encrypts small metadata (manifest, catalog backup) without its plaintext ever touching a disk.</summary>
+    public static byte[] EncryptBytes(byte[] plain, KeyCache keys, byte[] salt)
+    {
+        using var output = new MemoryStream();
+        Encrypt(new MemoryStream(plain, writable: false), output, keys, salt);
+        return output.ToArray();
+    }
+
+    /// <summary>Encrypts length bytes (-1 = to the end) from the current position of input. Returns the plaintext's SHA-256.</summary>
+    public static string Encrypt(Stream input, Stream output, KeyCache keys, byte[] salt, long length = -1)
+    {
+        using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long remaining = length < 0 ? long.MaxValue : length;
         int ReadNext(byte[] buffer)
         {
@@ -156,6 +170,20 @@ public static class FileCrypto
         Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
         using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
         using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
+        return Decrypt(input, output, keys);
+    }
+
+    /// <summary>Decrypts small metadata in memory. Throws InvalidDataException on a wrong password or damage.</summary>
+    public static byte[] DecryptBytes(byte[] stored, KeyCache keys)
+    {
+        using var output = new MemoryStream();
+        Decrypt(new MemoryStream(stored, writable: false), output, keys);
+        return output.ToArray();
+    }
+
+    /// <summary>Decrypts a whole BDXLENC1 stream (input must be seekable: the last chunk is recognised by its position).</summary>
+    public static string Decrypt(Stream input, Stream output, KeyCache keys)
+    {
         using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
         var header = new byte[8 + 4 + 16 + 8];

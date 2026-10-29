@@ -6,9 +6,13 @@ public sealed class DiscJsonCommand : ICommand
     public string Group => CommandGroup.ExistingDiscs;
     public string Summary => "Write disc.json onto a disc that can still be written to";
     public string Usage => "discjson <label> <mountPath> [--overwrite]";
-    public string Details => "For a disc already in the catalog. Fails with an explanation if the disc is finalized or read-only.";
+    public string Details => """
+        For a disc already in the catalog. Fails with an explanation if the disc is finalized or read-only.
+        If the disc has no manifest, one is written too; for an encrypted disc it is encrypted (manifest.jsonl.enc),
+        so the password is needed (BDXL_PASSWORD, --password-env or typed).
+        """;
 
-    /// <summary>discjson &lt;label&gt; &lt;mountPath&gt;: writes disc.json (and manifest.jsonl if missing) onto a disc that can still be written to.</summary>
+    /// <summary>discjson &lt;label&gt; &lt;mountPath&gt;: writes disc.json (and the manifest if missing) onto a disc that can still be written to.</summary>
     public int Run(Ctx c)
     {
         if (c.Args.Count != 2) throw new UserException("Usage: discjson <label> <mountPath> [--overwrite]");
@@ -20,10 +24,14 @@ public sealed class DiscJsonCommand : ICommand
             .GroupBy(x => x.Copy.DiscPath, StringComparer.Ordinal).Select(g => g.First())
             .Select(x => (x.File, x.Copy, FullPath: Path.Combine(mount, x.Copy.DiscPath)))
             .Where(x => File.Exists(x.FullPath))
-            .Select(x => ManifestLine.For(x.Copy, new FileInfo(x.FullPath).Length, x.File.Size))
+            .Select(x => ManifestLine.For(x.Copy, new FileInfo(x.FullPath).Length, x.File))
             .ToList();
 
-        if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), out string why))
+        KeyCache? keys = null;
+        if (disc.Encrypted && manifest.Count > 0 && !DiscFiles.HasManifest(mount))
+            keys = new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: true));
+
+        if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), keys, keys != null ? FileCrypto.NewSalt() : null, out string why))
         {
             Console.WriteLine($"disc.json written for {disc.Label} ({manifest.Count:N0} file(s) found on the disc).");
             return 0;
