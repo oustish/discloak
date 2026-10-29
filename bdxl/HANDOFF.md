@@ -98,4 +98,13 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
    - `burn` command that runs an external burner from a configurable command template, then `verify` + `burned`.
    - ISO/UDF image creation by calling oscdimg / mkudffs (UDF 2.50 or later is needed for files over 4 GiB).
    - Encrypting the `_catalog` backup and the manifest on encrypted discs (file names are currently readable).
-   - Restore-time progress output, and multithreading for `verify` / `scandisc --method hash`.
+   - Restore-time progress output.
+   - Faster disc reads (`restore`, `verify`, `scandisc --method hash`). Do NOT read several files from the same
+     optical disc in parallel: a CD/DVD/BD drive has one read head, so concurrent reads make it seek back and forth
+     (slow seeks, spin-speed changes) and total throughput drops well below one sequential reader. The disc is the
+     bottleneck (BDXL reads at roughly 18-36 MB/s; SHA-256 and AES-GCM are far faster), so instead:
+     - one sequential reader per physical drive (parallel across different drives is fine);
+     - pipeline per drive: read the next file / chunk while the previous one is hashed, decrypted and written
+       (read → bounded queue → hash/decrypt/write), with large read buffers;
+     - read in on-disc order (the order files were staged, roughly path order), not catalog order.
+     `scan --threads` stays as it is: it reads from HDD/SSD sources, where parallel hashing does help.
