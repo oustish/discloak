@@ -54,6 +54,14 @@ public static class Program
         if (cat.Integrity.State == IntegrityState.Legacy)
             Console.Error.WriteLine("Note: this catalog has no integrity hashes yet; they are written the next time it changes.");
 
-        return spec.Run(new Ctx(cat, opt));
+        Interrupt.Begin(spec);
+        try
+        {
+            return spec.Run(new Ctx(cat, opt));
+        }
+        finally
+        {
+            Interrupt.End();
+        }
     }
 }

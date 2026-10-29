@@ -10,6 +10,7 @@ public sealed class ScanCommand : ICommand
     public string Group => CommandGroup.Indexing;
     public string Summary => "Index files (a folder, or every known location)";
     public string Usage => "scan [<folder>] [--name <alias>] [--threads N] [--full]";
+    public bool Interruptible => true;
     public string Details => """
         With a folder: adds it to the catalog (first time) or rescans it. Every file gets a SHA-256 hash; unchanged
         files (same size and modified time) are not read again. Files that disappeared are marked as missing.
@@ -28,6 +29,9 @@ public sealed class ScanCommand : ICommand
         Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
         files take long, a status line below shows how far they are (rewritten in place, not written when the output
         is redirected). The catalog is saved every 2 minutes.
+        Ctrl+C stops cleanly: the files being hashed are dropped, what was hashed is saved, nothing is marked as
+        missing in that location, and the summary says what was left; running the scan again continues. A second
+        Ctrl+C stops at once.
         """;
 
     sealed class WorkItem
@@ -80,6 +84,11 @@ public sealed class ScanCommand : ICommand
     sealed class Totals
     {
         public int Added, Changed, Unchanged, Skipped, Missing, Moved, IgnoredNew, BecameIgnored, NoLongerIgnored;
+        public bool Interrupted;                   // Ctrl+C: stopped early
+        public int Unhashed;                       // files that still needed hashing when it stopped
+        public long UnhashedBytes;
+        public bool WalkCut;                       // stopped while still listing folders
+        public List<string> NotScanned = new();    // locations not reached
     }
 
     static string NormalizeRoot(string arg)
@@ -141,6 +150,7 @@ public sealed class ScanCommand : ICommand
                 Console.WriteLine($"Warning: {name} ({root}) is not available - skipped, nothing marked as missing.");
                 continue;
             }
+            if (totals.Interrupted) { totals.NotScanned.Add(name); continue; }
             ScanRoot(c, root, name, threads, full, totals);
         }
 
@@ -148,7 +158,7 @@ public sealed class ScanCommand : ICommand
         int linked = c.Arc.LinkDuplicates();
         c.Cat.Save();
 
-        Console.WriteLine($"\nScan done: {totals.Added} new, {totals.Changed} changed, {totals.Unchanged} unchanged, " +
+        Console.WriteLine($"\nScan {(totals.Interrupted ? "INTERRUPTED" : "done")}: {totals.Added} new, {totals.Changed} changed, {totals.Unchanged} unchanged, " +
                           $"{totals.Moved} moved/renamed, {totals.Missing} no longer on source, {totals.Skipped} skipped (unreadable).");
         if (totals.IgnoredNew + totals.BecameIgnored > 0)
             Console.WriteLine($"Ignored by rules: {totals.IgnoredNew} new, {totals.BecameIgnored} existing files now ignored (they stay in the catalog but are not staged).");
@@ -156,7 +166,13 @@ public sealed class ScanCommand : ICommand
             Console.WriteLine($"{totals.NoLongerIgnored} file(s) are no longer ignored.");
         if (linked > 0)
             Console.WriteLine($"{linked} file(s) already backed up under another path (same hash) - linked, nothing to burn.");
-        return 0;
+        if (!totals.Interrupted) return 0;
+
+        Console.WriteLine($"Stopped by Ctrl+C. What was hashed is saved; {totals.Unhashed:N0} file(s), {SizeText.Bytes(totals.UnhashedBytes)} bytes " +
+                          "were not hashed yet" + (totals.WalkCut ? " (not counting folders it had not listed yet)" : "") + (totals.NotScanned.Count > 0 ? $", and these locations were not scanned: {string.Join(", ", totals.NotScanned)}" : "") + ".");
+        Console.WriteLine("Nothing was marked as missing in the location that was interrupted. Run the same scan again to finish: " +
+                          "files already hashed are not read again.");
+        return Interrupt.ExitCode;
     }
 
     static void ScanRoot(Ctx c, string root, string name, int threads, bool full, Totals t)
@@ -175,7 +191,7 @@ public sealed class ScanCommand : ICommand
         // 1. walk the folder (sequential); decide what has to be hashed
         var folders = new Stack<(DirectoryInfo Dir, string Rel)>();
         folders.Push((new DirectoryInfo(root), ""));
-        while (folders.Count > 0)
+        while (folders.Count > 0 && !Interrupt.Requested)
         {
             var (dir, relDir) = folders.Pop();
             FileSystemInfo[] entries;
@@ -253,14 +269,22 @@ public sealed class ScanCommand : ICommand
             try
             {
                 int i;
-                while ((i = Interlocked.Increment(ref next)) < work.Count)
+                while (!Interrupt.Requested && (i = Interlocked.Increment(ref next)) < work.Count)
                 {
                     var w = work[i];
                     active[w] = 0;
-                    try { w.Hash = Hashing.HashFile(w.FullPath, read => Volatile.Write(ref w.BytesRead, read)); }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { w.Error = ex.Message; }
-                    active.TryRemove(w, out _);
-                    results.Add(w);
+                    try
+                    {
+                        w.Hash = Hashing.HashFile(w.FullPath, read =>
+                        {
+                            Volatile.Write(ref w.BytesRead, read);
+                            if (Interrupt.Requested) throw new OperationCanceledException();   // a large file stops mid-way
+                        });
+                        results.Add(w);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { w.Error = ex.Message; results.Add(w); }
+                    catch (OperationCanceledException) { }
+                    finally { active.TryRemove(w, out _); }
                 }
             }
             finally
@@ -334,6 +358,15 @@ public sealed class ScanCommand : ICommand
             var newOnes = added.Select(a => a.Rec).ToHashSet();
             c.Cat.Files.RemoveAll(newOnes.Contains);
             c.Cat.Files.AddRange(added.OrderBy(a => a.Index).Select(a => a.Rec));
+        }
+
+        if (Interrupt.Requested)   // the walk or the hashing was cut short: what was not seen may still be there
+        {
+            t.Interrupted = true;
+            t.WalkCut |= folders.Count > 0;
+            t.Unhashed += work.Count - done;
+            t.UnhashedBytes += totalBytes - doneBytes;
+            return;
         }
 
         // 3. files that vanished (but never guess about folders we could not read)

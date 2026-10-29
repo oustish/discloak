@@ -18,7 +18,7 @@
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 151 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 152 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -28,11 +28,12 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 ## Source layout
 | Folder | Contents |
 |---|---|
-| `src/Program.cs` | `Main`: parse args → find command → load + integrity-check catalog → run. Exit codes: 0 ok, 1 error, 2 partial/not everything fits, 3 problems found, 4 catalog broken |
+| `src/Program.cs` | `Main`: parse args → find command → load + integrity-check catalog → run. Exit codes: 0 ok, 1 error, 2 partial/not everything fits, 3 problems found, 4 catalog broken, 130 interrupted (Ctrl+C) |
 | `src/Cli/Options.cs` | Arg parser. `Flags` set = options without a value (add new boolean options there!) |
 | `src/Cli/ICommand.cs` | `ICommand`: `Name`, `Group` (a `CommandGroup` constant), `Summary`, `Usage`, `Details` (help text), `AllowBrokenCatalog` / `NeedsCatalog` (default false / true), `Run(Ctx)` |
 | `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
 | `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing) |
+| `src/Cli/Interrupt.cs` | Ctrl+C: `Interruptible` commands get `Interrupt.Requested` and stop cleanly; others (or a 2nd Ctrl+C) exit at once with a note. `Catalog.Save` runs inside `Interrupt.Critical()`, so a save is never cut off |
 | `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `AppendSession`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
 | `src/Storage/Catalog.cs` | Load/Save, integrity (`catalog.hash.json`), snapshots in `history/`, rollback |
@@ -45,6 +46,8 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 1. `src/Commands/FooCommand.cs`: `public sealed class FooCommand : ICommand` with Name/Group/Summary/Usage/Details and `Run`.
 2. Add `new FooCommand()` to `CommandTable.All` where it should appear in `bdxl help`.
 3. New boolean options go into `Options.Flags`.
+4. A long-running command that can stop cleanly: `Interruptible => true`, check `Interrupt.Requested` at safe points,
+   save, say what was left undone and return `Interrupt.ExitCode`. Only `scan` does so far.
 
 Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --with-catalog` calls `CatalogCommand.WriteBackup`;
 `stage`/`restage` write `DiscFiles.Write`, `scandisc`/`discjson` use `DiscFiles.TryWriteDiscJson`.
@@ -126,6 +129,8 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - Moves: a file gone from its path whose hash turns up at a path with no copy of its own (new, or alias-only)
     is a move: the old record takes the new path, keeps its backups, the other record is dropped
     (`ScanCommand.DetectMoves`, after all locations, before `LinkDuplicates`).
+  - Ctrl+C: stops walking/hashing (a file being hashed is dropped), saves, skips the "missing" step for the
+    interrupted location and lists what was left; locations not reached are named.
   - Hashing: N worker threads each take the next file (no batches, so one large file never holds up the
     others); results are applied to the catalog on the main thread in the order they finish, the catalog is saved
     every 2 minutes, and new records are put back in folder-walk order at the end (same catalog as 1 thread).
@@ -140,6 +145,7 @@ Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below
 | `ArchiveTests` | `CompleteCopy` (layouts never mix), dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
 | `FileCryptoTests` | round trips around chunk boundaries, byte ranges, wrong password, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy, key check, `OpensWith` |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
+| `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes (own non-parallel collection: `Interrupt` is process-wide) |
 | `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |

@@ -145,6 +145,7 @@ public sealed class Catalog
             snapshotDone = true;   // one copy per command, however many times it saves
         }
 
+        using var _ = Interrupt.Critical();   // Ctrl+C waits until all files and their hashes are written
         Directory.CreateDirectory(Dir);
         JsonStore.WriteLines(Path.Combine(Dir, "files.jsonl"),
             Files.OrderBy(f => f.Root, StringComparer.Ordinal).ThenBy(f => f.RelPath, StringComparer.Ordinal));
