@@ -94,6 +94,7 @@ public sealed class ScanDiscCommand : ICommand
         var found = new List<DiscFile>();
         var problems = new List<string>();      // listed in the manifest but missing / different size, or unreadable
         var notListed = new List<string>();     // on the disc but not in the manifest
+        KeyCache? manifestKeys = null;          // the password that opened an encrypted manifest
 
         if (method == "hash")
         {
@@ -112,7 +113,7 @@ public sealed class ScanDiscCommand : ICommand
         {
             var diskByPath = onDisc.ToDictionary(x => x.Path, x => x, StringComparer.Ordinal);
             var listed = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var line in DiscFiles.ReadManifest(mount, c.Opt)!)
+            foreach (var line in DiscFiles.ReadManifest(mount, c.Opt, out manifestKeys)!)
             {
                 listed.Add(line.Path);
                 if (!diskByPath.TryGetValue(line.Path, out var onThisDisc)) { problems.Add($"{line.Path}: listed in the manifest but not on the disc"); continue; }
@@ -133,8 +134,10 @@ public sealed class ScanDiscCommand : ICommand
         }
 
         // 3. connect what was found with what the catalog already knows
-        var byPathIdx = c.Cat.Files.ToLookup(f => f.RootName + "/" + f.RelPath, StringComparer.Ordinal);
+        var byPathIdx = c.Cat.Files.GroupBy(f => f.RootName + "/" + f.RelPath, StringComparer.Ordinal)
+                                   .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
         var byHashIdx = c.Cat.Files.Where(f => f.Sha256.Length > 0).ToLookup(f => f.Sha256, StringComparer.OrdinalIgnoreCase);
+        var createdHere = new HashSet<FileRecord>();   // a disc with appended sessions can hold several versions of one path
         var disc = existing ?? new DiscRecord
         {
             Label = label, State = "burned", CreatedUtc = burnedAt, BurnedUtc = burnedAt, Note = $"imported from disc ({method})"
@@ -156,7 +159,8 @@ public sealed class ScanDiscCommand : ICommand
                 string suffix = SplitLayout.Suffix(split.Part!.Value, split.Parts!.Value);
                 if (logical.EndsWith(suffix, StringComparison.Ordinal)) logical = logical[..^suffix.Length];
             }
-            var candidates = byPathIdx[logical].ToList();
+            var candidates = byPathIdx.TryGetValue(logical, out var known) ? known : [];
+            long fileSize = df.SplitLine?.FileSize ?? (df.Encrypted ? Math.Max(0, df.Size - 36) : df.Size);
 
             if (df.Sha256 == null)   // quick: nothing was hashed, so the catalog entry has to match on path, size and time
             {
@@ -170,7 +174,14 @@ public sealed class ScanDiscCommand : ICommand
                 sha = df.Sha256;
                 rec = candidates.FirstOrDefault(x => Hashing.SameHash(x.Sha256, sha));
                 if (rec != null) sameVersion++;
-                else if (candidates.Count > 0) { rec = candidates[0]; olderVersion++; }   // same path, other content: an older/newer version
+                else if (candidates.Count > 0)                                           // same path, other content: an older/newer version
+                {
+                    rec = candidates[0];
+                    olderVersion++;
+                    // only known from this disc: the later copy (source time, or staging time if hidden) is the current version
+                    if (createdHere.Contains(rec) && df.Mtime > rec.ModifiedUtc)
+                        (rec.Sha256, rec.Size, rec.ModifiedUtc) = (sha, fileSize, df.Mtime);
+                }
                 else
                 {
                     rec = byHashIdx[sha].FirstOrDefault();                                   // same content under another path (moved/renamed)
@@ -187,10 +198,12 @@ public sealed class ScanDiscCommand : ICommand
                     rec = new FileRecord
                     {
                         Root = root, RootName = rootName, RelPath = relPath,
-                        Size = df.SplitLine?.FileSize ?? (df.Encrypted ? Math.Max(0, df.Size - 36) : df.Size),
-                        ModifiedUtc = df.Mtime, Sha256 = sha, AddedUtc = DateTime.UtcNow, MissingSinceUtc = DateTime.UtcNow
+                        Size = fileSize, ModifiedUtc = df.Mtime, Sha256 = sha, AddedUtc = DateTime.UtcNow, MissingSinceUtc = DateTime.UtcNow
                     };
                     c.Cat.Files.Add(rec);
+                    if (known == null) byPathIdx[logical] = [rec];
+                    else known.Add(rec);
+                    createdHere.Add(rec);
                     created++;
                 }
             }
@@ -198,7 +211,7 @@ public sealed class ScanDiscCommand : ICommand
             var copy = new BackupRef
             {
                 Disc = label, DiscPath = df.Path, Sha256 = sha, BackedUpUtc = burnedAt, Unverified = df.Unverified,
-                Encrypted = df.Encrypted, StoredSha256 = df.StoredSha256
+                Encrypted = df.Encrypted, StoredSha256 = df.StoredSha256, StoredSize = df.Size
             };
             if (df.SplitLine is { } part)
             {
@@ -214,6 +227,7 @@ public sealed class ScanDiscCommand : ICommand
         disc.FileCount = onDisc.Count;
         disc.UsedBytes = onDisc.Sum(x => x.Size);
         if (found.Any(x => x.Encrypted)) disc.Encrypted = true;
+        if (manifestKeys != null) disc.KeyCheck ??= FileCrypto.NewKeyCheck(manifestKeys);   // lets 'stage --append' recognise the password
         string? capText = c.Opt.Get("capacity");
         if (capText != null) disc.Capacity = SizeText.Parse(capText);
         decimal? cost = c.Opt.GetMoney("cost");

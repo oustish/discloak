@@ -54,6 +54,27 @@ public class FileCryptoTests : IDisposable
     }
 
     [Fact]
+    public void The_key_check_recognises_only_the_right_password()
+    {
+        string check = FileCrypto.NewKeyCheck(Keys);
+        Assert.True(FileCrypto.MatchesKeyCheck(check, Keys));
+        Assert.False(FileCrypto.MatchesKeyCheck(check, new KeyCache("Wrong-Password-1")));
+        Assert.NotEqual(check, FileCrypto.NewKeyCheck(Keys));   // own salt every time
+        Assert.Throws<InvalidDataException>(() => FileCrypto.MatchesKeyCheck("garbage", Keys));
+    }
+
+    [Fact]
+    public void OpensWith_tries_the_password_on_the_first_chunk_only()
+    {
+        string enc = Encrypt(new byte[3 * Chunk], "big.bin");
+        Assert.True(FileCrypto.OpensWith(enc, Keys));
+        Assert.False(FileCrypto.OpensWith(enc, new KeyCache("Wrong-Password-1")));
+
+        string tiny = Encrypt(new byte[10], "tiny.bin");   // a single chunk is also the last one
+        Assert.True(FileCrypto.OpensWith(tiny, Keys));
+    }
+
+    [Fact]
     public void A_byte_range_encrypts_just_that_part()
     {
         byte[] plain = new byte[Chunk + 5000];

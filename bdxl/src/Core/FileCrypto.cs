@@ -182,7 +182,21 @@ public static class FileCrypto
     }
 
     /// <summary>Decrypts a whole BDXLENC1 stream (input must be seekable: the last chunk is recognised by its position).</summary>
-    public static string Decrypt(Stream input, Stream output, KeyCache keys)
+    public static string Decrypt(Stream input, Stream output, KeyCache keys) => Decrypt(input, output, keys, firstChunkOnly: false);
+
+    /// <summary>True if the password opens this encrypted file (only its first chunk is decrypted, so this is quick).</summary>
+    public static bool OpensWith(string path, KeyCache keys)
+    {
+        try
+        {
+            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            Decrypt(input, Stream.Null, keys, firstChunkOnly: true);
+            return true;
+        }
+        catch (InvalidDataException) { return false; }
+    }
+
+    static string Decrypt(Stream input, Stream output, KeyCache keys, bool firstChunkOnly)
     {
         using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
@@ -222,11 +236,34 @@ public static class FileCrypto
             plainHash.AppendData(plain);
             output.Write(plain);
 
-            if (last) break;
+            if (last || firstChunkOnly) break;
             counter++;
         }
         return Convert.ToHexString(plainHash.GetHashAndReset());
     }
+
+    /// <summary>
+    /// A value kept in the catalog to recognise a disc's password later: "iterations:salt:check", where check is
+    /// derived from a key made with its own salt. Testing a guess against it costs a full PBKDF2 run - no less
+    /// than testing it against any .enc file on the disc.
+    /// </summary>
+    public static string NewKeyCheck(KeyCache keys)
+    {
+        byte[] salt = NewSalt();
+        return $"{DefaultIterations}:{Convert.ToHexString(salt)}:{Convert.ToHexString(CheckBytes(keys.GetKey(salt, DefaultIterations)))}";
+    }
+
+    public static bool MatchesKeyCheck(string keyCheck, KeyCache keys)
+    {
+        string[] parts = keyCheck.Split(':');
+        if (parts.Length != 3 || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out int iterations) ||
+            iterations < 1000 || iterations > 100_000_000)
+            throw new InvalidDataException("unreadable password check value");
+        byte[] salt = Convert.FromHexString(parts[1]), expected = Convert.FromHexString(parts[2]);
+        return CryptographicOperations.FixedTimeEquals(CheckBytes(keys.GetKey(salt, iterations)), expected);
+    }
+
+    static byte[] CheckBytes(byte[] key) => HMACSHA256.HashData(key, "bdxl password check"u8)[..16];
 
     /// <summary>Bytes an encrypted copy of a file of this size occupies on the disc (header + 20 bytes per chunk).</summary>
     public static long StoredSize(long plainSize)

@@ -5,7 +5,7 @@ public sealed class StageCommand : ICommand
     public string Name => "stage";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
-    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--password-env VAR] [--split] [--with-catalog]";
+    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--password-env VAR] [--split] [--with-catalog] [--append <label> [--mount <path>]]";
     public string Details => """
         Creates <destDir>/<label>/ for each disc, copying files as they are (no archive, no compression) and checking
         every copy against its hash. Also writes a manifest and disc.json so the disc describes itself.
@@ -23,13 +23,27 @@ public sealed class StageCommand : ICommand
                            joins them; the file counts as backed up only when every part is on a disc. Once a file
                            has parts on discs, its remaining parts are staged even without --split.
           --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
+          --append L       fill the free space of the burned disc L with a new session instead of using a blank disc.
+                           Only the pending files that fit go into <destDir>/L.s2/ (s3, s4 ... later), together with a
+                           manifest of the WHOLE disc, disc.json and, with --with-catalog, _catalog; burned as the next
+                           session they replace the old ones. The disc must not be finalized, and the burning program
+                           must continue the disc's file system (multisession / "import previous session"), or the
+                           earlier files disappear from view. Free space = disc size - earlier sessions - the disc's
+                           reserve, which every session needs again (metadata and the medium's session overhead).
+                           A changed file whose older version is on the disc is stored as name~2.ext, so both versions
+                           stay restorable. An encrypted disc stays encrypted, with its own password (checked).
+                           Afterwards: 'burned L' for the session, or 'discard L' to take it back.
+          --mount P        with --append: the disc is in the drive at P - its label is checked, the free space the drive
+                           reports is used if it is smaller, and an encrypted disc without a password check value in
+                           the catalog has its password checked against the disc.
         Labels are <prefix><counter>, e.g. BDXL-0007 (see 'settings').
         """;
 
     public int Run(Ctx c)
     {
-        if (c.Args.Count != 1) throw new UserException("Usage: stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--split] [--with-catalog]");
+        if (c.Args.Count != 1) throw new UserException("Usage: " + Usage);
         string destDir = Path.GetFullPath(c.Args[0]);
+        if (c.Opt.Get("append") is { } appendTo) return Append(c, destDir, appendTo);
         int maxDiscs = c.Opt.GetInt("max-discs", 1);
         double minFill = double.Parse(c.Opt.GetOr("min-fill", "0"), CultureInfo.InvariantCulture);
         bool encrypt = c.Opt.Has("encrypt");
@@ -56,9 +70,11 @@ public sealed class StageCommand : ICommand
             Console.WriteLine($"Note: {plan.Unplaced.Count:N0} pending file(s) do not fit on the registered blank discs (see 'plan').\n");
 
         KeyCache? keys = null;
+        string? keyCheck = null;
         if (encrypt)
         {
             keys = new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: true));
+            keyCheck = FileCrypto.NewKeyCheck(keys);   // lets 'stage --append', 'restage' and 'discjson' recognise the password later
             Console.WriteLine("Files will be encrypted (AES-256-GCM) and stored under hidden names; the manifest" +
                               (c.Opt.Has("with-catalog") ? " and the catalog backup are" : " is") +
                               " encrypted too. Only disc.json (label, file count, size) stays readable.\n");
@@ -74,67 +90,12 @@ public sealed class StageCommand : ICommand
             var disc = new DiscRecord
             {
                 Label = label, State = "staged", CreatedUtc = DateTime.UtcNow,
-                Capacity = bin.Blank.Capacity, Reserve = bin.Blank.Reserve, Cost = bin.Blank.Cost, Encrypted = encrypt
+                Capacity = bin.Blank.Capacity, Reserve = bin.Blank.Reserve, Cost = bin.Blank.Cost, Encrypted = encrypt, KeyCheck = keyCheck
             };
             c.Cat.Discs.Add(disc);
-            var manifest = new List<ManifestLine>();
             byte[]? salt = encrypt ? FileCrypto.NewSalt() : null;
             int hidden = 0;
-
-            foreach (var p in bin.Pieces)
-            {
-                var f = p.File;
-                string storedPath = encrypt ? DiscFiles.HiddenName(++hidden) : p.Name;
-                string src = Path.Combine(f.Root, f.RelPath);
-                string dst = Path.Combine(dir, storedPath);
-                Console.WriteLine($"[{label}] {p.Name}" + (encrypt ? $"  ->  {storedPath}" : ""));
-
-                // a part cannot be checked against the whole file's hash, so the source must be exactly as scanned
-                // (same size and time - the rule 'scan' uses), before and after the copy
-                if (p.IsPart && !SameAsScanned(src, f))
-                {
-                    Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
-                    continue;
-                }
-
-                string plainHash;
-                try
-                {
-                    plainHash = encrypt ? FileCrypto.Encrypt(src, dst, keys!, salt!, p.Offset, p.Length)
-                                        : Hashing.CopyAndHash(src, dst, p.Offset, p.Length);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    Console.WriteLine($"  FAILED: {ex.Message}");
-                    if (File.Exists(dst)) File.Delete(dst);
-                    continue;
-                }
-
-                if (p.IsPart ? !SameAsScanned(src, f) : !Hashing.SameHash(plainHash, f.Sha256))
-                {
-                    File.Delete(dst);
-                    Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
-                    continue;
-                }
-
-                if (!encrypt) File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));   // a hidden file does not show its date either
-                long storedSize = new FileInfo(dst).Length;
-                string? storedHash = encrypt ? Hashing.HashFile(dst) : null;
-
-                var copy = new BackupRef
-                {
-                    Disc = label, DiscPath = storedPath, Sha256 = f.Sha256, Encrypted = encrypt, StoredSha256 = storedHash
-                };
-                if (p.IsPart)
-                {
-                    copy.Part = p.Part; copy.Parts = p.Parts; copy.Offset = p.Offset; copy.Length = p.Length;
-                    copy.PartSha256 = plainHash;
-                }
-                f.Backups.Add(copy);
-                disc.FileCount++;
-                disc.UsedBytes += storedSize;
-                manifest.Add(ManifestLine.For(copy, storedSize, f));
-            }
+            var manifest = StorePieces(disc, dir, bin.Pieces, p => encrypt ? DiscFiles.HiddenName(++hidden) : p.Name, keys, salt);
 
             if (disc.FileCount == 0)
             {
@@ -144,20 +105,12 @@ public sealed class StageCommand : ICommand
                 continue;
             }
 
-            c.Cat.Blanks.Remove(bin.Blank);                 // this blank disc is now spoken for
-            DiscFiles.Write(dir, disc, manifest, keys, salt); // disc describes itself (manifest + disc.json)
-            int dups = c.Arc.LinkDuplicates();              // other files with identical content now point at this disc too
-            c.Cat.Save();
-            if (c.Opt.Has("with-catalog"))                  // leave room for it in the blank discs' reserve
-            {
-                Console.WriteLine("Writing catalog backup into the disc folder:");
-                CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"), keys, salt);
-            }
+            c.Cat.Blanks.Remove(bin.Blank);   // this blank disc is now spoken for
+            var (dups, folderBytes) = Finish(c, disc, dir, manifest, keys, salt, sessionFiles: disc.UsedBytes, occupiedBefore: 0);
             Console.WriteLine($"{label}: {disc.FileCount:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes staged in {dir}" +
                               (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
 
             // manifest, disc.json and _catalog live in the reserve - check they really fit
-            long folderBytes = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
             if (disc.Capacity is long capacity && folderBytes > capacity)
             {
                 Console.WriteLine($"WARNING: {label} folder is {SizeText.Bytes(folderBytes)} bytes, more than the disc holds " +
@@ -169,6 +122,196 @@ public sealed class StageCommand : ICommand
 
         Console.WriteLine("\nBurn each staged folder, then run:  burned <label>   (and optionally: verify <label> <mountPath>)");
         return overfull > 0 ? 2 : 0;
+    }
+
+    /// <summary>stage --append: the pending files that fit go into one more session of a burned disc.</summary>
+    static int Append(Ctx c, string destDir, string label)
+    {
+        foreach (string option in new[] { "max-discs", "min-fill" })
+            if (c.Opt.Has(option)) throw new UserException($"--{option} does not go with --append.");
+        var target = AppendTarget.Open(c, label);
+        var disc = target.Disc;
+        if (c.Opt.Has("encrypt") && !disc.Encrypted)
+            throw new UserException($"{disc.Label} is not encrypted, so what is appended to it cannot be either (leave out --encrypt).");
+
+        var plan = c.Arc.MakePlan(disc.Encrypted, c.Opt.Has("split"), [target.AsBlank()]);
+        var bin = plan.Bins[0];
+        Console.WriteLine($"{disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +
+                          $"({SizeText.Bytes(target.Reserve)} bytes stay reserved for its manifest, disc.json and catalog backup).");
+        if (bin.Pieces.Count == 0)
+        {
+            if (plan.Pending.Count == 0) { Console.WriteLine("Nothing to stage: every file is backed up."); return 0; }
+            Console.WriteLine($"Nothing staged: none of the pending files fits into the free space of {disc.Label}.");
+            return 2;
+        }
+        if (plan.Unplaced.Count > 0)
+            Console.WriteLine($"Note: {plan.Unplaced.Count:N0} pending file(s) do not fit and stay pending.");
+
+        string dir = Path.Combine(destDir, $"{disc.Label}.s{target.Session}");
+        if (Directory.Exists(dir)) throw new UserException($"Folder already exists: {dir}");
+
+        KeyCache? keys = null;
+        byte[]? salt = null;
+        if (disc.Encrypted)   // same password as the rest of the disc, checked
+        {
+            IEnumerable<string> probes = target.Mount is { } mount
+                ? c.Arc.CopiesOn(disc.Label).Where(x => x.Copy.Encrypted).Select(x => Path.Combine(mount, x.Copy.DiscPath))
+                       .Prepend(Path.Combine(mount, DiscFiles.EncryptedManifestName))
+                : [];
+            keys = DiscPassword.Get(c, disc, probes, allowUnchecked: false);
+            salt = FileCrypto.NewSalt();
+            Console.WriteLine($"{disc.Label} is encrypted: new files are encrypted and stored under hidden names; the manifest" +
+                              (c.Opt.Has("with-catalog") ? " and the catalog backup are" : " is") + " encrypted too.\n");
+        }
+
+        var onDisc = c.Arc.CopiesOn(disc.Label);
+        var taken = onDisc.Select(x => x.Copy.DiscPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        int hidden = onDisc.Select(x => DiscFiles.HiddenNumber(x.Copy.DiscPath)).DefaultIfEmpty(0).Max();
+        long occupiedBefore = AppendTarget.Occupied(disc);
+        var session = new AppendSession
+        {
+            Number = target.Session, CreatedUtc = DateTime.UtcNow,
+            FileCountBefore = disc.FileCount, UsedBytesBefore = disc.UsedBytes, OccupiedBytesBefore = disc.OccupiedBytes
+        };
+        disc.PendingAppend = session;
+        disc.Sessions = session.Number;
+        StorePieces(disc, dir, bin.Pieces, p => disc.Encrypted ? DiscFiles.HiddenName(++hidden) : FreeName(p, taken), keys, salt);
+
+        if (disc.FileCount == session.FileCountBefore)
+        {
+            disc.PendingAppend = null;
+            disc.Sessions = session.Number - 1;
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            Console.WriteLine($"{disc.Label}: nothing could be staged.");
+            return 2;
+        }
+
+        // the new manifest replaces the old one on the disc, so it lists every file, old and new
+        var manifest = c.Arc.CopiesOn(disc.Label).Select(x => ManifestLine.For(x.Copy, x.File))
+                            .OrderBy(m => m.Path, StringComparer.Ordinal).ToList();
+        long sessionFiles = disc.UsedBytes - session.UsedBytesBefore;
+        var (dups, folderBytes) = Finish(c, disc, dir, manifest, keys, salt, sessionFiles, occupiedBefore);
+        Console.WriteLine($"{disc.Label} session {session.Number}: {disc.FileCount - session.FileCountBefore:N0} files, " +
+                          $"{SizeText.Bytes(sessionFiles)} bytes staged in {dir}" +
+                          (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
+        Console.WriteLine($"Its manifest lists all {manifest.Count:N0} files of the disc.");
+
+        if (folderBytes > target.Room)
+        {
+            Console.WriteLine($"WARNING: the session folder is {SizeText.Bytes(folderBytes)} bytes, more than {disc.Label} has left " +
+                              $"({SizeText.Bytes(target.Room)}); it will not burn. 'discard {disc.Label}' and append again " +
+                              "(without --with-catalog if the catalog backup does not fit into the reserve).");
+            return 2;
+        }
+        Console.WriteLine($"\nBurn the folder onto {disc.Label} as its next session - the burning program must continue the disc's " +
+                          $"file system (multisession / import previous session) - then run:  burned {disc.Label}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Copies (or encrypts) each piece into dir under the name storedPathFor gives it, checks the copy against the
+    /// catalog and records it on the disc. A piece that changed since the scan or cannot be read is skipped.
+    /// Returns the manifest lines of the stored copies.
+    /// </summary>
+    static List<ManifestLine> StorePieces(DiscRecord disc, string dir, IEnumerable<Piece> pieces, Func<Piece, string> storedPathFor,
+                                          KeyCache? keys, byte[]? salt)
+    {
+        bool encrypt = disc.Encrypted;
+        var manifest = new List<ManifestLine>();
+        foreach (var p in pieces)
+        {
+            var f = p.File;
+            string storedPath = storedPathFor(p);
+            string src = Path.Combine(f.Root, f.RelPath);
+            string dst = Path.Combine(dir, storedPath);
+            Console.WriteLine($"[{disc.Label}] {p.Name}" + (storedPath != p.Name ? $"  ->  {storedPath}" : ""));
+
+            // a part cannot be checked against the whole file's hash, so the source must be exactly as scanned
+            // (same size and time - the rule 'scan' uses), before and after the copy
+            if (p.IsPart && !SameAsScanned(src, f))
+            {
+                Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
+                continue;
+            }
+
+            string plainHash;
+            try
+            {
+                plainHash = encrypt ? FileCrypto.Encrypt(src, dst, keys!, salt!, p.Offset, p.Length)
+                                    : Hashing.CopyAndHash(src, dst, p.Offset, p.Length);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine($"  FAILED: {ex.Message}");
+                if (File.Exists(dst)) File.Delete(dst);
+                continue;
+            }
+
+            if (p.IsPart ? !SameAsScanned(src, f) : !Hashing.SameHash(plainHash, f.Sha256))
+            {
+                File.Delete(dst);
+                Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
+                continue;
+            }
+
+            if (!encrypt) File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));   // a hidden file does not show its date either
+            long storedSize = new FileInfo(dst).Length;
+            string? storedHash = encrypt ? Hashing.HashFile(dst) : null;
+
+            var copy = new BackupRef
+            {
+                Disc = disc.Label, DiscPath = storedPath, Sha256 = f.Sha256, Encrypted = encrypt, StoredSha256 = storedHash, StoredSize = storedSize
+            };
+            if (p.IsPart)
+            {
+                copy.Part = p.Part; copy.Parts = p.Parts; copy.Offset = p.Offset; copy.Length = p.Length;
+                copy.PartSha256 = plainHash;
+            }
+            f.Backups.Add(copy);
+            disc.FileCount++;
+            disc.UsedBytes += storedSize;
+            manifest.Add(ManifestLine.For(copy, storedSize, f));
+        }
+        return manifest;
+    }
+
+    /// <summary>
+    /// Writes manifest + disc.json, links duplicates, saves, and writes the catalog backup (--with-catalog). The disc
+    /// counts as occupied by the session's files plus its reserve - or its metadata, if that came out larger.
+    /// </summary>
+    static (int Dups, long FolderBytes) Finish(Ctx c, DiscRecord disc, string dir, List<ManifestLine> manifest, KeyCache? keys, byte[]? salt,
+                                               long sessionFiles, long occupiedBefore)
+    {
+        DiscFiles.Write(dir, disc, manifest, keys, salt);   // the disc describes itself (manifest + disc.json)
+        int dups = c.Arc.LinkDuplicates();                  // other files with identical content now point at this disc too
+        long reserve = disc.Reserve ?? 0;
+        disc.OccupiedBytes = occupiedBefore + sessionFiles + reserve;
+        c.Cat.Save();
+        if (c.Opt.Has("with-catalog"))                      // leave room for it in the blank discs' reserve
+        {
+            Console.WriteLine("Writing catalog backup into the disc folder:");
+            CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"), keys, salt);
+        }
+
+        long folderBytes = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+        if (folderBytes - sessionFiles > reserve)           // the metadata outgrew the reserve
+        {
+            disc.OccupiedBytes = occupiedBefore + folderBytes;
+            c.Cat.Save();
+        }
+        return (dups, folderBytes);
+    }
+
+    /// <summary>The piece's usual name, or name~2.ext, name~3.ext ... if the disc already holds that name (an older version).</summary>
+    static string FreeName(Piece p, HashSet<string> taken)
+    {
+        string path = $"{p.File.RootName}/{p.File.RelPath}";
+        string ext = Path.GetFileNameWithoutExtension(p.File.RelPath).Length > 0 ? Path.GetExtension(p.File.RelPath) : "";   // .gitignore has none
+        string suffix = p.IsPart ? SplitLayout.Suffix(p.Part, p.Parts) : "";
+        string name = p.Name;
+        for (int n = 2; taken.Contains(name); n++) name = $"{path[..^ext.Length]}~{n}{ext}{suffix}";
+        taken.Add(name);
+        return name;
     }
 
     static bool SameAsScanned(string path, FileRecord f)

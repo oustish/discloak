@@ -8,6 +8,9 @@ public static class MarkDeadDisc
         var disc = c.Arc.FindDisc(c.Arg(0, $"{state} <label> [--reason text]"));
         if (disc.State == state) { Console.WriteLine($"{disc.Label} is already marked {state}."); return 1; }
         if (disc.State == "destroyed") throw new UserException($"{disc.Label} is destroyed; that cannot be changed.");
+        if (disc.PendingAppend is { } session)
+            throw new UserException($"Session {session.Number} of {disc.Label} is staged but not burned: 'discard {disc.Label}' first " +
+                                    "(that takes back only the new session).");
 
         disc.State = state;
         disc.LostUtc = DateTime.UtcNow;

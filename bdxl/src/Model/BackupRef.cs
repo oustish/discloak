@@ -18,6 +18,7 @@ public class BackupRef
     public bool Encrypted { get; set; }            // the stored file is encrypted
 
     public string? StoredSha256 { get; set; }      // SHA-256 of the stored (encrypted) file; used by 'verify' without a password
+    public long? StoredSize { get; set; }          // bytes of the stored file on the disc (the manifest lists it)
 
     // split files (stage --split): this copy is ONE PART of the content; Sha256 above stays the hash of the whole file
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]

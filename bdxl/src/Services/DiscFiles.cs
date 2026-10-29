@@ -15,6 +15,13 @@ public static class DiscFiles
     public static string HiddenName(int n) =>
         $"data/{n / 1000:D3}/{n:D6}{FileCrypto.Suffix}";
 
+    /// <summary>n of a HiddenName, or 0 for any other path.</summary>
+    public static int HiddenNumber(string discPath)
+    {
+        var m = Regex.Match(discPath, @"^data/\d{3}/(\d{6})\.enc$", RegexOptions.IgnoreCase);
+        return m.Success ? int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+    }
+
     /// <summary>Writes manifest + disc.json into a staged disc folder. keys/salt are required for an encrypted disc.</summary>
     public static void Write(string dir, DiscRecord disc, List<ManifestLine> manifest, KeyCache? keys = null, byte[]? salt = null)
     {
@@ -70,13 +77,17 @@ public static class DiscFiles
         return true;
     }
 
-    /// <summary>Reads a disc's manifest; an encrypted one asks for the password. null = the disc has none.</summary>
-    public static List<ManifestLine>? ReadManifest(string mount, Options opt)
+    /// <summary>
+    /// Reads a disc's manifest; an encrypted one asks for the password (keys = the password that opened it).
+    /// null = the disc has none.
+    /// </summary>
+    public static List<ManifestLine>? ReadManifest(string mount, Options opt, out KeyCache? keys)
     {
+        keys = null;
         string plainPath = Path.Combine(mount, ManifestName), encPath = Path.Combine(mount, EncryptedManifestName);
         if (!File.Exists(encPath)) return File.Exists(plainPath) ? JsonStore.ReadLines<ManifestLine>(plainPath) : null;
 
-        var keys = new KeyCache(Ui.GetPassword(opt, forNewEncryption: false));
+        keys = new KeyCache(Ui.GetPassword(opt, forNewEncryption: false));
         byte[] plain;
         try { plain = FileCrypto.DecryptBytes(File.ReadAllBytes(encPath), keys); }
         catch (InvalidDataException ex)

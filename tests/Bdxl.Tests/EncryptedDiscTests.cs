@@ -143,6 +143,21 @@ public class EncryptedDiscTests : IDisposable
     }
 
     [Fact]
+    public void Restage_and_discjson_refuse_a_different_password()
+    {
+        StageEncrypted(withCatalog: false);
+        Bdxl("burned", "BDXL-0001");
+        File.Delete(Path.Combine(Disc, "manifest.jsonl.enc"));
+        Assert.Equal(1, BdxlIn("cat", WrongVar, "discjson", "BDXL-0001", Disc, "--overwrite"));
+        Assert.False(File.Exists(Path.Combine(Disc, "manifest.jsonl.enc")));
+
+        Assert.Equal(0, Bdxl("lost", "BDXL-0001"));
+        Assert.Equal(1, BdxlIn("cat", WrongVar, "restage", "BDXL-0001", tmp.File("re")));
+        Assert.False(Directory.Exists(Path.Combine(tmp.File("re"), "BDXL-0001")));
+        Assert.Equal("lost", Catalog.Load(tmp.File("cat"), "test").Discs.Single().State);
+    }
+
+    [Fact]
     public void Discjson_puts_back_an_encrypted_manifest()
     {
         StageEncrypted(withCatalog: false);

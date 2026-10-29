@@ -12,11 +12,12 @@
   files larger than any disc, `ignore remove` of an unknown rule exits 1, `stage` exits 2 when nothing could be staged).
 - Since then: one class per command (`ICommand`), one file per model type, xUnit tests, and encrypted discs hide
   everything but `disc.json`: file names, manifest and `_catalog` backup (see Key rules).
+  Then `stage --append <label>`: a burned disc that is not full gets another session (see Key rules).
 
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 136 tests, about a second
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 145 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -31,12 +32,12 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 | `src/Cli/ICommand.cs` | `ICommand`: `Name`, `Group` (a `CommandGroup` constant), `Summary`, `Usage`, `Details` (help text), `AllowBrokenCatalog` / `NeedsCatalog` (default false / true), `Run(Ctx)` |
 | `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
 | `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing) |
-| `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
+| `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `AppendSession`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
 | `src/Storage/Catalog.cs` | Load/Save, integrity (`catalog.hash.json`), snapshots in `history/`, rollback |
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
 | `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (+`PasswordPolicy`, `KeyCache`), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
-| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json, encrypted manifest, hidden names, writing onto a mounted disc) |
+| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json, encrypted manifest, hidden names, writing onto a mounted disc), `AppendTarget` (free space of a disc for `--append`), `DiscPassword` (checks the password of an existing encrypted disc) |
 | `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
 
 ## Adding a command
@@ -46,6 +47,7 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 
 Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --with-catalog` calls `CatalogCommand.WriteBackup`;
 `stage`/`restage` write `DiscFiles.Write`, `scandisc`/`discjson` use `DiscFiles.TryWriteDiscJson`.
+`Archive.CopiesOn(label)` = one (file, copy) per stored path of a disc, preferring the file it was stored for over aliases.
 
 ## Key rules / invariants
 - **Catalog files:** `files.jsonl`, `discs.jsonl`, `blanks.jsonl`, `settings.json` (`Catalog.CoveredFiles`).
@@ -72,6 +74,11 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
     names to real paths besides the catalog. `DiscFiles.Write` refuses to write a plain manifest for an encrypted
     disc. Readers: `DiscFiles.ReadManifest` (asks for the password). `restage`/`discjson` of an encrypted disc
     therefore always need the password.
+  - Password check: `DiscRecord.KeyCheck` = `FileCrypto.NewKeyCheck` ("iterations:salt:check", its own salt, as
+    costly to brute-force as any .enc file). Set by `stage --encrypt` and by `scandisc` when a password opens the
+    manifest. `DiscPassword.Get` (append, restage, discjson) checks against it; without one it checks against an
+    encrypted file of the disc (`FileCrypto.OpensWith`, first chunk only) and records it. So a disc never gets a
+    second password.
   - `disc.json` stays plain (`restore` identifies discs before any password is known) and has `"encrypted": true`.
   - `_catalog` (and `catalog backup create --encrypt`): `<name>.enc` per catalog file; Reed-Solomon data covers the
     encrypted bytes, so `catalog backup verify --repair` needs no password. `backup restore` decrypts everything
@@ -88,10 +95,27 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - `restore` keeps verified parts as `<target>.bdxl-part.NNN` across runs (one drive) and joins when complete.
   - Manifest lines of parts carry part/parts/offset/length/fileSize/fileSha256, so `scandisc --method manifest`
     rebuilds them.
+- **Appending (`stage --append <label>`, `plan --append`):** one more session on a burned, not finalized disc.
+  - Folder `<dest>/<label>.sN/` with only the pending pieces that fit, a manifest of the WHOLE disc (old lines are
+    built from the catalog: `BackupRef.StoredSize`), `disc.json` (`sessions`), optional `_catalog`. Burned with a
+    program that continues the file system, the new manifest/disc.json/_catalog replace the old ones.
+  - Room: `DiscRecord.OccupiedBytes` = files + per session max(reserve, metadata). Free for files =
+    capacity - occupied - reserve (`AppendTarget`); `--mount` checks disc.json's label and caps by the drive's
+    free space when the drive reports any (open discs often show 0 in Windows, then the catalog figure is used).
+  - Names are never reused: a newer version of a file already on a plain disc is stored as `name~2.ext`
+    (`StageCommand.FreeName`) and its manifest line gets `Source`; encrypted discs continue the hidden numbering.
+    `ManifestLine.Source` is set whenever the stored name differs from alias/path(+part suffix).
+  - `DiscRecord.PendingAppend` (`AppendSession`: counters before the session) until `burned` (dates only the
+    copies with no `BackedUpUtc`) or `discard` (removes those copies, restores the counters). Only one pending
+    session; `lost`/`destroyed`/`restage` refuse while one is pending. `restage` rebuilds all sessions as one folder.
+  - The disc's encryption is kept (`--encrypt` on a plain disc is an error); the password is checked (`DiscPassword`).
+  - `scandisc` of such a disc: several versions of one path go into one catalog entry; for a file known only from
+    the disc, the copy with the latest mtime becomes its current version.
 - **Labels:** `Settings.LabelPrefix` + `LabelCounter` (`D4`). The counter only ever goes up (`Archive.NextLabel`).
   For old catalogs it is initialised from the existing `BDXL-nnnn` labels.
 - **Blank discs:** `stage` uses up a `BlankDisc` and copies its capacity, reserve and cost to the `DiscRecord`.
-  `discard` gives the blank disc back.
+  `discard` gives the blank disc back. Discs from `scandisc` have no reserve/occupied figures; appending to them needs
+  `--capacity` at import or `--mount`.
 - **Ignore rules:** `.gitignore` syntax, matched against `RelPath` (relative to the scanned folder).
   - `scan` evaluates each file it sees.
   - `ignore add/remove/apply` re-evaluates the whole catalog (`Archive.ApplyIgnoreRules`).
@@ -107,12 +131,13 @@ Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below
 | `PackerTests` | best-fit order, nothing dropped, never overfilled, stored size via `sizeOf`, determinism |
 | `SplitLayoutTests` | parts cover the file, suffixes, `PartSizeOf` from any part |
 | `ArchiveTests` | `CompleteCopy` (layouts never mix), dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
-| `FileCryptoTests` | round trips around chunk boundaries, byte ranges, wrong password, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy |
+| `FileCryptoTests` | round trips around chunk boundaries, byte ranges, wrong password, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy, key check, `OpensWith` |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
 | `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
-| `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, verify + restore, `scandisc` rebuild from the encrypted manifest (wrong/no password), `_catalog` repaired without and restored with the password, standalone `--encrypt` backup, restage, discjson |
+| `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, verify + restore, `scandisc` rebuild from the encrypted manifest (wrong/no password), `_catalog` repaired without and restored with the password, standalone `--encrypt` backup, restage, discjson, a different password refused |
+| `AppendTests` | only new/changed files in the session, `name~2`, whole-disc manifest, burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only, refusals, encrypted session (password checked, numbering continued), password check against the disc via `--mount` |
 
 ## Suggested next steps
 Ideas not built yet:

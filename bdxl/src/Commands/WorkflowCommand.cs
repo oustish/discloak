@@ -41,6 +41,10 @@ public sealed class WorkflowCommand : ICommand
                  bdxl verify BDXL-0001 G:\                      add --deep for encrypted discs to decrypt and compare
                  bdxl burned BDXL-0001 --date 2026-10-29
                  bdxl cost report                               cost per disc, per GB and per TB
+               A disc that was not full and not finalized can take more later, as a new session:
+                 bdxl plan --append BDXL-0001
+                 bdxl stage E:\Staging --append BDXL-0001 --mount G:\ --with-catalog
+               Burn E:\Staging\BDXL-0001.s2 as the next session (continue the disc's file system), then verify + burned.
 
             6. Day-to-day
                  bdxl status        bdxl find holiday        bdxl discs

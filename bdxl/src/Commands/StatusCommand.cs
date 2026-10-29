@@ -34,7 +34,9 @@ public sealed class StatusCommand : ICommand
                            plan.Unplaced.Count == 0 ? " - all pending data fits." :
                            $" - {plan.Unplaced.Count:N0} pending file(s) do NOT fit (run 'plan')."));
         Console.WriteLine($"Discs: {c.Cat.Discs.Count(d => d.State == "burned")} burned, {c.Cat.Discs.Count(d => d.State == "staged")} staged (not yet burned), " +
-                          $"{c.Cat.Discs.Count(d => d.State == "lost")} lost, {c.Cat.Discs.Count(d => d.State == "destroyed")} destroyed");
+                          $"{c.Cat.Discs.Count(d => d.State == "lost")} lost, {c.Cat.Discs.Count(d => d.State == "destroyed")} destroyed" +
+                          (c.Cat.Discs.Count(d => d.PendingAppend != null) is > 0 and int appending
+                              ? $"; {appending} appended session(s) staged, not yet burned" : ""));
         Console.WriteLine($"Label prefix: {c.Settings.LabelPrefix}  (last number used: {c.Settings.LabelCounter})");
         if (c.Settings.IgnoreRules.Count > 0) Console.WriteLine($"Ignore rules: {c.Settings.IgnoreRules.Count}");
         if (dataLost > 0) Console.WriteLine($"WARNING: {dataLost:N0} file(s) are gone from the source and have no surviving copy on any disc.");

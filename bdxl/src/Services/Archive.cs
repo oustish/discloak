@@ -45,6 +45,13 @@ public sealed class Archive
         return label;
     }
 
+    /// <summary>Every copy stored on a disc, one per stored path, with the file it was stored for (rather than an alias).</summary>
+    public List<(FileRecord File, BackupRef Copy)> CopiesOn(string label) =>
+        cat.Files.SelectMany(f => f.Backups.Where(b => b.Disc == label).Select(b => (File: f, Copy: b)))
+           .GroupBy(x => x.Copy.DiscPath, StringComparer.Ordinal)
+           .Select(g => g.OrderBy(x => x.Copy.Alias).First())
+           .ToList();
+
     public string NextBlankId()
     {
         int n = cat.Blanks.Select(b => b.Id.StartsWith('B') && int.TryParse(b.Id.AsSpan(1), out int v) ? v : 0)
@@ -123,8 +130,10 @@ public sealed class Archive
     /// content is stored once. The pending pieces are allocated to the registered blank discs; what does not fit is
     /// reported. A file larger than every blank disc is cut into parts only with split = true; a file that already
     /// has parts on discs always continues with the same layout (only its missing parts are pending).
+    /// into = allocate to these bins instead of the blank discs (stage --append); whether a file is too big, and
+    /// the part size of a new split, still follow the blank discs.
     /// </summary>
-    public PlanResult MakePlan(bool encrypt, bool split = false)
+    public PlanResult MakePlan(bool encrypt, bool split = false, IReadOnlyList<BlankDisc>? into = null)
     {
         var live = LiveCopies();
         var pendingFiles = cat.Files
@@ -157,7 +166,7 @@ public sealed class Archive
         }
 
         var tooBigSet = tooBig.ToHashSet();
-        var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), cat.Blanks, sizeOf);
+        var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), into ?? cat.Blanks, sizeOf);
         var unplaced = leftover.Concat(pending.Where(p => tooBigSet.Contains(p.File))).ToList();
         return new PlanResult(bins, unplaced, tooBig, pending);
     }
