@@ -18,7 +18,7 @@
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 146 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 149 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session

@@ -30,6 +30,15 @@ public static class SizeText
 
     public static string Bytes(long n) => n.ToString("N0", CultureInfo.InvariantCulture);
 
+    /// <summary>text cut to max characters by replacing its middle with "…"; keeps more of the end (a path's file name).</summary>
+    public static string ShortenMiddle(string text, int max)
+    {
+        if (text.Length <= max) return text;
+        if (max < 5) return text[^Math.Max(1, max)..];
+        int head = (max - 1) / 3, tail = max - 1 - head;
+        return text[..head] + "…" + text[^tail..];
+    }
+
     public static string Money(decimal value, string currency) =>
         value.ToString("N2", CultureInfo.InvariantCulture) + (currency.Length > 0 ? " " + currency : "");
 }

@@ -39,4 +39,15 @@ public class SizeTextTests
         Assert.Equal("1,234.50 PLN", SizeText.Money(1234.5m, "PLN"));
         Assert.Equal("3.00", SizeText.Money(3, ""));
     }
+
+    [Theory]
+    [InlineData("Photos/2019/IMG_0042.CR2", 30, "Photos/2019/IMG_0042.CR2")]   // fits: unchanged
+    [InlineData("Photos/2019/Summer/Holiday/IMG_0042.CR2", 25, "Photos/2…day/IMG_0042.CR2")]
+    [InlineData("abcdefghij", 4, "ghij")]                                      // too narrow for an ellipsis
+    public void ShortenMiddle_keeps_the_start_and_more_of_the_end(string text, int max, string expected)
+    {
+        string got = SizeText.ShortenMiddle(text, max);
+        Assert.Equal(expected, got);
+        Assert.True(got.Length <= max);
+    }
 }

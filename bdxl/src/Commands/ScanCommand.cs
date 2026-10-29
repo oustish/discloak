@@ -68,7 +68,7 @@ public sealed class ScanCommand : ICommand
             width = 0;
         }
 
-        static int WindowWidth()
+        public static int WindowWidth()
         {
             try { return Console.WindowWidth > 0 ? Console.WindowWidth : 120; }
             catch (IOException) { return 120; }
@@ -310,8 +310,8 @@ public sealed class ScanCommand : ICommand
             }
             if (clock.Elapsed - lastStatus >= StatusEvery && !active.IsEmpty)
             {
-                status.Show($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] hashing " +
-                            string.Join(", ", active.Keys.OrderBy(a => a.Index).Select(a => $"{a.Rel} ({Percent(Volatile.Read(ref a.BytesRead), a.Size)})")));
+                string head = $"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] ";
+                status.Show(head + ActiveFiles(active.Keys.ToList(), StatusLine.WindowWidth() - 1 - head.Length));
                 lastStatus = clock.Elapsed;
             }
 
@@ -347,11 +347,39 @@ public sealed class ScanCommand : ICommand
     {
         long read = doneBytes + active.Sum(a => Volatile.Read(ref a.BytesRead));
         double perSecond = elapsed.TotalSeconds > 0 ? read / elapsed.TotalSeconds : 0;
-        string text = $"{done.ToString("N0", CultureInfo.InvariantCulture)}/{count.ToString("N0", CultureInfo.InvariantCulture)}  " +
-                      $"{Percent(read, totalBytes)}  {(perSecond / 1e6).ToString("F1", CultureInfo.InvariantCulture)} MB/s";
+        // fixed widths, so the status does not move from line to line ("100.0%", speeds up to 9999.9 MB/s)
+        string countText = count.ToString("N0", CultureInfo.InvariantCulture);
+        string text = $"{done.ToString("N0", CultureInfo.InvariantCulture).PadLeft(countText.Length)}/{countText}  " +
+                      $"{Percent(read, totalBytes),6}  {(perSecond / 1e6).ToString("F1", CultureInfo.InvariantCulture),6} MB/s";
         if (perSecond > 0 && read < totalBytes && elapsed > TimeSpan.FromSeconds(5))
             text += $"  ~{Duration(TimeSpan.FromSeconds((totalBytes - read) / perSecond))} left";
         return text;
+    }
+
+    const int MinFileWidth = 24;   // narrower than this a shortened path says too little
+
+    /// <summary>
+    /// The files being hashed, as "path (34.6%)", in room characters: the room is shared equally, long paths are
+    /// shortened in the middle (start and file name stay), and if not all fit, the ones with the most left to hash are
+    /// shown, followed by "+N more".
+    /// </summary>
+    static string ActiveFiles(List<WorkItem> active, int room)
+    {
+        var items = active.Select(a => (a.Rel, Pct: Percent(Volatile.Read(ref a.BytesRead), a.Size), Left: a.Size - Volatile.Read(ref a.BytesRead)))
+                          .OrderByDescending(x => x.Left).ToList();
+        string Label(string rel, string pct) => $"{rel} ({pct})";
+        string all = string.Join(", ", items.Select(x => Label(x.Rel, x.Pct)));
+        if (all.Length <= room || items.Count == 0) return all;
+
+        int shown = items.Count;
+        string more = "";
+        while (shown > 1 && (room - more.Length) / shown - 2 < MinFileWidth)
+        {
+            shown--;
+            more = $", +{items.Count - shown} more";
+        }
+        int each = Math.Max(MinFileWidth, (room - more.Length) / shown - 2);   // 2 = ", "
+        return string.Join(", ", items.Take(shown).Select(x => Label(SizeText.ShortenMiddle(x.Rel, each - x.Pct.Length - 3), x.Pct))) + more;
     }
 
     static string Percent(long part, long whole) =>
