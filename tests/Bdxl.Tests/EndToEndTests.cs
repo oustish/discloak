@@ -64,6 +64,52 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
+    public void A_moved_file_keeps_its_record_and_its_copy()
+    {
+        var a = tmp.RandomFile("src/docs/a.bin", 100_000);
+        tmp.RandomFile("src/b.bin", 50_000, seed: 2);
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
+        Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
+
+        Directory.CreateDirectory(tmp.File("src/archive"));
+        File.Move(tmp.File("src/docs/a.bin"), tmp.File("src/archive/renamed.bin"));
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
+
+        var files = Catalog.Load(tmp.File("cat"), "test").Files;
+        Assert.Equal(2, files.Count);                                   // no new record, no record left behind as "gone"
+        var moved = files.Single(f => Hashing.SameHash(f.Sha256, Hashing.HashBytes(a)));
+        Assert.Equal("archive/renamed.bin", moved.RelPath);
+        Assert.Null(moved.MissingSinceUtc);
+        Assert.False(Assert.Single(moved.Backups).Alias);              // its own copy, stored as S/docs/a.bin
+
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "renamed", "--mount", Disc("BDXL-0001")));
+        Assert.Equal(a, File.ReadAllBytes(tmp.File("out/S/archive/renamed.bin")));
+    }
+
+    [Fact]
+    public void A_file_moved_between_locations_scanned_separately_is_recognised_once_the_old_one_is_gone()
+    {
+        var a = tmp.RandomFile("one/a.bin", 100_000);
+        Directory.CreateDirectory(tmp.File("two"));
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Assert.Equal(0, Bdxl("scan", tmp.File("one"), "--name", "One"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
+        Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
+
+        File.Move(tmp.File("one/a.bin"), tmp.File("two/a.bin"));
+        Assert.Equal(0, Bdxl("scan", tmp.File("two"), "--name", "Two"));   // "One" not rescanned: a.bin there is not known to be gone
+        Assert.Equal(2, Catalog.Load(tmp.File("cat"), "test").Files.Count);
+
+        Assert.Equal(0, Bdxl("scan", tmp.File("one"), "--name", "One"));
+        var record = Assert.Single(Catalog.Load(tmp.File("cat"), "test").Files);
+        Assert.Equal(("Two", "a.bin"), (record.RootName, record.RelPath));
+        Assert.Null(record.MissingSinceUtc);
+        Assert.False(Assert.Single(record.Backups).Alias);
+    }
+
+    [Fact]
     public void A_corrupted_disc_fails_verify()
     {
         tmp.RandomFile("src/a.bin", 100_000);

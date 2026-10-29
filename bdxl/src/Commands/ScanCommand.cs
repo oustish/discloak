@@ -13,6 +13,8 @@ public sealed class ScanCommand : ICommand
     public string Details => """
         With a folder: adds it to the catalog (first time) or rescans it. Every file gets a SHA-256 hash; unchanged
         files (same size and modified time) are not read again. Files that disappeared are marked as missing.
+        A missing file whose identical content turns up under another path counts as moved/renamed: its catalog entry
+        (with its copies on discs and its history) moves to the new path.
         Without a folder: rescans ALL known locations. A location that is not reachable (unplugged drive) is
         skipped, nothing is marked as missing.
 
@@ -77,7 +79,7 @@ public sealed class ScanCommand : ICommand
 
     sealed class Totals
     {
-        public int Added, Changed, Unchanged, Skipped, Missing, IgnoredNew, BecameIgnored, NoLongerIgnored;
+        public int Added, Changed, Unchanged, Skipped, Missing, Moved, IgnoredNew, BecameIgnored, NoLongerIgnored;
     }
 
     static string NormalizeRoot(string arg)
@@ -129,6 +131,7 @@ public sealed class ScanCommand : ICommand
         int threads = Math.Clamp(c.Opt.GetInt("threads", c.Settings.DefaultThreads), 1, 64);
         bool full = c.Opt.Has("full");
         var totals = new Totals();
+        DateTime started = DateTime.UtcNow;
 
         foreach (var (root, name) in roots)
         {
@@ -141,11 +144,12 @@ public sealed class ScanCommand : ICommand
             ScanRoot(c, root, name, threads, full, totals);
         }
 
+        DetectMoves(c, started, totals);
         int linked = c.Arc.LinkDuplicates();
         c.Cat.Save();
 
         Console.WriteLine($"\nScan done: {totals.Added} new, {totals.Changed} changed, {totals.Unchanged} unchanged, " +
-                          $"{totals.Missing} no longer on source, {totals.Skipped} skipped (unreadable).");
+                          $"{totals.Moved} moved/renamed, {totals.Missing} no longer on source, {totals.Skipped} skipped (unreadable).");
         if (totals.IgnoredNew + totals.BecameIgnored > 0)
             Console.WriteLine($"Ignored by rules: {totals.IgnoredNew} new, {totals.BecameIgnored} existing files now ignored (they stay in the catalog but are not staged).");
         if (totals.NoLongerIgnored > 0)
@@ -340,6 +344,50 @@ public sealed class ScanCommand : ICommand
             rec.MissingSinceUtc = now;
             t.Missing++;
         }
+    }
+
+    /// <summary>
+    /// A file that is gone from where it was, whose identical content (same hash) is now at a path that has no copy of
+    /// its own on any disc, was moved or renamed: its record takes the new path - keeping its copies, older versions
+    /// and history - and the record for the new path (new in this scan, or only linked to copies of other files)
+    /// is dropped. Otherwise the new path would get a pointer to the old copy and the old path would stay listed as
+    /// gone forever. A moved file that was also changed has another hash and is not recognised.
+    /// </summary>
+    static void DetectMoves(Ctx c, DateTime started, Totals t)
+    {
+        var gone = c.Cat.Files.Where(f => f.MissingSinceUtc != null && f.Sha256.Length > 0)
+                              .GroupBy(f => f.Sha256, StringComparer.OrdinalIgnoreCase)
+                              .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        if (gone.Count == 0) return;
+
+        var replaced = new HashSet<FileRecord>();
+        var report = new List<string>();
+        foreach (var found in c.Cat.Files.Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0 && f.Backups.All(b => b.Alias)))
+        {
+            if (!gone.TryGetValue(found.Sha256, out var candidates) || candidates.Count == 0) continue;
+            string fileName = Path.GetFileName(found.RelPath);
+            var old = candidates.OrderByDescending(x => Path.GetFileName(x.RelPath).Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                                .ThenByDescending(x => x.Root == found.Root)
+                                .ThenByDescending(x => x.MissingSinceUtc)
+                                .First();
+            candidates.Remove(old);
+
+            report.Add($"  moved: {old.RootName}/{old.RelPath}  ->  {found.RootName}/{found.RelPath}");
+            if (old.MissingSinceUtc >= started) t.Missing--;   // it went missing in this scan: it did not really disappear
+            if (found.AddedUtc >= started) t.Added--;
+            t.Moved++;
+            (old.Root, old.RootName, old.RelPath, old.Size, old.ModifiedUtc) = (found.Root, found.RootName, found.RelPath, found.Size, found.ModifiedUtc);
+            old.MissingSinceUtc = null;
+            foreach (var link in found.Backups.Where(a => !old.Backups.Any(b => b.Disc == a.Disc && b.DiscPath == a.DiscPath && Hashing.SameHash(b.Sha256, a.Sha256))))
+                old.Backups.Add(link);   // links to copies of other files that the old record did not have yet
+            replaced.Add(found);
+        }
+        if (replaced.Count == 0) return;
+
+        c.Cat.Files.RemoveAll(replaced.Contains);
+        Console.WriteLine();
+        foreach (string line in report.Take(50)) Console.WriteLine(line);
+        if (report.Count > 50) Console.WriteLine($"  ... and {report.Count - 50:N0} more");
     }
 
     /// <summary>"1,234/50,000  12.4%  85.3 MB/s  ~3h 12m left" - by bytes, counting what the threads have read of their current files.</summary>

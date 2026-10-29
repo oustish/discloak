@@ -18,7 +18,7 @@
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 149 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 151 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -123,6 +123,9 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
 - **Scan safety:**
   - A folder that can't be read: files under it are not marked missing.
   - An unreachable location during a rescan of everything: skipped completely.
+  - Moves: a file gone from its path whose hash turns up at a path with no copy of its own (new, or alias-only)
+    is a move: the old record takes the new path, keeps its backups, the other record is dropped
+    (`ScanCommand.DetectMoves`, after all locations, before `LinkDuplicates`).
   - Hashing: N worker threads each take the next file (no batches, so one large file never holds up the
     others); results are applied to the catalog on the main thread in the order they finish, the catalog is saved
     every 2 minutes, and new records are put back in folder-walk order at the end (same catalog as 1 thread).
@@ -139,7 +142,7 @@ Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
 | `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
-| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
+| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
 | `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, verify + restore, `scandisc` rebuild from the encrypted manifest (wrong/no password), `_catalog` repaired without and restored with the password, standalone `--encrypt` backup, restage, discjson, a different password refused |
 | `AppendTests` | only new/changed files in the session, `name~2`, whole-disc manifest, burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only, refusals, encrypted session (password checked, numbering continued), password check against the disc via `--mount` |
 
