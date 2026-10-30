@@ -123,16 +123,64 @@ public class ArchiveTests
     }
 
     [Fact]
+    public void Small_files_are_planned_with_their_sectors_and_file_system_entries()
+    {
+        AddBlanks(3, 1_000_000);
+        for (int i = 0; i < 400; i++) AddFile($"small/{i:D3}.txt", 10, $"{i:X4}");   // 400 × ~80 bytes encrypted: one disc by bytes
+
+        var plan = Arc.MakePlan();
+        Assert.Empty(plan.Unplaced);
+        long each = DiscSpace.OnDisc(FileCrypto.StoredSize(10));
+        Assert.Equal(DiscSpace.Sector * 2 + DiscSpace.FolderEntry, each);
+        Assert.Equal(1_000_000 / each, plan.Bins[0].Pieces.Count);                   // ... but on the disc they take 2 sectors each
+        Assert.Equal(400, plan.Bins.Sum(b => b.Pieces.Count));
+        Assert.All(plan.Bins, b => Assert.True(b.Used <= b.Usable));
+    }
+
+    [Fact]
+    public void A_part_of_a_layout_made_before_the_file_system_was_counted_still_fits()
+    {
+        AddBlanks(1, 10_000);
+        long oldPart = FileCrypto.MaxPlainSize(10_000);   // parts used to fill a disc's usable space exactly
+        var big = AddFile("big.bin", 2 * oldPart, "AA");
+        big.Backups.Add(Part("D1", "AA", 1, 2, oldPart, 2 * oldPart));
+
+        var plan = Arc.MakePlan();
+        Assert.Empty(plan.Unplaced);
+        Assert.Equal(2, Assert.Single(plan.Bins[0].Pieces).Part);
+    }
+
+    [Fact]
+    public void DiscSpace_rounds_to_sectors_and_counts_entries()
+    {
+        Assert.Equal(2048 + 64, DiscSpace.OnDisc(0));
+        Assert.Equal(2 * 2048 + 64, DiscSpace.OnDisc(1));
+        Assert.Equal(2 * 2048 + 64, DiscSpace.OnDisc(2048));
+        Assert.Equal(3 * 2048 + 64, DiscSpace.OnDisc(2049));
+
+        using var tmp = new TempDir();
+        Directory.CreateDirectory(tmp.File("d/sub"));
+        File.WriteAllBytes(tmp.File("d/a.bin"), new byte[3000]);      // 2 sectors + entry
+        File.WriteAllBytes(tmp.File("d/sub/b.bin"), new byte[10]);    // 1 sector + entry
+        long sub = (2048 + 2048) + 2048 + 2048;                        // b.bin, sub's own entry, sub's list (1 entry)
+        long d = (2 * 2048 + 2048) + sub + 2048 + 2048;                // a.bin, sub, d's entry, d's list (2 entries)
+        Assert.Equal(d, DiscSpace.Folder(tmp.File("d")));
+    }
+
+    [Fact]
     public void Split_cuts_into_parts_that_fit_even_encrypted()
     {
-        AddBlanks(3, 10_000);
+        // room for the encryption and for the part's sectors and file system entries on the disc
+        long partSize = FileCrypto.MaxPlainSize(10_000 - DiscSpace.OnDisc(0) - DiscSpace.Sector);
+        int parts = (int)((25_000 + partSize - 1) / partSize);
+        AddBlanks(parts, 10_000);
         AddFile("big.bin", 25_000, "AA");
 
         var plan = Arc.MakePlan(split: true);
-        long partSize = FileCrypto.MaxPlainSize(10_000);
         Assert.Empty(plan.TooBig);
         Assert.Empty(plan.Unplaced);
-        Assert.Equal(3, plan.Pending.Count);
+        Assert.Equal(parts, plan.Pending.Count);
+        Assert.All(plan.Bins, b => Assert.True(b.Used <= b.Usable));
         Assert.All(plan.Pending, p => Assert.True(p.Length <= partSize));
         Assert.Equal(25_000, plan.Pending.Sum(p => p.Length));
         Assert.All(plan.Bins, b => Assert.Single(b.Pieces));   // one part per disc

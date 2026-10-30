@@ -167,8 +167,8 @@ public sealed class RestageCommand : ICommand
 
         if (disc.Encrypted) disc.KeyId = key.KeyId;
         DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir);
-        long metadata = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length) - disc.UsedBytes;
-        disc.OccupiedBytes = disc.UsedBytes + Math.Max(disc.Reserve ?? 0, metadata);
+        long files = manifest.Sum(x => DiscSpace.OnDisc(x.Size));   // on the disc: whole sectors + file system entries
+        disc.OccupiedBytes = Math.Max(files + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
         c.Arc.LinkDuplicates();
         c.Cat.Save();
         Console.WriteLine($"\n{disc.Label}: {manifest.Count:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes rebuilt in {dir}");

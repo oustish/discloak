@@ -52,8 +52,14 @@ A burned disc that is not finalized can take more data in further *sessions* ([A
 
 `bdxl blanks` is your stock of blank discs: size, reserve, price. Staging uses one up; `discard` gives it back.
 
-<a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's overhead and
-the disc's own files: `disc.json`, `bdxl.key`, `README.txt`, the encrypted manifest (roughly 300 bytes per file)
+<a id="disc-space"></a>**Space on a disc** is counted the way the disc's file system (UDF) uses it: every file ends on a
+2 KiB sector and has a file entry (one more sector) and an entry in its folder's list. So a file takes its encrypted
+size rounded up to 2 KiB, plus about 2.1 KB. For large files that is nothing; for 100,000 small files it is about
+300 MB, and `plan`, `stage` and `--append` count it, so a disc full of small files still burns. (`plan` shows these
+figures: a disc of small files holds fewer bytes than its size.)
+
+<a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's own fixed overhead
+(volume descriptors, the metadata partition) and the disc's own files: `disc.json`, `bdxl.key`, `README.txt`, the encrypted manifest (roughly 300 bytes per file)
 and, with `--with-catalog`, the catalog backup (about 1.3× the size of the catalog's `.enc` files, because of the
 repair data). If those come out larger than the reserve, `stage` warns that the folder will not fit. Raise it with
 `bdxl blanks reserve 500MB`.

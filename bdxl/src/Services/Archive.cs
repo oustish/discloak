@@ -142,11 +142,19 @@ public sealed class Archive
             .Select(g => g.OrderBy(f => f.RootName + "/" + f.RelPath, StringComparer.Ordinal).First())
             .ToList();
 
-        // every staged piece is encrypted; whole files maybe compressed too (sizes counted by scan), parts never
-        Func<Piece, long> sizeOf = p => p.IsPart ? FileCrypto.StoredSize(p.Length) : Compression.PlannedStoredSize(cat.Settings, p.File);
         long largest = cat.Blanks.Select(b => b.Usable).DefaultIfEmpty(0).Max();
-        // the part size leaves room for encryption, so a layout works whether later parts are encrypted or not
-        long newPartSize = FileCrypto.MaxPlainSize(largest);
+        // every staged piece is encrypted; whole files maybe compressed too (sizes counted by scan), parts never; on the
+        // disc each takes whole sectors plus its file system entries. A part of a layout from before that was counted
+        // (as big as a whole disc's usable space) still counts as fitting: its few KB come out of the reserve.
+        Func<Piece, long> sizeOf = p =>
+        {
+            long stored = p.IsPart ? FileCrypto.StoredSize(p.Length) : Compression.PlannedStoredSize(cat.Settings, p.File);
+            long space = DiscSpace.OnDisc(stored);
+            return p.IsPart && stored <= largest ? Math.Min(space, largest) : space;
+        };
+        // the part size leaves room for encryption and the file system, so a layout works whether later parts are
+        // encrypted or not
+        long newPartSize = FileCrypto.MaxPlainSize(largest - DiscSpace.OnDisc(0) - DiscSpace.Sector);
         var pending = new List<Piece>();
         var tooBig = new List<FileRecord>();
 

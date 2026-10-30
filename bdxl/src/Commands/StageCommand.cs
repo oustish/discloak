@@ -95,7 +95,7 @@ public sealed class StageCommand : ICommand
             }
 
             c.Cat.Blanks.Remove(bin.Blank);   // this blank disc is now spoken for
-            var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionFiles: disc.UsedBytes, occupiedBefore: 0, c.Key);
+            var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionSpace: Space(manifest), occupiedBefore: 0, c.Key);
             Console.WriteLine($"{label}: {disc.FileCount:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes staged in {dir}" +
                               (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
 
@@ -156,7 +156,7 @@ public sealed class StageCommand : ICommand
         };
         disc.PendingAppend = session;
         disc.Sessions = session.Number;
-        StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), key, c.Settings);
+        var stored = StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), key, c.Settings);
         bool cutShort = Interrupt.Requested;
 
         if (disc.FileCount == session.FileCountBefore)
@@ -172,7 +172,7 @@ public sealed class StageCommand : ICommand
         var manifest = c.Arc.CopiesOn(disc.Label).Select(x => ManifestLine.For(x.Copy, x.File))
                             .OrderBy(m => m.Path, StringComparer.Ordinal).ToList();
         long sessionFiles = disc.UsedBytes - session.UsedBytesBefore;
-        var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionFiles, occupiedBefore, key);
+        var (dups, folderBytes) = Finish(c, disc, dir, manifest, Space(stored), occupiedBefore, key);
         Console.WriteLine($"{disc.Label} session {session.Number}: {disc.FileCount - session.FileCountBefore:N0} files, " +
                           $"{SizeText.Bytes(sessionFiles)} bytes staged in {dir}" +
                           (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
@@ -267,17 +267,21 @@ public sealed class StageCommand : ICommand
         return manifest;
     }
 
+    /// <summary>Space the stored files of a session take on the disc (sectors and file system entries included).</summary>
+    static long Space(List<ManifestLine> stored) => stored.Sum(m => DiscSpace.OnDisc(m.Size));
+
     /// <summary>
     /// Writes manifest + disc.json, links duplicates, saves, and writes the catalog backup (--with-catalog). The disc
-    /// counts as occupied by the session's files plus its reserve - or its metadata, if that came out larger.
+    /// counts as occupied by the space of the session's files plus its reserve - or the space of the whole folder,
+    /// if its metadata came out larger. Returns that folder's space on the disc.
     /// </summary>
     static (int Dups, long FolderBytes) Finish(Ctx c, DiscRecord disc, string dir, List<ManifestLine> manifest,
-                                               long sessionFiles, long occupiedBefore, MasterKey key)
+                                               long sessionSpace, long occupiedBefore, MasterKey key)
     {
         DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir);   // the disc describes itself (manifest + disc.json [+ bdxl.key, README])
         int dups = c.Arc.LinkDuplicates();                  // other files with identical content now point at this disc too
         long reserve = disc.Reserve ?? 0;
-        disc.OccupiedBytes = occupiedBefore + sessionFiles + reserve;
+        disc.OccupiedBytes = occupiedBefore + sessionSpace + reserve;
         c.Cat.Save();
         if (c.Opt.Has("with-catalog"))                      // leave room for it in the blank discs' reserve
         {
@@ -285,8 +289,8 @@ public sealed class StageCommand : ICommand
             CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"));
         }
 
-        long folderBytes = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
-        if (folderBytes - sessionFiles > reserve)           // the metadata outgrew the reserve
+        long folderBytes = DiscSpace.Folder(dir);
+        if (folderBytes - sessionSpace > reserve)           // the metadata outgrew the reserve
         {
             disc.OccupiedBytes = occupiedBefore + folderBytes;
             c.Cat.Save();

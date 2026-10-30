@@ -62,7 +62,8 @@ Deriving the key from the password is deliberately expensive (Argon2id, ~2 s), s
 Their location's compression setting changed (or `--full` was given); their compressed size is counted again.
 
 **How big should the reserve be?**
-Enough for the file system (a few tens of MB on a 100 GB disc), the disc's own files (manifest ~300 bytes per file)
+Enough for the file system's fixed overhead (a few tens of MB on a 100 GB disc; the space each file takes in
+sectors and entries is counted by the plan itself), the disc's own files (manifest ~300 bytes per file)
 and, with `--with-catalog`, the catalog backup (~1.3× the catalog's `.enc` files). `stage` warns when it does not fit.
 
 **Which file system should I burn with?**
