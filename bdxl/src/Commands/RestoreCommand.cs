@@ -50,14 +50,22 @@ public sealed class RestoreCommand : ICommand
 
         // pick the copy to restore (live discs only): the current version first, then the newest other version.
         // A split copy needs every one of its parts.
+        // A file with several copies ('copies') is on several discs: each piece comes from a mounted one if it can.
         var jobs = new List<(FileRecord File, List<BackupRef> Copy)>();
         var noCopy = new List<FileRecord>();
+        List<BackupRef>? Choose(List<BackupRef> live, string version) =>
+            Archive.CompleteCopy(live, version)?.Select(piece => live
+                    .Where(b => Hashing.SameHash(b.Sha256, version) && b.Part == piece.Part && b.Parts == piece.Parts &&
+                                (!b.IsPart || SplitLayout.PartSizeOf(b) == SplitLayout.PartSizeOf(piece)))
+                    .OrderByDescending(b => mounts.ContainsKey(b.Disc)).ThenByDescending(b => b.BackedUpUtc != null).ThenBy(b => b.Alias)
+                    .First())
+                .ToList();
         foreach (var f in wanted)
         {
             var live = f.Backups.Where(x => !dead.Contains(x.Disc)).ToList();
             var best = live.AsEnumerable().Reverse().Select(b => b.Sha256).Prepend(f.Sha256)
                 .Where(v => v.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(v => Archive.CompleteCopy(live, v)).FirstOrDefault(set => set != null);
+                .Select(v => Choose(live, v)).FirstOrDefault(set => set != null);
             if (best != null) jobs.Add((f, best));
             else if (!(f.Ignored && f.Backups.Count == 0)) noCopy.Add(f);   // ignored and never backed up: nothing was lost
         }
@@ -216,6 +224,8 @@ public sealed class RestoreCommand : ICommand
             Console.WriteLine("Insert / mount these discs and run the same command again with --mount:");
             foreach (var kv in needDiscs)
                 Console.WriteLine($"  {kv.Key}  ({kv.Value:N0} file(s))");
+            if (jobs.Any(j => j.File.Backups.Where(b => !dead.Contains(b.Disc)).Select(b => b.Disc).Distinct().Count() > j.Copy.Count))
+                Console.WriteLine("Some of these files have copies on other discs too ('find' lists them); any disc with a copy will do.");
         }
         if (noCopy.Count > 0)
         {

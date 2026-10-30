@@ -24,11 +24,19 @@ public static class MarkDeadDisc
         var rebackup = exposed.Where(f => f.MissingSinceUtc == null && !f.Ignored).ToList();
         var onSource = c.Arc.SourceHashes();
         var gone = exposed.Where(f => f.MissingSinceUtc != null && !onSource.Contains(f.Sha256)).ToList();
+        var fewer = affected.Except(exposed).Where(f => !f.Ignored && f.Sha256.Length > 0 &&
+                                                       Archive.BurnedCopies(f, dead) < c.Settings.CopiesFor(f.RootName)).ToList();
         c.Cat.Save();
 
         Console.WriteLine($"{disc.Label} marked as {state}. {affected.Count:N0} catalogued file(s) had a copy on it.");
         if (relinked > 0) Console.WriteLine($"{relinked:N0} of them still have an identical copy on another disc.");
         Console.WriteLine($"{rebackup.Count:N0} file(s) are still on the source and are pending again (next 'plan' / 'stage').");
+        if (fewer.Count > 0)
+        {
+            int cannot = fewer.Count(f => f.MissingSinceUtc != null);
+            Console.WriteLine($"{fewer.Count:N0} file(s) still have a copy, but fewer than their location wants; further copies are planned" +
+                              (cannot > 0 ? $" ({cannot:N0} of them are gone from the source and cannot be copied again)." : "."));
+        }
         if (gone.Count > 0)
         {
             Console.WriteLine($"\nDATA LOST - {gone.Count:N0} file(s) no longer exist on the source and have no other copy:");

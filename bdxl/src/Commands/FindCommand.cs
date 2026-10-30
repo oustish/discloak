@@ -16,6 +16,7 @@ public sealed class FindCommand : ICommand
             .OrderBy(f => f.RootName, StringComparer.Ordinal).ThenBy(f => f.RelPath, StringComparer.Ordinal)
             .ToList();
 
+        var dead = c.Arc.DeadDiscs();
         foreach (var f in hits)
         {
             string hashText = f.Sha256.Length >= 16 ? f.Sha256[..16] + "..." : "(not hashed)";
@@ -23,6 +24,9 @@ public sealed class FindCommand : ICommand
                               (f.Ignored ? "[ignored] " : "") +
                               (f.MissingSinceUtc != null ? $"[gone from source since {f.MissingSinceUtc:yyyy-MM-dd}]" : ""));
             if (f.Backups.Count == 0) Console.WriteLine("    not backed up");
+            int want = c.Settings.CopiesFor(f.RootName);
+            if (want > 1 && f.Sha256.Length > 0)
+                Console.WriteLine($"    copies: {Archive.BurnedCopies(f, dead)} of {want} wanted on burned discs");
             foreach (var b in f.Backups)
             {
                 var d = c.Cat.Discs.FirstOrDefault(x => x.Label == b.Disc);

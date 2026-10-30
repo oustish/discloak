@@ -11,6 +11,12 @@ public class Settings
     public List<string> IgnoreRules { get; set; } = new(); // .gitignore syntax, applied relative to every source folder
     public CompressionSetting Compression { get; set; } = new();   // default for every alias (see Compression)
     public Dictionary<string, CompressionSetting> CompressionByAlias { get; set; } = new();   // alias -> its own setting
+    public int Copies { get; set; } = 1;                  // copies on different discs wanted of every file (see 'copies') ...
+    public Dictionary<string, int> CopiesByAlias { get; set; } = new();   // ... unless its location (alias) has its own number
+    public const int MaxCopies = 9;
+
+    public int CopiesFor(string alias) =>
+        CopiesByAlias.FirstOrDefault(kv => kv.Key.Equals(alias, StringComparison.OrdinalIgnoreCase)).Value is int n and > 0 ? n : Math.Max(1, Copies);
     public int UnlockIdleMinutes { get; set; } = 30;      // 'unlock': locked after this long without use
     public int UnlockMaxMinutes { get; set; } = 480;      // 'unlock': locked after this long at the latest
     public bool LockOnSessionLock { get; set; } = true;   // 'unlock': locked when Windows is locked (Win+L)

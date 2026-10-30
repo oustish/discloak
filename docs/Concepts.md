@@ -26,8 +26,9 @@ restored files go to `<destination>\<alias>\<path>`. `bdxl alias` lists them; `a
 
 ## Pending files and deduplication
 
-A file is **pending** when it is on its source, not ignored, hashed, and no *live* disc (burned or staged, not
-lost or destroyed) holds a complete copy of its content. Content is recognised by hash, so:
+A file is **pending** when it is on its source, not ignored, hashed, and fewer *live* discs (burned or staged, not
+lost or destroyed) hold a complete copy of its content than its location wants: one by default, more with
+[`copies`](Guide-Copies.md), each copy on a different disc. Content is recognised by hash, so:
 
 - identical files (in one or several locations) are stored once; the others are linked to that copy;
 - a file whose content is already on a disc is not stored again, even under another name;

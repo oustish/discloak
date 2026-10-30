@@ -102,6 +102,9 @@ Every encrypted disc carries the catalog's key file (`bdxl.key`) of the day it w
 
 ## A disc is damaged or lost
 
+With [several copies](Guide-Copies.md) nothing is lost yet: `restore` takes the files from another disc, and
+`lost` / `destroyed` make the next `stage` plan the missing copy again. Without them:
+
 1. Check it:
    ```
    bdxl verify BDXL-0005 G:\

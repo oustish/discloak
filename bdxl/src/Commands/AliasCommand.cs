@@ -45,6 +45,12 @@ public sealed class AliasCommand : ICommand
                 c.Settings.CompressionByAlias[newName] = c.Settings.CompressionByAlias[ownSetting];
                 c.Settings.CompressionByAlias.Remove(ownSetting);
             }
+            var ownCopies = c.Settings.CopiesByAlias.Keys.FirstOrDefault(k => k.Equals(oldName, StringComparison.OrdinalIgnoreCase));
+            if (ownCopies != null)    // ... and so does the number of copies
+            {
+                c.Settings.CopiesByAlias[newName] = c.Settings.CopiesByAlias[ownCopies];
+                c.Settings.CopiesByAlias.Remove(ownCopies);
+            }
             c.Cat.Save();
             Console.WriteLine($"Renamed '{oldName}' to '{newName}' on {affected.Count:N0} file(s). " +
                               "Discs that were already burned keep the old folder name on the disc; the catalog still finds the files there.");

@@ -137,5 +137,5 @@ nothing after it. A burned disc can only be moved to the new key by `restage` + 
 
 - Keep the recovery key on paper, away from the computer and the discs.
 - Keep the catalog folder on a disk that is itself backed up, and use `stage --with-catalog`.
-- Store discs in two places if they matter.
+- Ask for two copies of what matters ([Several Copies](Guide-Copies.md)) and store the two sets in different places.
 - Use `bdxl lock --all` (or Win+L) when you leave the computer.

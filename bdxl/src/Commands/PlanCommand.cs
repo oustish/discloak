@@ -24,7 +24,7 @@ public sealed class PlanCommand : ICommand
     {
         if (c.Opt.Get("append") is { } appendTo) return PlanAppend(c, appendTo);
         var plan = c.Arc.MakePlan(c.Opt.Has("split"));
-        Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes");
+        Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
         int splitFiles = plan.Pending.Where(p => p.IsPart).Select(p => p.File).Distinct().Count();
         if (splitFiles > 0)
             Console.WriteLine($"({splitFiles:N0} file(s) are split across discs: {plan.Pending.Count(p => p.IsPart):N0} part(s) still to store.)");
@@ -79,7 +79,7 @@ public sealed class PlanCommand : ICommand
         var target = AppendTarget.Open(c, label);
         var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()]);
         var bin = plan.Bins[0];
-        Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes");
+        Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
         Console.WriteLine($"{target.Disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +
                           $"(reserve of {SizeText.Bytes(target.Reserve)} bytes kept for its metadata)");
         Console.WriteLine($"  would hold {bin.Pieces.Count:N0} file(s), {SizeText.Bytes(bin.Used)} bytes");

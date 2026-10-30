@@ -11,6 +11,7 @@
 - [Appending to a Disc](Guide-Appending.md)
 - [Large Files](Guide-Large-Files.md)
 - [Compression](Guide-Compression.md)
+- [Several Copies](Guide-Copies.md)
 - [Maintenance](Guide-Maintenance.md)
 - [Discs You Already Have](Guide-Existing-Discs.md)
 - [Disaster Recovery](Guide-Disaster-Recovery.md)

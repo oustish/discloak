@@ -64,6 +64,17 @@ bdxl compression clear <alias>
 ```
 `auto` skips already-compressed formats; level 1–19 (default 3). After a change run `scan`. See [Compression](Guide-Compression.md).
 
+### copies
+How many copies, each on a different disc, a location's files should have.
+```
+bdxl copies [list]
+bdxl copies set <alias> N
+bdxl copies set --default N
+bdxl copies clear <alias>
+```
+N = 1–9 (default 1). Planning counts staged and burned discs; `copies list`, `status` and `find` count burned ones.
+`copies list` exits with 2 while some file has fewer burned copies than wanted. See [Several Copies](Guide-Copies.md).
+
 ### plan
 Which pending files would go on which blank disc. Changes nothing.
 ```

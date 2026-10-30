@@ -14,8 +14,9 @@ public sealed class StatusCommand : ICommand
         foreach (var g in c.Cat.Files.GroupBy(f => f.RootName))
         {
             int ignored = g.Count(f => f.Ignored);
+            int copies = c.Settings.CopiesFor(g.Key);
             Console.WriteLine($"  source '{g.Key}': {g.Count():N0} files, {SizeText.Bytes(g.Sum(f => f.Size))} bytes" +
-                              (ignored > 0 ? $" ({ignored:N0} ignored)" : ""));
+                              (ignored > 0 ? $" ({ignored:N0} ignored)" : "") + (copies > 1 ? $", {copies} copies wanted" : ""));
         }
 
         var dead = c.Arc.DeadDiscs();
@@ -28,7 +29,11 @@ public sealed class StatusCommand : ICommand
         var plan = c.Arc.MakePlan();
 
         Console.WriteLine($"Files still on source (not ignored): {onSource:N0}; current version burned: {safe:N0}");
-        Console.WriteLine($"Pending: {plan.PendingFiles:N0} files, {SizeText.Bytes(plan.PendingBytes)} bytes");
+        Console.WriteLine($"Pending: {plan.PendingFiles:N0} files, {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
+        var tooFew = c.Arc.TooFewCopies();
+        int wantMore = tooFew.Count(f => Archive.BurnedCopies(f, dead) > 0);   // the first copy is what 'current version burned' counts
+        if (wantMore > 0)
+            Console.WriteLine($"Copies: {wantMore:N0} burned file(s) have fewer burned copies than their location wants (see 'copies list').");
         Console.WriteLine($"Blank discs registered: {c.Cat.Blanks.Count}" +
                           (plan.Pending.Count == 0 ? "" :
                            plan.Unplaced.Count == 0 ? " - all pending data fits." :

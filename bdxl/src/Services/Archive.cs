@@ -136,10 +136,12 @@ public sealed class Archive
     public PlanResult MakePlan(bool split = false, IReadOnlyList<BlankDisc>? into = null)
     {
         var live = LiveCopies();
+        var wanted = WantedCopies();
         var pendingFiles = cat.Files
-            .Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0 && CompleteCopy(live[f.Sha256], f.Sha256) == null)
+            .Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0)
             .GroupBy(f => f.Sha256, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderBy(f => f.RootName + "/" + f.RelPath, StringComparer.Ordinal).First())
+            .Where(f => CompleteCopies(live[f.Sha256], f.Sha256) < wanted[f.Sha256])
             .ToList();
 
         long largest = cat.Blanks.Select(b => b.Usable).DefaultIfEmpty(0).Max();
@@ -157,27 +159,95 @@ public sealed class Archive
         long newPartSize = FileCrypto.MaxPlainSize(largest - DiscSpace.OnDisc(0) - DiscSpace.Sector);
         var pending = new List<Piece>();
         var tooBig = new List<FileRecord>();
+        int furtherCopies = 0;
 
         foreach (var f in pendingFiles)
         {
-            var started = PartSets(live[f.Sha256]).FirstOrDefault();
-            if (started != null)
+            var refs = live[f.Sha256].ToList();
+            int before = pending.Count;
+            bool hasOne = CompleteCopies(refs, f.Sha256) > 0;
+            int missing = wanted[f.Sha256] - WholeCopies(refs, f.Sha256);   // copies still to make (> what a split layout has)
+            var layout = Layouts(refs, f.Sha256).FirstOrDefault();
+            if (layout != null)   // continue the layout: each part until it is on enough discs
             {
-                var have = started.Select(b => b.Part).ToHashSet();
-                pending.AddRange(SplitLayout.Pieces(f, SplitLayout.PartSizeOf(started[0])).Where(p => !have.Contains(p.Part)));
+                foreach (var piece in SplitLayout.Pieces(f, layout.PartSize))
+                    for (int n = layout.DiscsWith(piece.Part); n < missing; n++) pending.Add(piece);
             }
             else if (cat.Blanks.Count > 0 && sizeOf(Piece.Whole(f)) > largest)
             {
-                if (split && newPartSize > 0) pending.AddRange(SplitLayout.Pieces(f, newPartSize));
+                if (split && newPartSize > 0)
+                    for (int n = 0; n < missing; n++) pending.AddRange(SplitLayout.Pieces(f, newPartSize));
                 else { tooBig.Add(f); pending.Add(Piece.Whole(f)); }
             }
-            else pending.Add(Piece.Whole(f));
+            else
+                for (int n = 0; n < missing; n++) pending.Add(Piece.Whole(f));
+            if (hasOne) furtherCopies += pending.Count - before;
         }
 
+        // copies of one content never share a disc (nor go onto a disc that holds it already); with one copy wanted
+        // there is nothing to keep apart
+        string? GroupOf(Piece p) => wanted[p.File.Sha256] > 1 || into != null ? p.File.Sha256 : null;
+        bool Holds(BlankDisc disc, string sha) => live[sha].Any(b => b.Disc.Equals(disc.Id, StringComparison.OrdinalIgnoreCase));
+
         var tooBigSet = tooBig.ToHashSet();
-        var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), into ?? cat.Blanks, sizeOf);
+        var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), into ?? cat.Blanks, sizeOf,
+                                               GroupOf, into != null ? Holds : null);
         var unplaced = leftover.Concat(pending.Where(p => tooBigSet.Contains(p.File))).ToList();
-        return new PlanResult(bins, unplaced, tooBig, pending);
+        return new PlanResult(bins, unplaced, tooBig, pending, furtherCopies);
+    }
+
+    // ---- copies ---------------------------------------------------------------------------
+
+    /// <summary>Copies wanted of each content on a source: the most any location holding it asks for ('copies').</summary>
+    public Dictionary<string, int> WantedCopies()
+    {
+        var wanted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in cat.Files.Where(f => !f.Ignored && f.Sha256.Length > 0))
+        {
+            int n = cat.Settings.CopiesFor(f.RootName);
+            if (!wanted.TryGetValue(f.Sha256, out int had) || n > had) wanted[f.Sha256] = n;
+        }
+        return wanted;
+    }
+
+    /// <summary>A split layout of a content: its part count and size, and on how many different discs each part is.</summary>
+    public sealed record Layout(int Parts, long PartSize, int[] Discs)
+    {
+        public int DiscsWith(int part) => Discs[part - 1];
+        public int Copies => Discs.Min();
+    }
+
+    /// <summary>The split layouts of content sha among refs, the one with the most complete copies (then parts) first.</summary>
+    public static IEnumerable<Layout> Layouts(IEnumerable<BackupRef> refs, string sha) =>
+        refs.Where(b => b.IsPart && Hashing.SameHash(b.Sha256, sha))
+            .GroupBy(b => (b.Parts, SplitLayout.PartSizeOf(b)))
+            .Select(g => new Layout(g.Key.Parts, g.Key.Item2, Enumerable.Range(1, g.Key.Parts)
+                .Select(p => g.Where(b => b.Part == p).Select(b => b.Disc).Distinct(StringComparer.OrdinalIgnoreCase).Count()).ToArray()))
+            .OrderByDescending(l => l.Copies).ThenByDescending(l => l.Discs.Count(n => n > 0));
+
+    static int WholeCopies(IEnumerable<BackupRef> refs, string sha) =>
+        refs.Where(b => !b.IsPart && Hashing.SameHash(b.Sha256, sha)).Select(b => b.Disc).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+
+    /// <summary>Complete copies of content sha among refs, each on its own disc(s): whole copies + copies of its best split layout.</summary>
+    public static int CompleteCopies(IEnumerable<BackupRef> refs, string sha)
+    {
+        var list = refs as IList<BackupRef> ?? refs.ToList();
+        return WholeCopies(list, sha) + (Layouts(list, sha).FirstOrDefault()?.Copies ?? 0);
+    }
+
+    /// <summary>Burned copies on live discs (staged ones do not count yet) of the file's current content.</summary>
+    public static int BurnedCopies(FileRecord f, HashSet<string> dead) =>
+        CompleteCopies(f.Backups.Where(b => b.BackedUpUtc != null && !dead.Contains(b.Disc)).ToList(), f.Sha256);
+
+    /// <summary>Files on a source with fewer burned copies than their location wants (current content; ignored files not).</summary>
+    public List<FileRecord> TooFewCopies()
+    {
+        var dead = DeadDiscs();
+        var burned = cat.Files.SelectMany(f => f.Backups).Where(b => b.BackedUpUtc != null && !dead.Contains(b.Disc))
+                        .ToLookup(b => b.Sha256, StringComparer.OrdinalIgnoreCase);
+        return cat.Files.Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0 &&
+                                    CompleteCopies(burned[f.Sha256], f.Sha256) < cat.Settings.CopiesFor(f.RootName))
+                        .ToList();
     }
 
     public static void PrintTooBig(List<FileRecord> tooBig)
