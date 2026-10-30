@@ -9,15 +9,24 @@ Full design and cryptographic details: [`bdxl/ENCRYPTION.md`](../bdxl/ENCRYPTION
 ```
 <catalog>\
   bdxl.key                 the master key(s), wrapped by the password and (optionally) the recovery key - plain JSON
-  files.jsonl.enc          every file of every location, with its copies on discs        } encrypted with the
-  discs.jsonl.enc          every disc                                                     } current master key
-  blanks.jsonl.enc         blank disc stock                                               } (BDXLENC2,
-  settings.json.enc        settings, ignore rules, compression settings                   }  purpose "catalog")
+  files.000.jsonl.enc …    every file of every location, with its copies on discs        } encrypted with the
+                           (up to 200,000 per file; one location never shares a file)   } current master key
+  discs.jsonl.enc          every disc                                                     } (BDXLENC2,
+  blanks.jsonl.enc         blank disc stock                                               }  purpose "catalog",
+  settings.json.enc        settings, ignore rules, compression settings                   }  zstd-compressed)
+  files.jsonl.enc          only a marker line that older bdxl versions cannot read (see below)
   catalog.hash.json        SHA-256 of each .enc file + key id + save counter + HMAC
   history\<time>-<command>\   previous versions (.enc files + their catalog.hash.json, never bdxl.key)
 ```
 
 Do not edit these files. Use `catalog export` / `catalog import` to read or change the content as plain JSON.
+A save rewrites only the files whose content changed (a scan of one location touches only that location's files).
+
+Catalogs from before the split kept the whole file list in `files.jsonl.enc`; they are read as they are and split on
+the next save. From then on `files.jsonl.enc` holds a single line that is not JSON, so an **older bdxl refuses the
+catalog** (exit code 4, `Cannot be read: files.jsonl line 1`) instead of seeing an empty file list. Use the current
+version; an older one only works on a version rolled back from `history`.
+
 `bdxl.key` is safe to keep openly, but without it (and without a disc or backup that has it) the catalog cannot be
 opened. Back up the whole folder.
 
@@ -65,7 +74,7 @@ Plain files in their folders. `scandisc` records them; `discjson` can add a `dis
 
 ```
 <backup>\
-  files.jsonl.enc, discs.jsonl.enc, blanks.jsonl.enc, settings.json.enc, catalog.hash.json, bdxl.key
+  files.NNN.jsonl.enc, files.jsonl.enc, discs.jsonl.enc, blanks.jsonl.enc, settings.json.enc, catalog.hash.json, bdxl.key
   <each>.par               Reed-Solomon parity blocks (25% by default)
   <each>.repair.json       block size, per-block SHA-256, parity layout
   README.txt

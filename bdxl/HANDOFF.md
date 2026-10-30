@@ -27,7 +27,7 @@
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 197 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 200 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -69,10 +69,16 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
 `Archive.CopiesOn(label)` = one (file, copy) per stored path of a disc, preferring the file it was stored for over aliases.
 
 ## Key rules / invariants
-- **Catalog files:** `files.jsonl.enc`, `discs.jsonl.enc`, `blanks.jsonl.enc`, `settings.json.enc` (`Catalog.StoredFiles`;
-  plaintext names in `Catalog.CoveredFiles`), each `BDXLENC2` with purpose `catalog`, plus `bdxl.key`.
+- **Catalog files:** `files.NNN.jsonl.enc` (the file list, `FilesPerShard` = 200k records per part, a part never
+  spans two locations), `discs.jsonl.enc`, `blanks.jsonl.enc`, `settings.json.enc`, each `BDXLENC2` with purpose
+  `catalog` and zstd level 3 (`Catalog.CompressionLevel`), plus `bdxl.key`. Always list them with
+  `Catalog.StoredFilesIn(dir)` (integrity, snapshots, rollback, backups, migration), never a fixed list.
+  `files.jsonl.enc` = the whole list in catalogs from before the split (read, split on the next save); since then it
+  holds `TooOldMarker`, a non-JSON line, so an older build fails with exit 4 instead of loading an empty file list.
   `catalog.hash.json` = SHA-256 of each stored file + key id + save counter + HMAC (key from the master key).
-  Every `Catalog.Save()` serializes in memory and encrypts straight into the files (plaintext never on disk).
+  Every `Catalog.Save()` serializes each file in memory (no single buffer near 2 GiB any more) and encrypts straight
+  into it - unless its plaintext hash equals the one loaded/last saved and it is under the current key (skipped).
+  `Load` shares the Root/RootName/Disc strings between records (memory).
 - **Keys:** `Program.OpenCatalog`: no catalog = "run init"; plaintext catalog = migrate after confirmation;
   otherwise `CatalogSetup.Unlock` (env/typed, 3 tries). `Ctx.Key` is the master key; `Catalog.Key` saves with it.
   `bdxl.key` is never in `history/`; a password change rewrites only `bdxl.key`. `ICommand.NeedsCatalogFor(opt)`

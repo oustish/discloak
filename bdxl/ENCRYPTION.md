@@ -75,7 +75,7 @@ chunks: length (uint32) | AES-256-GCM ciphertext (length) | tag (16)
 | File | Contents |
 |---|---|
 | `bdxl.key` | envelopes (above) |
-| `files.jsonl.enc`, `discs.jsonl.enc`, `blanks.jsonl.enc`, `settings.json.enc` | the catalog, `BDXLENC2`, purpose `catalog`; plaintext never touches a disk |
+| `files.NNN.jsonl.enc`, `discs.jsonl.enc`, `blanks.jsonl.enc`, `settings.json.enc` | the catalog, `BDXLENC2` (zstd-compressed), purpose `catalog`; plaintext never touches a disk. `files.jsonl.enc`: the unsplit file list of older catalogs, now a marker that older builds cannot parse |
 | `catalog.hash.json` | SHA-256 of each encrypted file + key id + save counter + time, and an **HMAC** over all of it (key from the master key) |
 | `history/<time>-<command>/` | encrypted copies + their `catalog.hash.json` (no `bdxl.key`) |
 

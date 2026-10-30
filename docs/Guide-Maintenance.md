@@ -129,5 +129,10 @@ Delete the plain folder afterwards.
 
 ## Updating bdxl
 
-Publish again (`dotnet publish -p:PublishProfile=win-x64`) and copy the new `bdxl.exe` over the old one. Catalogs, discs and key files of older versions are read as they are. A running
-agent keeps working; if the new version talks to it differently, the next `unlock` replaces it (unlock again then).
+Publish again (`dotnet publish -p:PublishProfile=win-x64`) and copy the new `bdxl.exe` over the old one. Catalogs,
+discs and key files of older versions are read as they are. A running agent keeps working; if the new version talks
+to it differently, the next `unlock` replaces it (unlock again then).
+
+Do not go back to an older version afterwards: a catalog saved by a newer version may be in a newer layout, which
+an older one refuses (exit code 4) rather than misreads. See
+[Files and Formats](Files-and-Formats.md#the-catalog-folder).

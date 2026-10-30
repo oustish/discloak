@@ -49,17 +49,92 @@ public class CatalogTests : IDisposable
         Assert.Equal("PLN", back.Settings.Currency);
     }
 
+    static FileRecord In(string root, string rel) => new() { Root = root, RootName = Path.GetFileName(root), RelPath = rel, Size = 1, Sha256 = "AB" };
+
+    static string[] Parts(string dir) => Catalog.StoredFilesIn(dir).Where(n => n.StartsWith("files.") && n != "files.jsonl.enc").ToArray();
+
+    [Fact]
+    public void The_file_list_is_split_per_location_and_only_changed_parts_are_rewritten()
+    {
+        Run("scan", c =>
+        {
+            c.FilesPerShard = 3;
+            for (int i = 0; i < 4; i++) c.Files.Add(In(@"C:\a", $"{i}.txt"));   // 2 parts
+            for (int i = 0; i < 3; i++) c.Files.Add(In(@"C:\b", $"{i}.txt"));   // 1 part: never shared with C:\a
+        });
+        Assert.Equal(["files.000.jsonl.enc", "files.001.jsonl.enc", "files.002.jsonl.enc"], Parts(Dir));
+        byte[] Bytes(string n) => System.IO.File.ReadAllBytes(Path.Combine(Dir, n));
+        var before = Parts(Dir).ToDictionary(n => n, Bytes);
+
+        Run("scan", c => { c.FilesPerShard = 3; c.Files.Single(f => f.Root == @"C:\b" && f.RelPath == "1.txt").Size = 2; });
+        Assert.Equal(before["files.000.jsonl.enc"], Bytes("files.000.jsonl.enc"));   // C:\a untouched
+        Assert.Equal(before["files.001.jsonl.enc"], Bytes("files.001.jsonl.enc"));
+        Assert.NotEqual(before["files.002.jsonl.enc"], Bytes("files.002.jsonl.enc"));
+
+        Run("purge", c => { c.FilesPerShard = 3; c.Files.RemoveAll(f => f.Root == @"C:\b"); });
+        Assert.Equal(["files.000.jsonl.enc", "files.001.jsonl.enc"], Parts(Dir));                // the part no longer needed is gone
+        var back = TestKeys.Load(Dir);
+        Assert.Equal(IntegrityState.Ok, back.Integrity.State);
+        Assert.Equal(4, back.Files.Count);
+        Assert.Same(back.Files[0].Root, back.Files[3].Root);                                     // one string per location in memory
+
+        // an older version (other parts) comes back whole with a rollback
+        string withB = Catalog.ListHistory(Dir)[0];
+        Catalog.RestoreSnapshot(Dir, withB, "catalog-rollback", 10, Key);
+        Assert.Equal(3, Parts(Dir).Length);
+        Assert.Equal(7, TestKeys.Load(Dir).Files.Count);
+    }
+
+    [Fact]
+    public void An_unsplit_file_list_from_before_is_read_and_split_on_the_next_save()
+    {
+        Run("scan", c => { c.Files.Add(In(@"C:\a", "1.txt")); c.Files.Add(In(@"C:\b", "2.txt")); });
+        // make it look like an older catalog: one files.jsonl.enc, uncompressed
+        var key = Key;
+        var files = TestKeys.Load(Dir).Files;
+        foreach (string n in Parts(Dir)) System.IO.File.Delete(Path.Combine(Dir, n));
+        using (var plain = new MemoryStream())
+        using (var output = System.IO.File.Create(Path.Combine(Dir, "files.jsonl.enc")))
+        {
+            JsonStore.WriteLinesTo(plain, files);
+            plain.Position = 0;
+            FileCrypto.Encrypt(plain, output, key.Current, KeyPurpose.Catalog);
+        }
+        Catalog.WriteIntegrity(Dir, key.Current, 1000);
+
+        var old = TestKeys.Load(Dir);
+        Assert.Equal(IntegrityState.Ok, old.Integrity.State);
+        Assert.Equal(2, old.Files.Count);
+        old.Save();
+        Assert.Equal(["files.000.jsonl.enc", "files.001.jsonl.enc"], Parts(Dir));   // one per location
+        Assert.Equal(2, TestKeys.Load(Dir).Files.Count);
+
+        // files.jsonl.enc now holds a line an older bdxl cannot parse, so it refuses the catalog instead of seeing no files
+        byte[] marker = FileCrypto.Open(System.IO.File.ReadAllBytes(Path.Combine(Dir, "files.jsonl.enc")), key, KeyPurpose.Catalog);
+        Assert.Throws<System.Text.Json.JsonException>(() => JsonStore.ParseLines<FileRecord>(new MemoryStream(marker), "files.jsonl"));
+    }
+
+    [Fact]
+    public void The_catalog_is_stored_compressed()
+    {
+        Run("scan", c => { for (int i = 0; i < 2000; i++) c.Files.Add(In(@"C:\photos", $"2024/holiday/IMG_{i:D5}.CR3")); });
+        long stored = new FileInfo(Path.Combine(Dir, "files.000.jsonl.enc")).Length;
+        using var plain = new MemoryStream();
+        JsonStore.WriteLinesTo(plain, TestKeys.Load(Dir).Files);
+        Assert.True(stored * 3 < plain.Length, $"{stored} stored for {plain.Length} plain");
+    }
+
     [Fact]
     public void A_damaged_file_breaks_the_catalog_and_blocks_saving()
     {
         Run("scan", c => c.Files.Add(File("a.txt")));
-        var bytes = System.IO.File.ReadAllBytes(Path.Combine(Dir, "files.jsonl.enc"));
+        var bytes = System.IO.File.ReadAllBytes(Path.Combine(Dir, "files.000.jsonl.enc"));
         bytes[^5] ^= 1;
-        System.IO.File.WriteAllBytes(Path.Combine(Dir, "files.jsonl.enc"), bytes);
+        System.IO.File.WriteAllBytes(Path.Combine(Dir, "files.000.jsonl.enc"), bytes);
 
         var cat = Catalog.Load(Dir, "plan", Key);
         Assert.Equal(IntegrityState.Broken, cat.Integrity.State);
-        Assert.Contains(cat.Integrity.Problems, p => p.StartsWith("files.jsonl.enc"));
+        Assert.Contains(cat.Integrity.Problems, p => p.StartsWith("files.000.jsonl.enc"));
         Assert.Empty(cat.Files);                                   // a broken catalog is not loaded
         Assert.Throws<InvalidOperationException>(cat.Save);        // and never overwritten
         Assert.Equal(IntegrityState.Broken, Catalog.CheckIntegrity(Dir, null).State);   // damage shows without the key
@@ -132,9 +207,9 @@ public class CatalogTests : IDisposable
         Run("scan", c => c.Files.Add(File("a.txt")));
         Run("scan", c => c.Files.Add(File("b.txt")));
         string id = Catalog.ListHistory(Dir)[0];
-        System.IO.File.AppendAllText(Path.Combine(Dir, Catalog.HistoryFolder, id, "files.jsonl.enc"), "x");
+        System.IO.File.AppendAllText(Path.Combine(Dir, Catalog.HistoryFolder, id, "files.000.jsonl.enc"), "x");
 
-        Assert.Contains(Catalog.VerifySnapshot(Dir, id, Key), p => p.StartsWith("files.jsonl.enc: contents do not match"));
+        Assert.Contains(Catalog.VerifySnapshot(Dir, id, Key), p => p.StartsWith("files.000.jsonl.enc: contents do not match"));
     }
 
     [Fact]

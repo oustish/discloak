@@ -54,7 +54,24 @@ public sealed class Catalog
     /// <summary>The catalog's parts by their plaintext names (export/import, old plaintext catalogs).</summary>
     public static readonly string[] CoveredFiles = { "files.jsonl", "discs.jsonl", "blanks.jsonl", "settings.json" };
     public const string Suffix = ".enc";
-    public static readonly string[] StoredFiles = CoveredFiles.Select(n => n + Suffix).ToArray();
+    public static readonly string[] StoredFiles = CoveredFiles.Select(n => n + Suffix).ToArray();   // files.jsonl.enc: before the file list was split
+    public const int CompressionLevel = 3;                // zstd, for every stored catalog file (JSON shrinks ~3x)
+    static readonly Regex ShardName = new(@"^files\.(\d{3,})\.jsonl\.enc$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// files.jsonl.enc held the whole file list before it was split. It now holds only this line, so that an older bdxl,
+    /// which would see an empty file list (and could save it so), finds it unreadable and refuses to work instead.
+    /// </summary>
+    const string UnsplitFiles = "files.jsonl" + Suffix;
+    static ReadOnlySpan<byte> TooOldMarker => "bdxl: the file list is in files.NNN.jsonl.enc - this version of bdxl is too old for this catalog."u8;
+
+    /// <summary>A stored catalog file: one of the fixed ones, or a part of the file list (files.NNN.jsonl.enc).</summary>
+    public static bool IsStoredName(string name) => StoredFiles.Contains(name, StringComparer.Ordinal) || ShardName.IsMatch(name);
+
+    /// <summary>The stored catalog files in dir (a catalog, a snapshot, a backup), in name order.</summary>
+    public static List<string> StoredFilesIn(string dir) =>
+        !Directory.Exists(dir) ? new List<string>()
+            : Directory.EnumerateFiles(dir).Select(p => Path.GetFileName(p)).Where(IsStoredName).OrderBy(n => n, StringComparer.Ordinal).ToList();
     public const string IntegrityFile = "catalog.hash.json";
     public const string HistoryFolder = "history";
 
@@ -67,8 +84,12 @@ public sealed class Catalog
     public Settings Settings { get; private set; } = new();
     public IntegrityReport Integrity { get; private set; } = new();
 
+    /// <summary>Records per part of the file list; a part never mixes locations. Tests make it small.</summary>
+    public int FilesPerShard { get; set; } = 200_000;
+
     bool snapshotDone;
     long generation;
+    readonly Dictionary<string, string> plainHashes = new(StringComparer.Ordinal);   // stored name -> SHA-256 of its plaintext, as loaded / last saved
 
     public static Catalog CreateEmpty(string dir, string commandName, KeyRing? keys = null) => new() { Dir = dir, CommandName = commandName, Keys = keys };
 
@@ -88,13 +109,17 @@ public sealed class Catalog
 
         try
         {
-            cat.Files = ReadLines<FileRecord>(dir, "files.jsonl", key);
-            cat.Discs = ReadLines<DiscRecord>(dir, "discs.jsonl", key);
-            cat.Blanks = ReadLines<BlankDisc>(dir, "blanks.jsonl", key);
-            string settings = Path.Combine(dir, "settings.json" + Suffix);
-            cat.Settings = File.Exists(settings)
-                ? JsonStore.ParseObject<Settings>(FileCrypto.Open(File.ReadAllBytes(settings), key, KeyPurpose.Catalog), "settings.json") ?? new Settings()
-                : new Settings();
+            cat.Files = new List<FileRecord>();
+            foreach (string name in StoredFilesIn(dir).Where(n => ShardName.IsMatch(n)))
+                cat.Files.AddRange(cat.ReadLines<FileRecord>(dir, name, key));
+            using (var unsplit = cat.ReadPlain(dir, UnsplitFiles, key))   // the whole file list of an older catalog, or the marker
+                if (unsplit != null && !unsplit.GetBuffer().AsSpan(0, (int)unsplit.Length).StartsWith(TooOldMarker))
+                    cat.Files.AddRange(JsonStore.ParseLines<FileRecord>(unsplit, "files.jsonl"));
+            cat.ShareStrings();
+            cat.Discs = cat.ReadLines<DiscRecord>(dir, "discs.jsonl" + Suffix, key);
+            cat.Blanks = cat.ReadLines<BlankDisc>(dir, "blanks.jsonl" + Suffix, key);
+            using var settings = cat.ReadPlain(dir, "settings.json" + Suffix, key);
+            cat.Settings = settings == null ? new Settings() : JsonStore.ParseObject<Settings>(settings.ToArray(), "settings.json") ?? new Settings();
         }
         catch (Exception ex) when (ex is JsonException or InvalidDataException)
         {
@@ -108,16 +133,37 @@ public sealed class Catalog
         return cat;
     }
 
-    static List<T> ReadLines<T>(string dir, string name, KeyRing key)
+    List<T> ReadLines<T>(string dir, string name, KeyRing key)
     {
-        string path = Path.Combine(dir, name + Suffix);
-        if (!File.Exists(path)) return new List<T>();
+        using var plain = ReadPlain(dir, name, key);
+        return plain == null ? new List<T>() : JsonStore.ParseLines<T>(plain, name[..^Suffix.Length]);
+    }
+
+    /// <summary>Decrypts a stored file into memory (null if it does not exist) and remembers the plaintext's hash.</summary>
+    MemoryStream? ReadPlain(string dir, string name, KeyRing key)
+    {
+        string path = Path.Combine(dir, name);
+        if (!File.Exists(path)) return null;
         using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan);
-        using var plain = new MemoryStream();
+        var plain = new MemoryStream();
         try { FileCrypto.Decrypt(input, plain, key, KeyPurpose.Catalog); }
-        catch (InvalidDataException ex) { throw new InvalidDataException($"{name}{Suffix}: {ex.Message}"); }
+        catch (InvalidDataException ex) { plain.Dispose(); throw new InvalidDataException($"{name}: {ex.Message}"); }
+        plainHashes[name] = Convert.ToHexString(SHA256.HashData(plain.GetBuffer().AsSpan(0, (int)plain.Length)));
         plain.Position = 0;
-        return JsonStore.ParseLines<T>(plain, name);
+        return plain;
+    }
+
+    /// <summary>Every record of a location repeats its path and alias (and every copy its disc label): one string each in memory.</summary>
+    void ShareStrings()
+    {
+        var pool = new Dictionary<string, string>(StringComparer.Ordinal);
+        string One(string s) { if (pool.TryGetValue(s, out var known)) return known; pool[s] = s; return s; }
+        foreach (var f in Files)
+        {
+            f.Root = One(f.Root);
+            f.RootName = One(f.RootName);
+            foreach (var b in f.Backups) b.Disc = One(b.Disc);
+        }
     }
 
     /// <summary>Used by 'catalog accept': the user vouches for the current contents.</summary>
@@ -147,7 +193,7 @@ public sealed class Catalog
     {
         manifest = null;
         var report = new IntegrityReport();
-        var existing = StoredFiles.Where(n => File.Exists(Path.Combine(dir, n))).ToList();
+        var existing = StoredFilesIn(dir);
         string manifestPath = Path.Combine(dir, IntegrityFile);
 
         if (!File.Exists(manifestPath))
@@ -207,11 +253,7 @@ public sealed class Catalog
         {
             CreatedUtc = DateTime.UtcNow, KeyId = key.KeyId, Generation = generation, Unverified = unverified ? true : null
         };
-        foreach (string name in StoredFiles)
-        {
-            string path = Path.Combine(dir, name);
-            if (File.Exists(path)) manifest.Files[name] = Hashing.HashFile(path);
-        }
+        foreach (string name in StoredFilesIn(dir)) manifest.Files[name] = Hashing.HashFile(Path.Combine(dir, name));
         manifest.Mac = manifest.ComputeMac(key);
         JsonStore.WriteObject(Path.Combine(dir, IntegrityFile), manifest);
     }
@@ -232,31 +274,54 @@ public sealed class Catalog
 
         using var _ = Interrupt.Critical();   // Ctrl+C waits until all files and their hashes are written
         Directory.CreateDirectory(Dir);
-        WriteEncrypted("files.jsonl", ms => JsonStore.WriteLinesTo(ms,
-            Files.OrderBy(f => f.Root, StringComparer.Ordinal).ThenBy(f => f.RelPath, StringComparer.Ordinal)));
-        WriteEncrypted("discs.jsonl", ms => JsonStore.WriteLinesTo(ms, Discs.OrderBy(d => d.Label, StringComparer.Ordinal)));
-        WriteEncrypted("blanks.jsonl", ms => JsonStore.WriteLinesTo(ms, Blanks.OrderBy(b => b.Id, StringComparer.Ordinal)));
-        WriteEncrypted("settings.json", ms => ms.Write(JsonStore.ObjectToBytes(Settings)));
+        // the file list in parts of at most FilesPerShard records, one location never sharing a part with another, so a
+        // change to one location leaves the parts of the others as they are (and unchanged parts are not rewritten)
+        var shards = Files.GroupBy(f => f.Root, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal)
+            .SelectMany(g => g.OrderBy(f => f.RelPath, StringComparer.Ordinal).Chunk(Math.Max(1, FilesPerShard))).ToList();
+        var written = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < shards.Count; i++)
+        {
+            var part = shards[i];
+            written.Add(WriteEncrypted($"files.{i:D3}.jsonl", ms => JsonStore.WriteLinesTo(ms, part)));
+        }
+        written.Add(WriteEncrypted("files.jsonl", ms => ms.Write(TooOldMarker)));
+        written.Add(WriteEncrypted("discs.jsonl", ms => JsonStore.WriteLinesTo(ms, Discs.OrderBy(d => d.Label, StringComparer.Ordinal))));
+        written.Add(WriteEncrypted("blanks.jsonl", ms => JsonStore.WriteLinesTo(ms, Blanks.OrderBy(b => b.Id, StringComparer.Ordinal))));
+        written.Add(WriteEncrypted("settings.json", ms => ms.Write(JsonStore.ObjectToBytes(Settings))));
+        foreach (string stale in StoredFilesIn(Dir).Where(n => !written.Contains(n)))   // parts no longer needed
+        {
+            File.Delete(Path.Combine(Dir, stale));
+            plainHashes.Remove(stale);
+        }
         WriteIntegrity(Dir, Keys.Current, ++generation);
         Integrity = new IntegrityReport { State = IntegrityState.Ok };
     }
 
-    /// <summary>Serializes into memory and encrypts straight into &lt;name&gt;.enc (via a temp file, then renamed).</summary>
-    void WriteEncrypted(string name, Action<MemoryStream> write)
+    /// <summary>
+    /// Serializes into memory and encrypts (compressed) straight into &lt;name&gt;.enc, via a temp file, then renamed -
+    /// unless the file already holds exactly this, encrypted with the current key. Returns the stored name.
+    /// </summary>
+    string WriteEncrypted(string name, Action<MemoryStream> write)
     {
         using var plain = new MemoryStream();
         write(plain);
+        string stored = name + Suffix, path = Path.Combine(Dir, stored), tmp = path + ".tmp";
+        string hash = Convert.ToHexString(SHA256.HashData(plain.GetBuffer().AsSpan(0, (int)plain.Length)));
+        if (plainHashes.TryGetValue(stored, out var known) && known == hash && File.Exists(path) && FileCrypto.KeyIdOf(path) == Keys!.Current.KeyId)
+            return stored;
+
         plain.Position = 0;
-        string path = Path.Combine(Dir, name + Suffix), tmp = path + ".tmp";
         using (var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
-            FileCrypto.Encrypt(plain, output, Keys!.Current, KeyPurpose.Catalog);
+            FileCrypto.Encrypt(plain, output, Keys!.Current, KeyPurpose.Catalog, level: CompressionLevel);
         File.Move(tmp, path, overwrite: true);
+        plainHashes[stored] = hash;
+        return stored;
     }
 
     /// <summary>Copies the stored catalog files (and their hash file) to history/&lt;time&gt;-&lt;command&gt;/ and prunes old versions.</summary>
     public static string? CreateSnapshot(string dir, string commandName, int keep)
     {
-        var present = StoredFiles.Where(n => File.Exists(Path.Combine(dir, n))).ToList();
+        var present = StoredFilesIn(dir);
         if (present.Count == 0) return null;
 
         string historyDir = Path.Combine(dir, HistoryFolder);
@@ -304,13 +369,10 @@ public sealed class Catalog
         bool trusted = VerifySnapshot(dir, id, key).Count == 0;
         CreateSnapshot(dir, commandName, keep + 1);
 
-        foreach (string name in StoredFiles)
-        {
-            string from = Path.Combine(snap, name);
-            string to = Path.Combine(dir, name);
-            if (File.Exists(from)) File.Copy(from, to, overwrite: true);
-            else if (File.Exists(to)) File.Delete(to);   // that version did not have this file
-        }
+        var inSnapshot = StoredFilesIn(snap);
+        foreach (string name in inSnapshot) File.Copy(Path.Combine(snap, name), Path.Combine(dir, name), overwrite: true);
+        foreach (string name in StoredFilesIn(dir).Except(inSnapshot, StringComparer.Ordinal))
+            File.Delete(Path.Combine(dir, name));   // that version did not have this file
         if (trusted) File.Copy(Path.Combine(snap, IntegrityFile), Path.Combine(dir, IntegrityFile), overwrite: true);
         else WriteIntegrity(dir, key.Current, 0);
     }

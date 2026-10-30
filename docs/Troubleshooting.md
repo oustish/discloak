@@ -24,6 +24,7 @@
 | `The two passwords differ; nothing was changed.` | During `password change` / `init`: the copy in your password manager is not what you typed first. Fix the entry, run again. |
 | `Confirmation needed but input is redirected; add --yes.` | Add `--yes` in scripts. |
 | `The catalog in … failed its integrity check, so no work is done` (exit 4) | [The catalog is damaged](Guide-Disaster-Recovery.md#the-catalog-is-damaged-or-fails-its-check). |
+| `Cannot be read: files.jsonl line 1: 'b' is an invalid start of a value` (exit 4) | An **older bdxl** on a catalog a newer one has saved. Use the current version; nothing is damaged. |
 | `No blank discs are registered.` | `bdxl blanks add …` |
 | `Nothing staged: no blank disc would be full enough (see --min-fill).` | Lower or drop `--min-fill`, or wait for more data. |
 | `Nothing staged: the pending files do not fit on any registered blank disc` | A file is larger than every disc: `--split`, or larger blanks. |
@@ -64,7 +65,8 @@ Their location's compression setting changed (or `--full` was given); their comp
 **How big should the reserve be?**
 Enough for the file system's fixed overhead (a few tens of MB on a 100 GB disc; the space each file takes in
 sectors and entries is counted by the plan itself), the disc's own files (manifest ~300 bytes per file)
-and, with `--with-catalog`, the catalog backup (~1.3× the catalog's `.enc` files). `stage` warns when it does not fit.
+and, with `--with-catalog`, the catalog backup (~1.25× the catalog's `.enc` files; those take roughly 200 bytes per
+catalogued file). `stage` warns when it does not fit.
 
 **Which file system should I burn with?**
 UDF 2.50 (the usual choice for BD-R). bdxl's file names are short and plain ASCII, so any burning program works.

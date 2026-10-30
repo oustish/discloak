@@ -185,7 +185,7 @@ public sealed class CatalogCommand : ICommand
     }
 
     /// <summary>The files a catalog backup holds: the encrypted catalog, its hash list and bdxl.key.</summary>
-    static IEnumerable<string> BackupFiles => Catalog.StoredFiles.Append(Catalog.IntegrityFile).Append(KeyFile.FileName);
+    static IEnumerable<string> BackupFiles(string catalogDir) => Catalog.StoredFilesIn(catalogDir).Append(Catalog.IntegrityFile).Append(KeyFile.FileName);
 
     /// <summary>
     /// Copies the encrypted catalog, its hash list and bdxl.key into dir and adds .repair.json + .par (Reed-Solomon)
@@ -198,7 +198,7 @@ public sealed class CatalogCommand : ICommand
         if (pct < 1 || pct > 50) throw new UserException("--parity-percent must be between 1 and 50.");
         Directory.CreateDirectory(dir);
 
-        foreach (string name in BackupFiles)
+        foreach (string name in BackupFiles(c.Cat.Dir))
         {
             string src = Path.Combine(c.Cat.Dir, name);
             if (!File.Exists(src)) continue;
@@ -333,16 +333,14 @@ public sealed class CatalogCommand : ICommand
                 throw new UserException("The backup does not check out: " + string.Join("; ", check.Integrity.Problems) + ". Nothing was restored.");
 
             if (existing) Catalog.CreateSnapshot(target, "catalog-backup-restore", Math.Max(1, check.Settings.HistoryKeep));
-            foreach (string name in Catalog.StoredFiles.Append(Catalog.IntegrityFile))
+            var inBackup = Catalog.StoredFilesIn(side).Append(Catalog.IntegrityFile).ToList();
+            foreach (string name in inBackup)
             {
-                string from = Path.Combine(side, name), to = Path.Combine(target, name);
-                if (File.Exists(from))
-                {
-                    File.Copy(from, to, overwrite: true);
-                    Console.WriteLine($"restored {name}" + (loaded[name].Status == RsStatus.Repaired ? "  (repaired from parity data)" : ""));
-                }
-                else if (File.Exists(to)) File.Delete(to);   // the backup did not have this file
+                File.Copy(Path.Combine(side, name), Path.Combine(target, name), overwrite: true);
+                Console.WriteLine($"restored {name}" + (loaded[name].Status == RsStatus.Repaired ? "  (repaired from parity data)" : ""));
             }
+            foreach (string name in Catalog.StoredFilesIn(target).Except(inBackup, StringComparer.Ordinal))
+                File.Delete(Path.Combine(target, name));   // the backup did not have this file
             if (!existing) File.WriteAllBytes(KeyFile.PathIn(target), keyBytes.Data);
         }
         finally { Directory.Delete(side, true); }

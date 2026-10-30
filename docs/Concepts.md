@@ -59,9 +59,10 @@ size rounded up to 2 KiB, plus about 2.1 KB. For large files that is nothing; fo
 figures: a disc of small files holds fewer bytes than its size.)
 
 <a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's own fixed overhead
-(volume descriptors, the metadata partition) and the disc's own files: `disc.json`, `bdxl.key`, `README.txt`, the encrypted manifest (roughly 300 bytes per file)
-and, with `--with-catalog`, the catalog backup (about 1.3× the size of the catalog's `.enc` files, because of the
-repair data). If those come out larger than the reserve, `stage` warns that the folder will not fit. Raise it with
+(volume descriptors, the metadata partition) and the disc's own files: `disc.json`, `bdxl.key`, `README.txt`, the
+encrypted manifest (roughly 300 bytes per file on the disc) and, with `--with-catalog`, the catalog backup: the
+catalog's `.enc` files (compressed, roughly 200 bytes per catalogued file) plus 25% repair data. If those come out
+larger than the reserve, `stage` warns that the folder will not fit. Raise it with
 `bdxl blanks reserve 500MB`.
 
 ## Encryption, the password and the master key

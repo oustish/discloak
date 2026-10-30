@@ -204,7 +204,7 @@ public class AppendTests : IDisposable
         var files = FilesIn(Session2);
         Assert.Contains("data/000/000003.enc", files);                                    // numbering goes on
         Assert.Contains("manifest.jsonl.enc", files);
-        Assert.Contains("_catalog/files.jsonl.enc", files);
+        Assert.Contains("_catalog/files.000.jsonl.enc", files);
         Assert.DoesNotContain("manifest.jsonl", files);
         string everything = string.Join("\n", files) + string.Concat(Directory.GetFiles(Session2, "*", SearchOption.AllDirectories)
                                                                          .Select(f => Encoding.Latin1.GetString(File.ReadAllBytes(f))));

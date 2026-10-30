@@ -38,7 +38,7 @@ public class KeyRotationTests : IDisposable
         Assert.Equal(oldKey, keys.All[0].KeyId);
         Assert.NotEqual(oldKey, keys.KeyId);
         Assert.Equal(keys.KeyId, JsonStore.ReadObject<IntegrityManifest>(Path.Combine(tmp.File("cat"), Catalog.IntegrityFile))!.KeyId);
-        Assert.Equal(keys.KeyId, FileCrypto.KeyIdOf(Path.Combine(tmp.File("cat"), "files.jsonl.enc")));
+        Assert.Equal(keys.KeyId, FileCrypto.KeyIdOf(Path.Combine(tmp.File("cat"), "files.000.jsonl.enc")));
         Assert.Equal(0, AfterRotation("catalog", "history"));                            // versions from before (old key) still check out
         Assert.All(Catalog.ListHistory(tmp.File("cat")), id => Assert.Empty(Catalog.VerifySnapshot(tmp.File("cat"), id, keys)));
 

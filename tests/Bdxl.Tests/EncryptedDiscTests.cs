@@ -59,7 +59,7 @@ public class EncryptedDiscTests : IDisposable
         Assert.Contains("data/000/000001.enc", relPaths);
         Assert.Contains("manifest.jsonl.enc", relPaths);
         Assert.DoesNotContain("manifest.jsonl", relPaths);
-        Assert.Contains("_catalog/files.jsonl.enc", relPaths);
+        Assert.Contains("_catalog/files.000.jsonl.enc", relPaths);
         Assert.DoesNotContain("_catalog/files.jsonl", relPaths);
 
         // what the disc needs to be read on its own: its key file (the catalog's) and a description of the formats
@@ -137,7 +137,7 @@ public class EncryptedDiscTests : IDisposable
     {
         StageEncrypted();
         string backup = Path.Combine(Disc, "_catalog");
-        string damaged = Path.Combine(backup, "files.jsonl.enc");
+        string damaged = Path.Combine(backup, "files.000.jsonl.enc");
         byte[] bytes = File.ReadAllBytes(damaged);
         bytes[100] ^= 0xFF;
         File.WriteAllBytes(damaged, bytes);
@@ -148,7 +148,7 @@ public class EncryptedDiscTests : IDisposable
 
         Assert.Equal(1, BdxlIn("other", NoVar, "catalog", "backup", "restore", backup));
         Assert.Equal(1, BdxlIn("other", WrongVar, "catalog", "backup", "restore", backup));
-        Assert.False(File.Exists(Path.Combine(tmp.File("other"), "files.jsonl.enc")));              // nothing half-restored
+        Assert.False(File.Exists(Path.Combine(tmp.File("other"), "files.000.jsonl.enc")));              // nothing half-restored
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "catalog", "backup", "restore", backup));
         var cat = TestKeys.Load(tmp.File("other"));
@@ -164,7 +164,7 @@ public class EncryptedDiscTests : IDisposable
 
         Assert.Equal(0, Bdxl("catalog", "backup", "create", tmp.File("bk")));
         string backup = Assert.Single(Directory.GetDirectories(tmp.File("bk")));
-        Assert.True(File.Exists(Path.Combine(backup, "files.jsonl.enc")));
+        Assert.True(File.Exists(Path.Combine(backup, "files.000.jsonl.enc")));
         Assert.False(File.Exists(Path.Combine(backup, "files.jsonl")));
         Assert.DoesNotContain("secret", string.Concat(Directory.GetFiles(backup).Select(f => Encoding.Latin1.GetString(File.ReadAllBytes(f)))));
 

@@ -152,7 +152,7 @@ public static class CatalogSetup
         Directory.CreateDirectory(plain);
         foreach (string name in Catalog.CoveredFiles.Append(Catalog.IntegrityFile))
             if (File.Exists(Path.Combine(dir, name))) File.Move(Path.Combine(dir, name), Path.Combine(plain, name), overwrite: true);
-        foreach (string name in Catalog.StoredFiles.Append(Catalog.IntegrityFile))
+        foreach (string name in Catalog.StoredFilesIn(build).Append(Catalog.IntegrityFile))
             if (File.Exists(Path.Combine(build, name))) File.Move(Path.Combine(build, name), Path.Combine(dir, name), overwrite: true);
         File.Move(KeyFile.PathIn(build), KeyFile.PathIn(dir));
 
@@ -170,7 +170,7 @@ public static class CatalogSetup
         string plain = Path.Combine(dir, PlainFolder), build = Path.Combine(dir, BuildFolder);
         if (Directory.Exists(plain))
         {
-            foreach (string name in Catalog.StoredFiles.Append(Catalog.IntegrityFile))
+            foreach (string name in Catalog.StoredFilesIn(dir).Append(Catalog.IntegrityFile))
                 if (File.Exists(Path.Combine(dir, name))) File.Delete(Path.Combine(dir, name));
             foreach (string path in Directory.GetFiles(plain))
                 File.Move(path, Path.Combine(dir, Path.GetFileName(path)), overwrite: true);
