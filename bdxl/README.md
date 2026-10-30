@@ -1,7 +1,8 @@
 # bdxl - BDXL archive planner and catalog
 
-Plans which files go on which blank disc, stages disc folders (files are copied as they are - no archive,
-no compression), and keeps a human-readable catalog (JSON lines) of every file, hash and disc.
+Plans which files go on which blank disc, stages encrypted disc folders (every file encrypted on its own with the
+catalog's master key - no archive, no compression), and keeps an encrypted catalog of every file, hash and disc.
+One password (changeable, with an optional recovery key) protects everything; see ENCRYPTION.md.
 
     dotnet build -c Release          (needs the .NET 10 SDK)
     dotnet run -- help               list of commands

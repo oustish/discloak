@@ -32,6 +32,14 @@ public class AppendTests : IDisposable
     static List<string> FilesIn(string dir) =>
         Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(dir, f).Replace('\\', '/')).Order(StringComparer.Ordinal).ToList();
 
+    /// <summary>The decrypted manifest of a staged (encrypted) disc folder.</summary>
+    List<ManifestLine> Manifest(string dir)
+    {
+        var bytes = FileCrypto.Open(File.ReadAllBytes(Path.Combine(dir, DiscFiles.EncryptedManifestName)), TestKeys.Key(tmp.File("cat")), KeyPurpose.Manifest);
+        using var ms = new MemoryStream(bytes);
+        return JsonStore.ParseLines<ManifestLine>(ms, "manifest");
+    }
+
     /// <summary>What a multisession burn that continues the file system looks like: the session's files over the disc's.</summary>
     static void BurnSession(string session, string disc)
     {
@@ -67,13 +75,14 @@ public class AppendTests : IDisposable
         Assert.Equal(0, Bdxl("plan", "--append", "BDXL-0001"));
         Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));
 
-        // the old report stays where it is; the new version must not hide it
-        Assert.Equal(new[] { "S/docs/report~2.txt", "S/new.bin", "disc.json", "manifest.jsonl" }, FilesIn(Session2));
-        var manifest = JsonStore.ReadLines<ManifestLine>(Path.Combine(Session2, "manifest.jsonl"));
-        Assert.Equal(new[] { "S/a.bin", "S/docs/report.txt", "S/docs/report~2.txt", "S/new.bin" }, manifest.Select(m => m.Path).Order(StringComparer.Ordinal));
-        Assert.Equal("S/docs/report.txt", manifest.Single(m => m.Path == "S/docs/report~2.txt").Source);
-        Assert.Null(manifest.Single(m => m.Path == "S/a.bin").Source);
-        Assert.Equal(oldReport.Length, manifest.Single(m => m.Path == "S/docs/report.txt").Size);   // sizes of earlier sessions come from the catalog
+        // the old report stays where it is; the new version gets the next hidden name
+        Assert.Equal(new[] { "README.txt", "bdxl.key", "data/000/000003.enc", "data/000/000004.enc", "disc.json", "manifest.jsonl.enc" }, FilesIn(Session2));
+        var manifest = Manifest(Session2);
+        Assert.Equal(new[] { "data/000/000001.enc", "data/000/000002.enc", "data/000/000003.enc", "data/000/000004.enc" }, manifest.Select(m => m.Path).Order(StringComparer.Ordinal));
+        var reports = manifest.Where(m => m.Source == "S/docs/report.txt").ToList();
+        Assert.Equal(2, reports.Count);
+        Assert.Contains(reports, m => Hashing.SameHash(m.PlainSha256!, Hashing.HashBytes(oldReport)) && m.Size == FileCrypto.StoredSize(oldReport.Length));   // sizes of earlier sessions come from the catalog
+        Assert.Contains(reports, m => Hashing.SameHash(m.PlainSha256!, Hashing.HashBytes(newReport)));
         var info = JsonStore.ReadObject<DiscInfo>(Path.Combine(Session2, "disc.json"))!;
         Assert.Equal((4, 2), (info.FileCount, info.Sessions));
 
@@ -92,12 +101,13 @@ public class AppendTests : IDisposable
         Assert.Equal(added, File.ReadAllBytes(tmp.File("out/S/new.bin")));
         Assert.Equal(a, File.ReadAllBytes(tmp.File("out/S/a.bin")));
 
-        // a lost catalog is rebuilt from the disc: the renamed copy is the newer version of report.txt
+        // a lost catalog is rebuilt from the disc: the later copy is the newer version of report.txt
+        Assert.Equal(0, Program.Main(["init", "--key-from", DiscDir, "--catalog", tmp.File("other")]));
         Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", DiscDir));
         var report = Cat("other").Files.Single(f => f.RelPath == "docs/report.txt");
         Assert.Equal(Hashing.HashBytes(newReport), report.Sha256, ignoreCase: true);
-        Assert.Contains(report.Backups, b => b.DiscPath == "S/docs/report~2.txt" && Hashing.SameHash(b.Sha256, Hashing.HashBytes(newReport)));
-        Assert.Contains(report.Backups, b => b.DiscPath == "S/docs/report.txt" && Hashing.SameHash(b.Sha256, Hashing.HashBytes(oldReport)));
+        Assert.Contains(report.Backups, b => Hashing.SameHash(b.Sha256, Hashing.HashBytes(newReport)));
+        Assert.Contains(report.Backups, b => Hashing.SameHash(b.Sha256, Hashing.HashBytes(oldReport)));
     }
 
     [Fact]
@@ -120,9 +130,9 @@ public class AppendTests : IDisposable
         tmp.RandomFile("src/small.bin", 200_000, seed: 3);
         Scan();
         Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));
-        Assert.Equal(new[] { "S/small.bin", "disc.json", "manifest.jsonl" }, FilesIn(Session2));
+        Assert.Equal(new[] { "README.txt", "bdxl.key", "data/000/000002.enc", "disc.json", "manifest.jsonl.enc" }, FilesIn(Session2));
         var after = Disc1;
-        Assert.Equal((2, disc.OccupiedBytes + 200_000 + 100_000), (after.Sessions, after.OccupiedBytes));
+        Assert.Equal((2, disc.OccupiedBytes + FileCrypto.StoredSize(200_000) + 100_000), (after.Sessions, after.OccupiedBytes));
         Assert.Contains(Cat().Files, f => f.RelPath == "big.bin" && f.Backups.Count == 0);   // still pending
     }
 
@@ -147,7 +157,7 @@ public class AppendTests : IDisposable
 
         Assert.Equal(1, Bdxl("discard", "BDXL-0001"));                                    // the burned disc itself stays
         Assert.Equal(0, Bdxl("stage", tmp.File("stg2"), "--append", "BDXL-0001"));         // and can be appended to again
-        Assert.True(File.Exists(tmp.File("stg2/BDXL-0001.s2/S/new.bin")));
+        Assert.True(File.Exists(tmp.File("stg2/BDXL-0001.s2/data/000/000002.enc")));
     }
 
     [Fact]
@@ -162,7 +172,13 @@ public class AppendTests : IDisposable
         Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));         // staged, not burned
         Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
 
-        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001", "--encrypt"));   // a plain disc stays plain
+        var cat = Cat();
+        cat.Discs.Single().Encrypted = false;                                               // a plain disc (imported from before)
+        cat.Save();
+        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));           // takes no session: bdxl adds only encrypted data
+        cat = Cat();
+        cat.Discs.Single().Encrypted = true;
+        cat.Save();
         Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001", "--max-discs", "2"));
         Directory.CreateDirectory(tmp.File("other-disc"));
         Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001", "--mount", tmp.File("other-disc")));   // not this disc

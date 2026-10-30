@@ -35,7 +35,7 @@ public sealed class WorkflowCommand : ICommand
                  bdxl plan
                It tells you when the data does not fit on the blank discs you registered.
 
-            4. Prepare a disc folder (add --encrypt to encrypt every file with the catalog's key)
+            4. Prepare a disc folder (every file is encrypted with the catalog's key, names hidden)
                  bdxl stage E:\Staging --max-discs 1 --min-fill 0.9 --with-catalog
                Burn the folder E:\Staging\BDXL-0001 with your burning software (UDF 2.50 file system).
 

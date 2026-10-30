@@ -149,7 +149,7 @@ plaintext catalog is migrated after confirmation (same code as `init`).
   stays exact; a changed setting needs the sizes recounted. If a library update changes sizes, `stage` defers what no
   longer fits; the disc reserve absorbs small differences.
 - Compression is recorded on the stored copy (`BackupRef`), not on the file, so dedup across aliases keeps working.
-- Only on encrypted discs (plain discs exist only until phase 3).
+- Only in encrypted copies (every staged disc since phase 3).
 
 ## Phases
 
@@ -157,6 +157,7 @@ plaintext catalog is migrated after confirmation (same code as `init`).
    migration, `init`, `password change`, `recovery-key`, `catalog export/import`, encrypted catalog backups, the agent.
 2. (done) Discs use the master key (stage, restage, restore, verify, scandisc, discjson, `_catalog`); `bdxl.key`,
    ids and README on every encrypted disc; `init --key-from`; old per-disc scheme removed.
-3. Encrypted only: plain staging removed.
+3. (done) Encrypted only: plain staging removed (`--encrypt` accepted and ignored); plain discs imported with
+   `scandisc` stay readable, verifiable, restorable and restageable as they were, but take no new session.
 4. Compression per alias.
 5. Later, if wanted: key rotation (key ring inside the encrypted catalog, selected by key id).

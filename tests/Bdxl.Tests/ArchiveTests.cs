@@ -84,7 +84,7 @@ public class ArchiveTests
         AddFile("copy/a.bin", 100, "AA");
         AddFile("b.bin", 50, "BB");
 
-        var plan = Arc.MakePlan(encrypt: false);
+        var plan = Arc.MakePlan();
         Assert.Equal(2, plan.Pending.Count);
         Assert.Equal(150, plan.PendingBytes);
     }
@@ -96,7 +96,7 @@ public class ArchiveTests
         AddFile("ignored.tmp", 10, "").Ignored = true;
         AddFile("gone.bin", 10, "AA").MissingSinceUtc = DateTime.UtcNow;
         AddFile("unhashed.bin", 10, "");
-        Assert.Empty(Arc.MakePlan(encrypt: false).Pending);
+        Assert.Empty(Arc.MakePlan().Pending);
     }
 
     [Fact]
@@ -104,10 +104,10 @@ public class ArchiveTests
     {
         AddBlanks(1, 1000);
         AddFile("a.bin", 100, "AA").Backups.Add(Whole("D1", "AA"));
-        Assert.Empty(Arc.MakePlan(encrypt: false).Pending);
+        Assert.Empty(Arc.MakePlan().Pending);
 
         cat.Discs.Add(new DiscRecord { Label = "D1", State = "lost" });
-        Assert.Single(Arc.MakePlan(encrypt: false).Pending);
+        Assert.Single(Arc.MakePlan().Pending);
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public class ArchiveTests
         AddBlanks(2, 10_000);
         var big = AddFile("big.bin", 25_000, "AA");
 
-        var plan = Arc.MakePlan(encrypt: false, split: false);
+        var plan = Arc.MakePlan(split: false);
         Assert.Equal([big], plan.TooBig);
         Assert.Equal(Piece.Whole(big), Assert.Single(plan.Unplaced));
         Assert.All(plan.Bins, b => Assert.Empty(b.Pieces));
@@ -128,7 +128,7 @@ public class ArchiveTests
         AddBlanks(3, 10_000);
         AddFile("big.bin", 25_000, "AA");
 
-        var plan = Arc.MakePlan(encrypt: true, split: true);
+        var plan = Arc.MakePlan(split: true);
         long partSize = FileCrypto.MaxPlainSize(10_000);
         Assert.Empty(plan.TooBig);
         Assert.Empty(plan.Unplaced);
@@ -146,7 +146,7 @@ public class ArchiveTests
         big.Backups.Add(Part("D1", "AA", 1, 3, 100, 250));
         big.Backups.Add(Part("D3", "AA", 3, 3, 100, 250));
 
-        var plan = Arc.MakePlan(encrypt: false, split: false);
+        var plan = Arc.MakePlan(split: false);
         var p = Assert.Single(plan.Pending);
         Assert.Equal((2, 3, 100L, 100L), (p.Part, p.Parts, p.Offset, p.Length));
         Assert.Empty(plan.TooBig);
@@ -158,7 +158,7 @@ public class ArchiveTests
         AddBlanks(1, 10_000);
         var big = AddFile("big.bin", 250, "AA");
         for (int i = 1; i <= 3; i++) big.Backups.Add(Part($"D{i}", "AA", i, 3, 100, 250));
-        Assert.Empty(Arc.MakePlan(encrypt: false).Pending);
+        Assert.Empty(Arc.MakePlan().Pending);
     }
 
     // ---- LinkDuplicates -------------------------------------------------------------------

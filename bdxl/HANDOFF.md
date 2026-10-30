@@ -19,7 +19,8 @@
   plaintext catalogs, `password change`, `recovery-key`, `catalog export/import`, password-free catalog backups.
   `unlock` hands the master key to a background agent (memory only, idle/max timeouts, Win+L/sleep), `lock` takes it back.
   Encrypted discs use the same master key and carry `bdxl.key` + `README.txt` (phase 2); `init --key-from <disc>`.
-  Still to come: encrypted-only staging (phase 3), compression (phase 4).
+  Every staged disc is encrypted (phase 3); plain discs only come from `scandisc` (older discs) and are still
+  verified, restored and restaged as they are. Still to come: compression (phase 4).
 
 ## Build / run
 ```
@@ -91,7 +92,7 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - "Live" disc = state is not `lost` or `destroyed`.
 - **Ignored files:** `Sha256 = ""` (never hashed), `Ignored = true`. Any code that uses the hash must skip empty hashes.
   `restage` ignores the `Ignored` flag on purpose.
-- **Disc encryption (`stage --encrypt`):** everything is encrypted with the catalog's master key (`BDXLENC2`,
+- **Disc encryption (every staged disc; `--encrypt` is accepted and ignored):** everything is encrypted with the catalog's master key (`BDXLENC2`,
   purpose `file` for data, `manifest` for the manifest); readable without the password: `disc.json` (with
   `catalogId`/`keyId`), `bdxl.key` (copied from the catalog at staging: the password of that day) and `README.txt`
   (`DiscFiles.Readme`: enough to write a decryptor).
@@ -131,13 +132,13 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - Room: `DiscRecord.OccupiedBytes` = files + per session max(reserve, metadata). Free for files =
     capacity - occupied - reserve (`AppendTarget`); `--mount` checks disc.json's label and caps by the drive's
     free space when the drive reports any (open discs often show 0 in Windows, then the catalog figure is used).
-  - Names are never reused: a newer version of a file already on a plain disc is stored as `name~2.ext`
-    (`StageCommand.FreeName`) and its manifest line gets `Source`; encrypted discs continue the hidden numbering.
-    `ManifestLine.Source` is set whenever the stored name differs from alias/path(+part suffix).
+  - Names are never reused: the session continues the disc's hidden numbering, so a newer version of a file gets a
+    new name and both stay restorable. `ManifestLine.Source` is set whenever the stored name differs from
+    alias/path(+part suffix).
   - `DiscRecord.PendingAppend` (`AppendSession`: counters before the session) until `burned` (dates only the
     copies with no `BackedUpUtc`) or `discard` (removes those copies, restores the counters). Only one pending
     session; `lost`/`destroyed`/`restage` refuse while one is pending. `restage` rebuilds all sessions as one folder.
-  - The disc's encryption is kept (`--encrypt` on a plain disc is an error), with the same master key (key id checked).
+  - Only encrypted discs with the catalog's key take a session (`AppendTarget.Open` refuses plain discs and other keys).
   - `scandisc` of such a disc: several versions of one path go into one catalog entry; for a file known only from
     the disc, the copy with the latest mtime becomes its current version.
 - **Labels:** `Settings.LabelPrefix` + `LabelCounter` (`D4`). The counter only ever goes up (`Archive.NextLabel`).

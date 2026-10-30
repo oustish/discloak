@@ -5,12 +5,12 @@ public sealed class PlanCommand : ICommand
     public string Name => "plan";
     public string Group => CommandGroup.Indexing;
     public string Summary => "Show which files would go on which blank disc (changes nothing)";
-    public string Usage => "plan [--encrypt] [--split] [--append <label> [--mount <path>]]";
+    public string Usage => "plan [--split] [--append <label> [--mount <path>]]";
     public string Details => """
         Allocates all pending files to the blank discs registered with 'blanks'. Prints how full each disc would be
         and, if the data does not fit on the designated discs, which files are left over and roughly how many
         more discs are needed. Exit code 2 = not everything fits.
-          --encrypt   count the small overhead of encrypted files
+        Sizes are those of the encrypted copies that 'stage' writes.
           --split     cut files larger than every blank disc into parts (see 'stage --help')
           --append L  instead: what 'stage --append L' would put into a new session of the burned disc L
         Pending = on the source, not ignored, and no live disc holds identical content (hash-based dedup).
@@ -23,7 +23,7 @@ public sealed class PlanCommand : ICommand
     public int Run(Ctx c)
     {
         if (c.Opt.Get("append") is { } appendTo) return PlanAppend(c, appendTo);
-        var plan = c.Arc.MakePlan(c.Opt.Has("encrypt"), c.Opt.Has("split"));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"));
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes");
         int splitFiles = plan.Pending.Where(p => p.IsPart).Select(p => p.File).Distinct().Count();
         if (splitFiles > 0)
@@ -73,15 +73,15 @@ public sealed class PlanCommand : ICommand
         return 2;
     }
 
-    /// <summary>plan --append: what one more session of a burned disc would hold (the disc's own encryption counts).</summary>
+    /// <summary>plan --append: what one more session of a burned disc would hold (sizes of encrypted copies).</summary>
     static int PlanAppend(Ctx c, string label)
     {
         var target = AppendTarget.Open(c, label);
-        var plan = c.Arc.MakePlan(target.Disc.Encrypted, c.Opt.Has("split"), [target.AsBlank()]);
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()]);
         var bin = plan.Bins[0];
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes");
         Console.WriteLine($"{target.Disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +
-                          $"(reserve of {SizeText.Bytes(target.Reserve)} bytes kept for its metadata)" + (target.Disc.Encrypted ? ", encrypted" : ""));
+                          $"(reserve of {SizeText.Bytes(target.Reserve)} bytes kept for its metadata)");
         Console.WriteLine($"  would hold {bin.Pieces.Count:N0} file(s), {SizeText.Bytes(bin.Used)} bytes");
         if (plan.Unplaced.Count == 0) return 0;
         Console.WriteLine($"  {plan.Unplaced.Count:N0} file(s), {SizeText.Bytes(plan.Unplaced.Sum(p => p.Length))} bytes would stay pending (see 'plan').");

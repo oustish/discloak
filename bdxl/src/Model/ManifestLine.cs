@@ -4,8 +4,8 @@ namespace Bdxl;
 /// One line of manifest.jsonl on a disc. For encrypted files Sha256/Size describe the stored file. A part of a split
 /// file also says which part it is, where it belongs in the whole file, and the whole file's size and hash.
 /// Source is the file's catalog path (alias/relative path) when the disc stores it under another name: a hidden name
-/// (encrypted discs, whose manifest is itself stored encrypted as manifest.jsonl.enc), or name~2.ext for a newer
-/// version appended to a disc that holds the older one under the plain name.
+/// (encrypted discs, whose manifest is itself stored encrypted as manifest.jsonl.enc), or, on a plain disc imported
+/// with scandisc, any name other than alias/path.
 /// </summary>
 public record ManifestLine(string Path, long Size, string Sha256, bool Encrypted = false, string? PlainSha256 = null,
                            int? Part = null, int? Parts = null, long? Offset = null, long? Length = null,

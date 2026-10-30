@@ -32,6 +32,10 @@ public sealed class AppendTarget
         if (disc.State == "staged")
             throw new UserException($"{disc.Label} is not burned yet. To put more on it: 'discard {disc.Label}' and stage again.");
         if (disc.State != "burned") throw new UserException($"{disc.Label} is {disc.State}.");
+        if (!disc.Encrypted)
+            throw new UserException($"{disc.Label} is not encrypted; bdxl only adds encrypted data to discs, so it cannot take another session.");
+        if (disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
+            throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
         if (disc.PendingAppend is { } pending)
             throw new UserException($"Session {pending.Number} of {disc.Label} is staged but not burned yet. Burn it and run " +
                                     $"'burned {disc.Label}', or take it back with 'discard {disc.Label}', first.");

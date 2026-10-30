@@ -5,22 +5,20 @@ public sealed class StageCommand : ICommand
     public string Name => "stage";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
-    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--encrypt] [--split] [--with-catalog] [--append <label> [--mount <path>]]";
+    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--append <label> [--mount <path>]]";
     public bool Interruptible => true;
     public string Details => """
-        Creates <destDir>/<label>/ for each disc, copying files as they are (no archive, no compression) and checking
-        every copy against its hash. Also writes a manifest and disc.json so the disc describes itself.
+        Creates <destDir>/<label>/ for each disc. Every file is encrypted on its own with the catalog's master key
+        (AES-256-GCM, one .enc file per file, no archive, no compression) under a name that says nothing
+        (data/000/000001.enc ...) and checked against its hash. The disc also gets an encrypted manifest
+        (manifest.jsonl.enc) and, readable without the password: disc.json (label, file count, size), bdxl.key (the
+        master key, wrapped by today's password) and README.txt (the formats, to read the disc without bdxl).
           --max-discs N    stage up to N discs (default 1)
           --min-fill 0.9   only stage discs that would be at least 90% full
-          --encrypt        encrypt every file (AES-256-GCM, one .enc file per file) with the catalog's master key - no
-                           extra password. File names are hidden too: files are stored as data/000/000001.enc ...,
-                           and the manifest (manifest.jsonl.enc) is encrypted. Readable: disc.json (label, file count,
-                           size), bdxl.key (the master key, wrapped by today's password) and README.txt (the formats).
-          --split          a file larger than every blank disc is cut into parts, one per disc: name.001, name.002 ...
-                           (with --encrypt each part is encrypted on its own). Without bdxl, unencrypted parts are
-                           simply joined in order (copy /b a.001+a.002 a). 'restore' collects the parts disc by disc and
-                           joins them; the file counts as backed up only when every part is on a disc. Once a file
-                           has parts on discs, its remaining parts are staged even without --split.
+          --split          a file larger than every blank disc is cut into parts, one per disc, each encrypted on its
+                           own. 'restore' collects the parts disc by disc and joins them; the file counts as backed up
+                           only when every part is on a disc. Once a file has parts on discs, its remaining parts are
+                           staged even without --split.
           --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
           --append L       fill the free space of the burned disc L with a new session instead of using a blank disc.
                            Only the pending files that fit go into <destDir>/L.s2/ (s3, s4 ... later), together with a
@@ -29,8 +27,9 @@ public sealed class StageCommand : ICommand
                            must continue the disc's file system (multisession / "import previous session"), or the
                            earlier files disappear from view. Free space = disc size - earlier sessions - the disc's
                            reserve, which every session needs again (metadata and the medium's session overhead).
-                           A changed file whose older version is on the disc is stored as name~2.ext, so both versions
-                           stay restorable. An encrypted disc stays encrypted (with the same master key, checked).
+                           A changed file whose older version is on the disc is added under a new hidden name, so both
+                           versions stay restorable. Only a disc encrypted with this catalog's master key can take a
+                           session (a plain disc from before cannot).
                            Afterwards: 'burned L' for the session, or 'discard L' to take it back.
           --mount P        with --append: the disc is in the drive at P - its label (and key) is checked, and the free
                            space the drive reports is used if it is smaller.
@@ -46,9 +45,7 @@ public sealed class StageCommand : ICommand
         if (c.Opt.Get("append") is { } appendTo) return Append(c, destDir, appendTo);
         int maxDiscs = c.Opt.GetInt("max-discs", 1);
         double minFill = double.Parse(c.Opt.GetOr("min-fill", "0"), CultureInfo.InvariantCulture);
-        bool encrypt = c.Opt.Has("encrypt");
-
-        var plan = c.Arc.MakePlan(encrypt, c.Opt.Has("split"));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"));
         if (c.Cat.Blanks.Count == 0)
         {
             Console.WriteLine("No blank discs are registered. Register some first, e.g.:  blanks add 5 --size 96882130944 --reserve 200MB");
@@ -69,10 +66,6 @@ public sealed class StageCommand : ICommand
         if (plan.Unplaced.Count > 0)
             Console.WriteLine($"Note: {plan.Unplaced.Count:N0} pending file(s) do not fit on the registered blank discs (see 'plan').\n");
 
-        if (encrypt)
-            Console.WriteLine("Files will be encrypted with the catalog's master key (AES-256-GCM) and stored under hidden names; " +
-                              "the manifest is encrypted too. Readable: disc.json, bdxl.key and README.txt.\n");
-
         int overfull = 0;
         for (int n = 0; n < chosen.Count; n++)
         {
@@ -84,11 +77,11 @@ public sealed class StageCommand : ICommand
             var disc = new DiscRecord
             {
                 Label = label, State = "staged", CreatedUtc = DateTime.UtcNow,
-                Capacity = bin.Blank.Capacity, Reserve = bin.Blank.Reserve, Cost = bin.Blank.Cost, Encrypted = encrypt, KeyId = encrypt ? c.Key.KeyId : null
+                Capacity = bin.Blank.Capacity, Reserve = bin.Blank.Reserve, Cost = bin.Blank.Cost, Encrypted = true, KeyId = c.Key.KeyId
             };
             c.Cat.Discs.Add(disc);
             int hidden = 0;
-            var manifest = StorePieces(disc, dir, bin.Pieces, p => encrypt ? DiscFiles.HiddenName(++hidden) : p.Name, c.Key);
+            var manifest = StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key);
             bool cutShort = Interrupt.Requested;
             int notStarted = chosen.Count - n - 1;
 
@@ -134,10 +127,8 @@ public sealed class StageCommand : ICommand
             if (c.Opt.Has(option)) throw new UserException($"--{option} does not go with --append.");
         var target = AppendTarget.Open(c, label);
         var disc = target.Disc;
-        if (c.Opt.Has("encrypt") && !disc.Encrypted)
-            throw new UserException($"{disc.Label} is not encrypted, so what is appended to it cannot be either (leave out --encrypt).");
 
-        var plan = c.Arc.MakePlan(disc.Encrypted, c.Opt.Has("split"), [target.AsBlank()]);
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()]);
         var bin = plan.Bins[0];
         Console.WriteLine($"{disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +
                           $"({SizeText.Bytes(target.Reserve)} bytes stay reserved for its manifest, disc.json and catalog backup).");
@@ -153,17 +144,8 @@ public sealed class StageCommand : ICommand
         string dir = Path.Combine(destDir, $"{disc.Label}.s{target.Session}");
         if (Directory.Exists(dir)) throw new UserException($"Folder already exists: {dir}");
 
-        if (disc.Encrypted)   // the same master key as the rest of the disc
-        {
-            if (disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
-                throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
-            disc.KeyId = c.Key.KeyId;
-            Console.WriteLine($"{disc.Label} is encrypted: new files are encrypted with the master key and stored under hidden names; " +
-                              "the manifest is encrypted too.\n");
-        }
-
+        disc.KeyId = c.Key.KeyId;   // checked by AppendTarget: the same master key as the rest of the disc
         var onDisc = c.Arc.CopiesOn(disc.Label);
-        var taken = onDisc.Select(x => x.Copy.DiscPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         int hidden = onDisc.Select(x => DiscFiles.HiddenNumber(x.Copy.DiscPath)).DefaultIfEmpty(0).Max();
         long occupiedBefore = AppendTarget.Occupied(disc);
         var session = new AppendSession
@@ -173,7 +155,7 @@ public sealed class StageCommand : ICommand
         };
         disc.PendingAppend = session;
         disc.Sessions = session.Number;
-        StorePieces(disc, dir, bin.Pieces, p => disc.Encrypted ? DiscFiles.HiddenName(++hidden) : FreeName(p, taken), c.Key);
+        StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key);
         bool cutShort = Interrupt.Requested;
 
         if (disc.FileCount == session.FileCountBefore)
@@ -212,14 +194,13 @@ public sealed class StageCommand : ICommand
     }
 
     /// <summary>
-    /// Copies (or encrypts) each piece into dir under the name storedPathFor gives it, checks the copy against the
+    /// Encrypts each piece into dir under the (hidden) name storedPathFor gives it, checks what was read against the
     /// catalog and records it on the disc. A piece that changed since the scan or cannot be read is skipped.
     /// Returns the manifest lines of the stored copies.
     /// </summary>
     static List<ManifestLine> StorePieces(DiscRecord disc, string dir, IEnumerable<Piece> pieces, Func<Piece, string> storedPathFor,
                                           MasterKey key)
     {
-        bool encrypt = disc.Encrypted;
         var manifest = new List<ManifestLine>();
         foreach (var p in pieces)
         {
@@ -241,8 +222,7 @@ public sealed class StageCommand : ICommand
             string plainHash;
             try
             {
-                plainHash = encrypt ? FileCrypto.Encrypt(src, dst, key, KeyPurpose.File, p.Offset, p.Length, Interrupt.Token)
-                                    : Hashing.CopyAndHash(src, dst, p.Offset, p.Length, Interrupt.Token);
+                plainHash = FileCrypto.Encrypt(src, dst, key, KeyPurpose.File, p.Offset, p.Length, Interrupt.Token);
             }
             catch (OperationCanceledException)
             {
@@ -264,13 +244,12 @@ public sealed class StageCommand : ICommand
                 continue;
             }
 
-            if (!encrypt) File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));   // a hidden file does not show its date either
             long storedSize = new FileInfo(dst).Length;
-            string? storedHash = encrypt ? Hashing.HashFile(dst) : null;
+            string storedHash = Hashing.HashFile(dst);   // lets 'verify' check the disc without decrypting
 
             var copy = new BackupRef
             {
-                Disc = disc.Label, DiscPath = storedPath, Sha256 = f.Sha256, Encrypted = encrypt, StoredSha256 = storedHash, StoredSize = storedSize
+                Disc = disc.Label, DiscPath = storedPath, Sha256 = f.Sha256, Encrypted = true, StoredSha256 = storedHash, StoredSize = storedSize
             };
             if (p.IsPart)
             {
@@ -310,18 +289,6 @@ public sealed class StageCommand : ICommand
             c.Cat.Save();
         }
         return (dups, folderBytes);
-    }
-
-    /// <summary>The piece's usual name, or name~2.ext, name~3.ext ... if the disc already holds that name (an older version).</summary>
-    static string FreeName(Piece p, HashSet<string> taken)
-    {
-        string path = $"{p.File.RootName}/{p.File.RelPath}";
-        string ext = Path.GetFileNameWithoutExtension(p.File.RelPath).Length > 0 ? Path.GetExtension(p.File.RelPath) : "";   // .gitignore has none
-        string suffix = p.IsPart ? SplitLayout.Suffix(p.Part, p.Parts) : "";
-        string name = p.Name;
-        for (int n = 2; taken.Contains(name); n++) name = $"{path[..^ext.Length]}~{n}{ext}{suffix}";
-        taken.Add(name);
-        return name;
     }
 
     static int Stopped(string what, int notStarted)

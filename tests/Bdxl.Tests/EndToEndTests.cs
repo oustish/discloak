@@ -35,12 +35,11 @@ public class EndToEndTests : IDisposable
         Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
 
         string disc = Disc("BDXL-0001");
-        Assert.True(File.Exists(Path.Combine(disc, "S", "docs", "a.bin")));
-        Assert.False(File.Exists(Path.Combine(disc, "S", "docs", "a_copy.bin")));   // dedup: stored once
-        Assert.False(File.Exists(Path.Combine(disc, "S", "skip.tmp")));              // ignored
+        Assert.Equal(2, Directory.GetFiles(Path.Combine(disc, "data"), "*.enc", SearchOption.AllDirectories).Length);   // a + b: the copy and skip.tmp are not stored
         Assert.True(File.Exists(Path.Combine(disc, "disc.json")));
-        Assert.True(File.Exists(Path.Combine(disc, "manifest.jsonl")));                 // plain disc: plain manifest
-        Assert.DoesNotContain("encrypted", File.ReadAllText(Path.Combine(disc, "disc.json")));
+        Assert.True(File.Exists(Path.Combine(disc, "manifest.jsonl.enc")));             // every disc is encrypted now
+        Assert.False(File.Exists(Path.Combine(disc, "manifest.jsonl")));
+        Assert.Contains("\"encrypted\": true", File.ReadAllText(Path.Combine(disc, "disc.json")));
 
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", disc));
         Assert.Equal(0, Bdxl("burned", "BDXL-0001", "--date", "2026-10-01"));
@@ -122,7 +121,7 @@ public class EndToEndTests : IDisposable
         Bdxl("scan", tmp.File("src"), "--name", "S");
         Bdxl("stage", tmp.File("stg"));
 
-        string stored = Path.Combine(Disc("BDXL-0001"), "S", "a.bin");
+        string stored = Path.Combine(Disc("BDXL-0001"), "data", "000", "000001.enc");
         byte[] bytes = File.ReadAllBytes(stored);
         bytes[500] ^= 1;
         File.WriteAllBytes(stored, bytes);
@@ -139,7 +138,7 @@ public class EndToEndTests : IDisposable
 
         Assert.Equal(2, Bdxl("plan"));                    // too big for any disc without --split
         Assert.Equal(0, Bdxl("plan", "--split"));
-        Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--split", "--encrypt", "--max-discs", "3"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--split", "--max-discs", "3"));
 
         var discs = new[] { "BDXL-0001", "BDXL-0002", "BDXL-0003" };
         Assert.All(discs, d => Assert.Equal(0, Bdxl("verify", d, Disc(d), "--deep")));
@@ -168,8 +167,27 @@ public class EndToEndTests : IDisposable
         Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re")));
 
         string rebuilt = Path.Combine(tmp.File("re"), "BDXL-0001");
-        Assert.Equal(File.ReadAllBytes(tmp.File("src/a.bin")), File.ReadAllBytes(Path.Combine(rebuilt, "S", "a.bin")));
-        Assert.Equal(0, Bdxl("verify", "BDXL-0001", rebuilt));
+        Assert.True(File.Exists(Path.Combine(rebuilt, "data", "000", "000001.enc")));
+        Assert.Equal(0, Bdxl("verify", "BDXL-0001", rebuilt, "--deep"));
+        Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "*", "--mount", rebuilt));
+        Assert.Equal(File.ReadAllBytes(tmp.File("src/a.bin")), File.ReadAllBytes(tmp.File("out/S/a.bin")));
+    }
+
+    [Fact]
+    public void A_plain_disc_from_before_is_imported_verified_restored_and_rebuilt_as_it_was()
+    {
+        var photo = tmp.RandomFile("old-disc/Photos/2019/x.jpg", 30_000, seed: 5);   // burned long ago, without bdxl
+        Assert.Equal(0, Bdxl("scandisc", tmp.File("old-disc"), "--label", "OLD-2019", "--method", "hash", "--capacity", "1MB"));
+        Assert.Equal(0, Bdxl("verify", "OLD-2019", tmp.File("old-disc")));
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "x.jpg", "--mount", tmp.File("old-disc"), "--disc", "OLD-2019"));
+        Assert.Equal(photo, File.ReadAllBytes(tmp.File("out/Photos/2019/x.jpg")));
+
+        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "OLD-2019"));          // nothing new goes onto a plain disc
+        Assert.Equal(2, Bdxl("lost", "OLD-2019"));                                         // 2: its files are on no other disc and gone from the source
+        Assert.Equal(0, Bdxl("restage", "OLD-2019", tmp.File("re"), "--from", tmp.File("old-disc")));
+        Assert.Equal(photo, File.ReadAllBytes(tmp.File("re/OLD-2019/Photos/2019/x.jpg")));   // rebuilt the way it was
+        Assert.Equal(0, Bdxl("verify", "OLD-2019", tmp.File("re/OLD-2019")));
     }
 
     [Fact]

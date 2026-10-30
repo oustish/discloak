@@ -26,7 +26,7 @@ public sealed class HelpCommand : ICommand
 
     public static void PrintOverview()
     {
-        Console.WriteLine("bdxl - plan, stage and keep track of backups on BDXL discs (files are copied as they are: no archive, no compression)\n");
+        Console.WriteLine("bdxl - plan, stage and keep track of encrypted backups on BDXL discs (one encrypted file per file: no archive, no compression)\n");
         Console.WriteLine("Usage:  bdxl <command> [arguments] [options]      bdxl <command> --help for details\n");
         foreach (var group in CommandTable.All.Where(s => !s.Hidden).GroupBy(s => s.Group))
         {
