@@ -84,12 +84,14 @@ public static class FileCrypto
         return aad;
     }
 
-    static int ReadFull(Stream s, byte[] buffer, int count)
+    static int ReadFull(Stream s, byte[] buffer, int count) => ReadFull(s, buffer, 0, count);
+
+    static int ReadFull(Stream s, byte[] buffer, int offset, int count)
     {
         int total = 0;
         while (total < count)
         {
-            int n = s.Read(buffer, total, count - total);
+            int n = s.Read(buffer, offset + total, count - total);
             if (n == 0) break;
             total += n;
         }
@@ -268,6 +270,133 @@ public static class FileCrypto
     }
 
     static byte[] CheckBytes(byte[] key) => HMACSHA256.HashData(key, "bdxl password check"u8)[..16];
+
+    // ---- BDXLENC2: objects encrypted with a catalog's master key (ENCRYPTION.md) -------------------------------------
+
+    const string Magic2 = "BDXLENC2";
+    const int Header2Size = 8 + MasterKey.KeyIdSize + 32 + 8;
+    const byte ModeStored = 0;   // 1 = zstd, reserved for compression
+
+    /// <summary>
+    /// Encrypts length bytes (-1 = to the end) from the current position of input with an object key derived from the
+    /// master key: magic | key id | salt(32) | nonce prefix | chunks. Each chunk's plaintext is mode(1) + up to 1 MiB.
+    /// Returns the SHA-256 of the data that was read.
+    /// </summary>
+    public static string Encrypt(Stream input, Stream output, MasterKey key, string purpose, long length = -1, CancellationToken ct = default)
+    {
+        using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long remaining = length < 0 ? long.MaxValue : length;
+        int ReadNext(byte[] buffer)
+        {
+            int got = ReadFull(input, buffer, 1, (int)Math.Min(ChunkSize, remaining));
+            remaining -= got;
+            return got;
+        }
+
+        byte[] salt = RandomNumberGenerator.GetBytes(32), prefix = RandomNumberGenerator.GetBytes(8);
+        output.Write(Encoding.ASCII.GetBytes(Magic2));
+        output.Write(key.KeyIdBytes);
+        output.Write(salt);
+        output.Write(prefix);
+
+        byte[] objectKey = key.ObjectKey(salt, purpose);
+        using var aes = new AesGcm(objectKey, TagSize);
+        CryptographicOperations.ZeroMemory(objectKey);
+        var current = new byte[1 + ChunkSize];
+        var next = new byte[1 + ChunkSize];
+        int currentLen = ReadNext(current);
+        uint counter = 0;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            int nextLen = currentLen == ChunkSize ? ReadNext(next) : 0;
+            bool last = nextLen == 0;
+
+            plainHash.AppendData(current, 1, currentLen);
+            current[0] = ModeStored;
+            var cipher = new byte[1 + currentLen];
+            var tag = new byte[TagSize];
+            aes.Encrypt(Nonce(prefix, counter), current.AsSpan(0, 1 + currentLen), cipher, tag, Aad(counter, last));
+            output.Write(BitConverter.GetBytes((uint)cipher.Length));
+            output.Write(cipher);
+            output.Write(tag);
+
+            if (last) break;
+            (current, next) = (next, current);
+            currentLen = nextLen;
+            counter++;
+        }
+        return Convert.ToHexString(plainHash.GetHashAndReset());
+    }
+
+    /// <summary>Decrypts a whole BDXLENC2 stream (seekable). Returns the plaintext's SHA-256; InvalidDataException on another key, damage or tampering.</summary>
+    public static string Decrypt(Stream input, Stream output, MasterKey key, string purpose, CancellationToken ct = default)
+    {
+        var header = new byte[Header2Size];
+        if (ReadFull(input, header, header.Length) != header.Length || Encoding.ASCII.GetString(header, 0, 8) != Magic2)
+            throw new InvalidDataException("not a BDXLENC2 file");
+        var keyId = header.AsSpan(8, MasterKey.KeyIdSize);
+        if (!keyId.SequenceEqual(key.KeyIdBytes))
+            throw new InvalidDataException($"encrypted with another key (key id {Convert.ToHexString(keyId)}, not {key.KeyId})");
+        var salt = header.AsSpan(16, 32);
+        var prefix = header.AsSpan(48, 8).ToArray();
+
+        using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] objectKey = key.ObjectKey(salt, purpose);
+        using var aes = new AesGcm(objectKey, TagSize);
+        CryptographicOperations.ZeroMemory(objectKey);
+        var lengthBytes = new byte[4];
+        var tag = new byte[TagSize];
+        uint counter = 0;
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (ReadFull(input, lengthBytes, 4) != 4) throw new InvalidDataException("file is truncated");
+            uint length = BitConverter.ToUInt32(lengthBytes, 0);
+            if (length < 1 || length > 1 + ChunkSize) throw new InvalidDataException("corrupt chunk length");
+
+            var cipher = new byte[length];
+            if (ReadFull(input, cipher, (int)length) != (int)length || ReadFull(input, tag, TagSize) != TagSize)
+                throw new InvalidDataException("file is truncated");
+            bool last = input.Position == input.Length;
+
+            var plain = new byte[length];
+            try
+            {
+                aes.Decrypt(Nonce(prefix, counter), cipher, tag, plain, Aad(counter, last));
+            }
+            catch (CryptographicException)
+            {
+                throw new InvalidDataException("the file is damaged or was altered");
+            }
+            if (plain[0] != ModeStored)
+                throw new InvalidDataException($"chunk {counter} is stored in mode {plain[0]}, which this version of bdxl cannot read");
+            plainHash.AppendData(plain, 1, plain.Length - 1);
+            output.Write(plain, 1, plain.Length - 1);
+
+            if (last) break;
+            counter++;
+        }
+        return Convert.ToHexString(plainHash.GetHashAndReset());
+    }
+
+    /// <summary>Encrypts small data (catalog files, manifests) in memory, so its plaintext never touches a disk.</summary>
+    public static byte[] Seal(byte[] plain, MasterKey key, string purpose)
+    {
+        using var output = new MemoryStream();
+        Encrypt(new MemoryStream(plain, writable: false), output, key, purpose);
+        return output.ToArray();
+    }
+
+    /// <summary>The plaintext of Seal's output. InvalidDataException on another key, damage or tampering.</summary>
+    public static byte[] Open(byte[] stored, MasterKey key, string purpose)
+    {
+        using var output = new MemoryStream();
+        Decrypt(new MemoryStream(stored, writable: false), output, key, purpose);
+        return output.ToArray();
+    }
 
     /// <summary>Bytes an encrypted copy of a file of this size occupies on the disc (header + 20 bytes per chunk).</summary>
     public static long StoredSize(long plainSize)

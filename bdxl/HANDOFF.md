@@ -14,18 +14,21 @@
   everything but `disc.json`: file names, manifest and `_catalog` backup (see Key rules).
   Then `stage --append <label>`: a burned disc that is not full gets another session (see Key rules).
   `scan` prints every file as soon as it is hashed (progress by bytes, speed, time left), with a status line rewritten in place while large files are hashed.
-- **In progress:** encrypted catalog + master key + agent, then encrypted-only discs and compression. The agreed
-  design and its phases are in `ENCRYPTION.md`.
+- **Encrypted catalog (phase 1 of `ENCRYPTION.md`, the agreed design):** the catalog is encrypted with a random master
+  key that `bdxl.key` holds wrapped by the password (Argon2id) and optionally a recovery key; `init`, migration of
+  plaintext catalogs, `password change`, `recovery-key`, `catalog export/import`, password-free catalog backups.
+  Still to come: the agent (`unlock`/`lock`), then discs encrypted with the master key, encrypted-only, compression.
 
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 154 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 173 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
 ```
-Every command takes `--catalog <dir>` (default `./catalog`).
+Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; the password comes from `BDXL_PASSWORD`,
+`--password-env VAR` or is typed (every command that loads the catalog needs it).
 
 ## Source layout
 | Folder | Contents |
@@ -38,10 +41,10 @@ Every command takes `--catalog <dir>` (default `./catalog`).
 | `src/Cli/Interrupt.cs` | Ctrl+C: `Interruptible` commands get `Interrupt.Requested` and stop cleanly; others (or a 2nd Ctrl+C) exit at once with a note. `Catalog.Save` runs inside `Interrupt.Critical()`, so a save is never cut off |
 | `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `AppendSession`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
-| `src/Storage/Catalog.cs` | Load/Save, integrity (`catalog.hash.json`), snapshots in `history/`, rollback |
+| `src/Storage/Catalog.cs` | Load/Save (encrypted), integrity (`catalog.hash.json` + HMAC), snapshots in `history/`, rollback |
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
-| `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (+`PasswordPolicy`, `KeyCache`), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
-| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json, encrypted manifest, hidden names, writing onto a mounted disc), `AppendTarget` (free space of a disc for `--append`), `DiscPassword` (checks the password of an existing encrypted disc) |
+| `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (+`PasswordPolicy`, `KeyCache`; `BDXLENC1` per-disc password format and `BDXLENC2` master-key format), `MasterKey` (+`KeyPurpose`, HKDF object keys), `KeyFile` (`bdxl.key`, envelopes), `Kdf` (Argon2id via NSec/libsodium, calibration), `RecoveryKey` (text form with checksum), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
+| `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json, encrypted manifest, hidden names, writing onto a mounted disc), `AppendTarget` (free space of a disc for `--append`), `DiscPassword` (checks the password of an existing encrypted disc), `CatalogSetup` (unlock, `init`, crash-safe migration of plaintext catalogs) |
 | `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
 
 ## Adding a command
@@ -60,10 +63,19 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
 `Archive.CopiesOn(label)` = one (file, copy) per stored path of a disc, preferring the file it was stored for over aliases.
 
 ## Key rules / invariants
-- **Catalog files:** `files.jsonl`, `discs.jsonl`, `blanks.jsonl`, `settings.json` (`Catalog.CoveredFiles`).
-  `catalog.hash.json` holds their SHA-256 hashes. Every `Catalog.Save()` rewrites all four files plus the hash file.
-- **Integrity states:** `Fresh` (no catalog yet), `Legacy` (no hash file yet: allowed, and fixed by the next save),
-  `Ok`, `Broken` (only commands with `allowBrokenCatalog` run; `Save()` throws).
+- **Catalog files:** `files.jsonl.enc`, `discs.jsonl.enc`, `blanks.jsonl.enc`, `settings.json.enc` (`Catalog.StoredFiles`;
+  plaintext names in `Catalog.CoveredFiles`), each `BDXLENC2` with purpose `catalog`, plus `bdxl.key`.
+  `catalog.hash.json` = SHA-256 of each stored file + key id + save counter + HMAC (key from the master key).
+  Every `Catalog.Save()` serializes in memory and encrypts straight into the files (plaintext never on disk).
+- **Keys:** `Program.OpenCatalog`: no catalog = "run init"; plaintext catalog = migrate after confirmation;
+  otherwise `CatalogSetup.Unlock` (env/typed, 3 tries). `Ctx.Key` is the master key; `Catalog.Key` saves with it.
+  `bdxl.key` is never in `history/`; a password change rewrites only `bdxl.key`. `ICommand.NeedsCatalogFor(opt)`
+  lets `catalog backup verify/restore` run without unlocking (restore unlocks the right key file itself).
+- **Migration:** built in `.encrypting/`, plaintext moved to `.plaintext/`, encrypted files moved in, `bdxl.key` last.
+  No `bdxl.key` = undo (`RecoverInterruptedMigration`); leftovers + plaintext history snapshots are finished by
+  `FinishMigration` (snapshots that failed their old hash check get `unverified`).
+- **Integrity states:** `Fresh` (empty), `Ok`, `Broken` (only commands with `allowBrokenCatalog` run; `Save()` throws).
+  Damage shows without the key (`CheckIntegrity(dir, null)`); mixed/altered files fail the HMAC.
 - **Versioning:** the first `Save()` in a process copies the on-disk catalog plus its hash file to
   `history/<yyyyMMdd-HHmmss>-<command>/`. That is one copy per command, pruned to `HistoryKeep`.
 - **Dedup:** content identity is `FileRecord.Sha256`, the hash of the plaintext.
@@ -79,7 +91,8 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - `BackupRef.Sha256` = hash of the plaintext; `StoredSha256` = hash of the ciphertext (used by `verify` without a password).
   - Format `BDXLENC1`: header (iterations, salt, nonce prefix), then 1 MiB AES-GCM chunks; the AAD is the chunk number plus a last-chunk flag.
     `FileCrypto.EncryptBytes/DecryptBytes` do the same in memory (metadata never touches a disk in plaintext).
-  - One salt per staged disc; keys are cached per salt. Manifest and `_catalog` use the disc's password and salt.
+  - One salt per staged disc; keys are cached per salt. The manifest uses the disc's password and salt.
+    (Phase 2 replaces all of this with the catalog's master key.)
   - Manifest: `manifest.jsonl.enc`; its lines carry `Source` (alias/relative path), the only link from hidden
     names to real paths besides the catalog. `DiscFiles.Write` refuses to write a plain manifest for an encrypted
     disc. Readers: `DiscFiles.ReadManifest` (asks for the password). `restage`/`discjson` of an encrypted disc
@@ -90,9 +103,11 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
     encrypted file of the disc (`FileCrypto.OpensWith`, first chunk only) and records it. So a disc never gets a
     second password.
   - `disc.json` stays plain (`restore` identifies discs before any password is known) and has `"encrypted": true`.
-  - `_catalog` (and `catalog backup create --encrypt`): `<name>.enc` per catalog file; Reed-Solomon data covers the
-    encrypted bytes, so `catalog backup verify --repair` needs no password. `backup restore` decrypts everything
-    before writing anything.
+- **Catalog backups** (`_catalog` on every disc staged with `--with-catalog`, `catalog backup create`): the encrypted
+  catalog files, `catalog.hash.json` and `bdxl.key` as they are, each with Reed-Solomon data, so creating, checking
+  and repairing need no password. `backup restore` repairs, writes to `.restoring/`, checks with the key, then
+  replaces; into its own catalog (same catalog id) the current `bdxl.key` stays, into an empty folder the backup's
+  is used (password or `--recovery`), another catalog is refused.
 - **Split files (`plan/stage --split`):** only files larger than every blank disc. Stored as `<path>.001`, `.002` ...
   (`.001.enc` when encrypted, each part on its own). A part is a `BackupRef` with `Part/Parts/Offset/Length/PartSha256`;
   `Sha256` stays the whole-file hash. `ContentSha256` = what the stored file holds (use it for verify/restage).
@@ -143,6 +158,8 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
 
 ## Tests (`tests/Bdxl.Tests`, xUnit, references `bdxl/Bdxl.csproj`)
 Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below its folder.
+`TestKeys` (TestUtil.cs): every test catalog uses one password with the cheapest Argon2id settings; a module
+initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off`; `TestKeys.Init(dir)` / `TestKeys.Load(dir)` replace `init` / `Catalog.Load`.
 | File | Covers |
 |---|---|
 | `GitIgnoreTests` | anchoring, `**`, `?`, classes, dir-only rules, negation, no re-include inside an ignored folder |
@@ -152,7 +169,8 @@ Kept outside `bdxl/` on purpose: the app project compiles every `.cs` file below
 | `FileCryptoTests` | round trips around chunk boundaries, byte ranges, wrong password, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy, key check, `OpensWith` |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
 | `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done (own non-parallel collection: `Interrupt` is process-wide) |
-| `CatalogTests` | integrity states, broken catalog never saved, one snapshot per command, pruning, rollback |
+| `MasterKeyTests` | password/recovery envelopes, password change keeps the master key, envelopes bound to their catalog, `bdxl.key` round trip, KDF limits, `BDXLENC2` round trips/another key/another purpose/tampering, recovery key checksum |
+| `CatalogTests` | nothing readable in an encrypted catalog, damage, HMAC against mixed saves + accept, snapshots (never `bdxl.key`), pruning, rollback, `init` + wrong password, migration (history too, `--force`, interrupted), export/import, password change + recovery key, backup restore into empty/own/other catalog |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
 | `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, verify + restore, `scandisc` rebuild from the encrypted manifest (wrong/no password), `_catalog` repaired without and restored with the password, standalone `--encrypt` backup, restage, discjson, a different password refused |

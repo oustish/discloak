@@ -19,12 +19,15 @@ public class AppendTests : IDisposable
         Environment.SetEnvironmentVariable(WrongVar, "Wrong-Horse-42!!");
     }
 
-    int BdxlIn(string catalog, string passwordVar, params string[] args) =>
-        Program.Main([.. args, "--catalog", tmp.File(catalog), "--password-env", passwordVar, "--yes"]);
+    int BdxlIn(string catalog, string passwordVar, params string[] args)
+    {
+        TestKeys.Init(tmp.File(catalog));
+        return Program.Main([.. args, "--catalog", tmp.File(catalog), "--password-env", passwordVar, "--yes"]);
+    }
 
     int Bdxl(params string[] args) => BdxlIn("cat", PasswordVar, args);
 
-    Catalog Cat(string name = "cat") => Catalog.Load(tmp.File(name), "test");
+    Catalog Cat(string name = "cat") => TestKeys.Load(tmp.File(name));
     DiscRecord Disc1 => Cat().Discs.Single(d => d.Label == "BDXL-0001");
     string DiscDir => tmp.File(Path.Combine("stg", "BDXL-0001"));
     string Session2 => tmp.File(Path.Combine("stg", "BDXL-0001.s2"));

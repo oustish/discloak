@@ -9,7 +9,7 @@ public static class CommandTable
     public static readonly IReadOnlyList<ICommand> All =
     [
         // indexing and planning
-        new ScanCommand(), new PlanCommand(), new BlanksCommand(), new IgnoreCommand(),
+        new InitCommand(), new ScanCommand(), new PlanCommand(), new BlanksCommand(), new IgnoreCommand(),
         // making discs
         new StageCommand(), new BurnedCommand(), new VerifyCommand(), new DiscardCommand(),
         // existing discs
@@ -19,7 +19,7 @@ public static class CommandTable
         // recovery
         new LostCommand(), new DestroyedCommand(), new FoundCommand(), new RestageCommand(), new RestoreCommand(),
         // the catalog itself
-        new CatalogCommand(), new PurgeCommand(), new AliasCommand(), new SettingsCommand(),
+        new CatalogCommand(), new PasswordCommand(), new RecoveryKeyCommand(), new PurgeCommand(), new AliasCommand(), new SettingsCommand(),
         // help
         new WorkflowCommand(), new HelpCommand(),
     ];

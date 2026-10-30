@@ -18,8 +18,11 @@ public class EncryptedDiscTests : IDisposable
         Environment.SetEnvironmentVariable(WrongVar, "Wrong-Horse-42!!");
     }
 
-    int BdxlIn(string catalog, string passwordVar, params string[] args) =>
-        Program.Main([.. args, "--catalog", tmp.File(catalog), "--password-env", passwordVar, "--yes"]);
+    int BdxlIn(string catalog, string passwordVar, params string[] args)
+    {
+        if (!(args.Length > 1 && args[0] == "catalog" && args[1] == "backup")) TestKeys.Init(tmp.File(catalog));   // a backup restores into an empty folder
+        return Program.Main([.. args, "--catalog", tmp.File(catalog), "--password-env", passwordVar, "--yes"]);
+    }
 
     int Bdxl(params string[] args) => BdxlIn("cat", PasswordVar, args);
 
@@ -72,11 +75,11 @@ public class EncryptedDiscTests : IDisposable
         StageEncrypted(withCatalog: false);
 
         Assert.Equal(1, BdxlIn("other", WrongVar, "scandisc", Disc));
-        Assert.Empty(Catalog.Load(tmp.File("other"), "test").Discs);         // nothing recorded with a wrong password
+        Assert.Empty(TestKeys.Load(tmp.File("other")).Discs);         // nothing recorded with a wrong password
         Assert.Equal(1, BdxlIn("other", NoVar, "scandisc", Disc));
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", Disc));
-        var cat = Catalog.Load(tmp.File("other"), "test");
+        var cat = TestKeys.Load(tmp.File("other"));
         var rec = Assert.Single(cat.Files, f => f.RelPath == "tax-secret-2024.pdf");
         Assert.Equal("PrivateDocs", rec.RootName);
         Assert.Equal("data/000/000001.enc", Assert.Single(rec.Backups).DiscPath);
@@ -102,10 +105,10 @@ public class EncryptedDiscTests : IDisposable
 
         Assert.Equal(1, BdxlIn("other", NoVar, "catalog", "backup", "restore", backup));
         Assert.Equal(1, BdxlIn("other", WrongVar, "catalog", "backup", "restore", backup));
-        Assert.False(File.Exists(Path.Combine(tmp.File("other"), "files.jsonl")));                  // nothing half-restored
+        Assert.False(File.Exists(Path.Combine(tmp.File("other"), "files.jsonl.enc")));                  // nothing half-restored
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "catalog", "backup", "restore", backup));
-        var cat = Catalog.Load(tmp.File("other"), "test");
+        var cat = TestKeys.Load(tmp.File("other"));
         Assert.Equal(IntegrityState.Ok, cat.Integrity.State);
         Assert.Contains(cat.Files, f => f.RelPath == "tax-secret-2024.pdf");
     }
@@ -123,7 +126,7 @@ public class EncryptedDiscTests : IDisposable
         Assert.DoesNotContain("secret", string.Concat(Directory.GetFiles(backup).Select(f => Encoding.Latin1.GetString(File.ReadAllBytes(f)))));
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "catalog", "backup", "restore", backup));
-        Assert.Contains(Catalog.Load(tmp.File("other"), "test").Files, f => f.RelPath == "tax-secret-2024.pdf");
+        Assert.Contains(TestKeys.Load(tmp.File("other")).Files, f => f.RelPath == "tax-secret-2024.pdf");
     }
 
     [Fact]
@@ -154,7 +157,7 @@ public class EncryptedDiscTests : IDisposable
         Assert.Equal(0, Bdxl("lost", "BDXL-0001"));
         Assert.Equal(1, BdxlIn("cat", WrongVar, "restage", "BDXL-0001", tmp.File("re")));
         Assert.False(Directory.Exists(Path.Combine(tmp.File("re"), "BDXL-0001")));
-        Assert.Equal("lost", Catalog.Load(tmp.File("cat"), "test").Discs.Single().State);
+        Assert.Equal("lost", TestKeys.Load(tmp.File("cat")).Discs.Single().State);
     }
 
     [Fact]
@@ -169,6 +172,6 @@ public class EncryptedDiscTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Disc, "manifest.jsonl")));
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", Disc));   // the rewritten manifest is complete
-        Assert.Equal(2, Catalog.Load(tmp.File("other"), "test").Files.Count);
+        Assert.Equal(2, TestKeys.Load(tmp.File("other")).Files.Count);
     }
 }

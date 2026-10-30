@@ -22,8 +22,45 @@ public static class JsonStore
     }
 
     /// <summary>The same JSON lines WriteLines would write, as UTF-8 bytes (for content that is encrypted before it is stored).</summary>
-    public static byte[] LinesToBytes<T>(IEnumerable<T> items) =>
-        Encoding.UTF8.GetBytes(string.Concat(items.Select(i => JsonSerializer.Serialize(i, Compact) + Environment.NewLine)));
+    public static byte[] LinesToBytes<T>(IEnumerable<T> items)
+    {
+        using var ms = new MemoryStream();
+        WriteLinesTo(ms, items);
+        return ms.ToArray();
+    }
+
+    /// <summary>JSON lines into a stream (no temp file: for content that is encrypted before it is stored).</summary>
+    public static void WriteLinesTo<T>(Stream output, IEnumerable<T> items)
+    {
+        byte[] newline = Encoding.UTF8.GetBytes(Environment.NewLine);
+        foreach (var item in items)
+        {
+            JsonSerializer.Serialize(output, item, Compact);
+            output.Write(newline);
+        }
+    }
+
+    /// <summary>Indented JSON of one object as UTF-8 bytes.</summary>
+    public static byte[] ObjectToBytes<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value, Pretty);
+
+    /// <summary>One object from UTF-8 JSON; name is only used in error messages.</summary>
+    public static T? ParseObject<T>(ReadOnlySpan<byte> utf8, string name)
+    {
+        try { return JsonSerializer.Deserialize<T>(utf8, Compact); }
+        catch (JsonException ex) { throw new JsonException($"{name}: {ex.Message}"); }
+    }
+
+    /// <summary>JSON lines from a stream of UTF-8 text; name is only used in error messages.</summary>
+    public static List<T> ParseLines<T>(Stream utf8, string name)
+    {
+        using var reader = new StreamReader(utf8, Encoding.UTF8);
+        return ParseLines<T>(ReadAllLines(reader), name);
+    }
+
+    static IEnumerable<string> ReadAllLines(TextReader reader)
+    {
+        while (reader.ReadLine() is { } line) yield return line;
+    }
 
     public static List<T> ReadLines<T>(string path) =>
         File.Exists(path) ? ParseLines<T>(File.ReadLines(path), Path.GetFileName(path)) : new List<T>();

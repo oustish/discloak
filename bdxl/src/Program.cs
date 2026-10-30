@@ -47,17 +47,15 @@ public static class Program
         }
 
         string dir = Path.GetFullPath(opt.GetOr("catalog", "catalog"));
-        var cat = spec.NeedsCatalog ? Catalog.Load(dir, spec.Name) : Catalog.CreateEmpty(dir, spec.Name);
+        var cat = spec.NeedsCatalogFor(opt) ? OpenCatalog(dir, spec.Name, opt) : Catalog.CreateEmpty(dir, spec.Name);
 
         if (cat.Integrity.State == IntegrityState.Broken && !spec.AllowBrokenCatalog)
         {
             Console.Error.WriteLine($"The catalog in {dir} failed its integrity check, so no work is done:");
             foreach (string problem in cat.Integrity.Problems) Console.Error.WriteLine("  " + problem);
-            Console.Error.WriteLine("\nSee 'bdxl catalog check' for the ways out (rollback to an older version, restore a backup, or accept hand edits).");
+            Console.Error.WriteLine("\nSee 'bdxl catalog check' for the ways out (rollback to an older version, restore a backup, or accept).");
             return 4;
         }
-        if (cat.Integrity.State == IntegrityState.Legacy)
-            Console.Error.WriteLine("Note: this catalog has no integrity hashes yet; they are written the next time it changes.");
 
         Interrupt.Begin(spec);
         try
@@ -67,6 +65,29 @@ public static class Program
         finally
         {
             Interrupt.End();
+            cat.Key?.Dispose();
         }
+    }
+
+    /// <summary>Unlocks and loads the catalog in dir; a plaintext catalog is encrypted first (after confirmation).</summary>
+    static Catalog OpenCatalog(string dir, string command, Options opt)
+    {
+        CatalogSetup.RecoverInterruptedMigration(dir);
+        MasterKey key;
+        switch (Catalog.Detect(dir))
+        {
+            case CatalogKind.None:
+                throw new UserException($"No catalog in {dir}. Create one with:  bdxl init" + (opt.Has("catalog") ? $" --catalog \"{dir}\"" : ""));
+            case CatalogKind.Plain:
+                Console.Error.WriteLine($"The catalog in {dir} is not encrypted. bdxl keeps every catalog encrypted now; this is done once.");
+                if (!Ui.Confirm(opt, "Encrypt it now?")) throw new UserException("The catalog was left as it is; nothing was done.");
+                key = CatalogSetup.Migrate(dir, opt);
+                break;
+            default:
+                key = CatalogSetup.Unlock(dir, opt);
+                if (CatalogSetup.HasPlaintextLeftovers(dir)) CatalogSetup.FinishMigration(dir, key);
+                break;
+        }
+        return Catalog.Load(dir, command, key);
     }
 }

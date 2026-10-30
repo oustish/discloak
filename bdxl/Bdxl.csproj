@@ -19,4 +19,8 @@
     <Using Include="System.Text.RegularExpressions" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
+  </ItemGroup>
+
 </Project>

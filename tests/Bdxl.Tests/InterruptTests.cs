@@ -10,7 +10,7 @@ public class InterruptTests : IDisposable
     readonly TempDir tmp = new();
     public void Dispose() => tmp.Dispose();
 
-    int Bdxl(params string[] args) => Program.Main([.. args, "--catalog", tmp.File("cat"), "--yes"]);
+    int Bdxl(params string[] args) => Program.Main([.. args, "--catalog", TestKeys.Init(tmp.File("cat")), "--yes"]);
 
     [Fact]
     public void An_interrupted_scan_saves_what_it_has_marks_nothing_missing_and_can_be_run_again()
@@ -25,12 +25,12 @@ public class InterruptTests : IDisposable
         Assert.Equal(Interrupt.ExitCode, Bdxl("scan", tmp.File("src"), "--name", "S"));
         Assert.False(Interrupt.Requested);   // reset for the next command
 
-        var files = Catalog.Load(tmp.File("cat"), "test").Files;
+        var files = TestKeys.Load(tmp.File("cat")).Files;
         Assert.Null(files.Single(f => f.RelPath == "a.bin").MissingSinceUtc);   // not seen is not the same as gone
         Assert.DoesNotContain(files, f => f.RelPath == "c.bin");
 
         Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
-        files = Catalog.Load(tmp.File("cat"), "test").Files;
+        files = TestKeys.Load(tmp.File("cat")).Files;
         Assert.NotNull(files.Single(f => f.RelPath == "a.bin").MissingSinceUtc);
         Assert.Contains(files, f => f.RelPath == "c.bin");
     }
@@ -41,7 +41,7 @@ public class InterruptTests : IDisposable
         return Bdxl(args);
     }
 
-    Catalog Cat => Catalog.Load(tmp.File("cat"), "test");
+    Catalog Cat => TestKeys.Load(tmp.File("cat"));
 
     [Fact]
     public void Interrupted_stage_records_no_empty_disc_and_keeps_the_blank()

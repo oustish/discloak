@@ -12,8 +12,11 @@ public class EndToEndTests : IDisposable
 
     static EndToEndTests() => Environment.SetEnvironmentVariable(PasswordVar, "Correct-Horse-42!");
 
-    int Bdxl(params string[] args) =>
-        Program.Main([.. args, "--catalog", tmp.File("cat"), "--password-env", PasswordVar, "--yes"]);
+    int Bdxl(params string[] args)
+    {
+        TestKeys.Init(tmp.File("cat"));
+        return Program.Main([.. args, "--catalog", tmp.File("cat"), "--password-env", PasswordVar, "--yes"]);
+    }
 
     string Disc(string label) => tmp.File(Path.Combine("stg", label));
 
@@ -55,11 +58,13 @@ public class EndToEndTests : IDisposable
         tmp.RandomFile("src/big.bin", 3_000_000, seed: 100);   // finishes last, while the others are hashed beside it
         for (int i = 0; i < 40; i++) tmp.RandomFile($"src/d{i % 3}/f{i}.bin", 1_000 + i * 997, seed: i);
 
+        TestKeys.Init(tmp.File("c1"));
+        TestKeys.Init(tmp.File("c4"));
         Assert.Equal(0, Program.Main(["scan", tmp.File("src"), "--name", "S", "--threads", "1", "--catalog", tmp.File("c1")]));
         Assert.Equal(0, Program.Main(["scan", tmp.File("src"), "--name", "S", "--threads", "4", "--catalog", tmp.File("c4")]));
 
-        var one = Catalog.Load(tmp.File("c1"), "test").Files;
-        var four = Catalog.Load(tmp.File("c4"), "test").Files;
+        var one = TestKeys.Load(tmp.File("c1")).Files;
+        var four = TestKeys.Load(tmp.File("c4")).Files;
         Assert.Equal(one.Select(f => (f.RelPath, f.Sha256, f.Size)), four.Select(f => (f.RelPath, f.Sha256, f.Size)));
     }
 
@@ -77,7 +82,7 @@ public class EndToEndTests : IDisposable
         File.Move(tmp.File("src/docs/a.bin"), tmp.File("src/archive/renamed.bin"));
         Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
 
-        var files = Catalog.Load(tmp.File("cat"), "test").Files;
+        var files = TestKeys.Load(tmp.File("cat")).Files;
         Assert.Equal(2, files.Count);                                   // no new record, no record left behind as "gone"
         var moved = files.Single(f => Hashing.SameHash(f.Sha256, Hashing.HashBytes(a)));
         Assert.Equal("archive/renamed.bin", moved.RelPath);
@@ -100,10 +105,10 @@ public class EndToEndTests : IDisposable
 
         File.Move(tmp.File("one/a.bin"), tmp.File("two/a.bin"));
         Assert.Equal(0, Bdxl("scan", tmp.File("two"), "--name", "Two"));   // "One" not rescanned: a.bin there is not known to be gone
-        Assert.Equal(2, Catalog.Load(tmp.File("cat"), "test").Files.Count);
+        Assert.Equal(2, TestKeys.Load(tmp.File("cat")).Files.Count);
 
         Assert.Equal(0, Bdxl("scan", tmp.File("one"), "--name", "One"));
-        var record = Assert.Single(Catalog.Load(tmp.File("cat"), "test").Files);
+        var record = Assert.Single(TestKeys.Load(tmp.File("cat")).Files);
         Assert.Equal(("Two", "a.bin"), (record.RootName, record.RelPath));
         Assert.Null(record.MissingSinceUtc);
         Assert.False(Assert.Single(record.Backups).Alias);
@@ -168,11 +173,14 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
-    public void A_catalog_edited_by_hand_blocks_commands_until_accepted()
+    public void A_catalog_whose_hash_list_was_altered_blocks_commands_until_accepted()
     {
         tmp.RandomFile("src/a.bin", 1000);
         Bdxl("scan", tmp.File("src"), "--name", "S");
-        File.AppendAllText(Path.Combine(tmp.File("cat"), "files.jsonl"), "\n");
+        string hashFile = Path.Combine(tmp.File("cat"), Catalog.IntegrityFile);
+        var manifest = JsonStore.ReadObject<IntegrityManifest>(hashFile)!;
+        manifest.Generation += 100;
+        JsonStore.WriteObject(hashFile, manifest);
 
         Assert.Equal(4, Bdxl("status"));
         Assert.Equal(4, Bdxl("catalog", "check"));

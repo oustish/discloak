@@ -1,4 +1,38 @@
+using System.Runtime.CompilerServices;
+
 namespace Bdxl.Tests;
+
+/// <summary>
+/// Every test catalog is encrypted with one password, with the cheapest Argon2id settings allowed (fast tests).
+/// BDXL_PASSWORD is set for the whole test run; the agent is never used.
+/// </summary>
+public static class TestKeys
+{
+    public const string Password = "Correct-Horse-42!";
+    public static readonly KdfParams Fast = new(Kdf.MinKiB, 1);
+
+    [ModuleInitializer]
+    internal static void Setup()
+    {
+        Environment.SetEnvironmentVariable("BDXL_PASSWORD", Password);
+        Environment.SetEnvironmentVariable("BDXL_AGENT", "off");
+    }
+
+    /// <summary>An empty encrypted catalog in dir (what 'init' makes), unless there is one.</summary>
+    public static string Init(string dir)
+    {
+        if (System.IO.File.Exists(KeyFile.PathIn(dir))) return dir;
+        using var key = MasterKey.CreateNew();
+        Directory.CreateDirectory(dir);
+        Catalog.CreateEmpty(dir, "init", key).Save();
+        KeyFile.Create(key, Password, Fast).WriteTo(dir);
+        return dir;
+    }
+
+    public static MasterKey Key(string dir) => KeyFile.ReadFrom(dir)!.TryUnlock(Password)!;
+
+    public static Catalog Load(string dir, string command = "test") => Catalog.Load(dir, command, Key(dir));
+}
 
 /// <summary>A fresh folder under %TEMP%, deleted again when the test is done.</summary>
 public sealed class TempDir : IDisposable

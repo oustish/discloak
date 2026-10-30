@@ -316,7 +316,7 @@ public sealed class StageCommand : ICommand
         if (c.Opt.Has("with-catalog"))                      // leave room for it in the blank discs' reserve
         {
             Console.WriteLine("Writing catalog backup into the disc folder:");
-            CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"), keys, salt);
+            CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"));
         }
 
         long folderBytes = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);

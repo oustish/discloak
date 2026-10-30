@@ -12,8 +12,10 @@ public static class Ui
         return answer != null && answer.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase);
     }
 
-    static string ReadSecret(string prompt)
+    /// <summary>Typed without echo. Throws if input is redirected.</summary>
+    public static string ReadSecret(string prompt)
     {
+        if (Console.IsInputRedirected) throw new UserException("A secret has to be typed, but input is redirected.");
         Console.Error.Write(prompt);
         var sb = new StringBuilder();
         while (true)
@@ -25,6 +27,35 @@ public static class Ui
         }
         Console.Error.WriteLine();
         return sb.ToString();
+    }
+
+    /// <summary>The password from the environment variable named by --password-env (default BDXL_PASSWORD), or null.</summary>
+    public static string? PasswordFromEnvironment(Options opt, out string envName, string option = "password-env", string defaultVar = "BDXL_PASSWORD")
+    {
+        envName = opt.GetOr(option, defaultVar);
+        string? value = Environment.GetEnvironmentVariable(envName);
+        return string.IsNullOrEmpty(value) ? null : value;
+    }
+
+    /// <summary>
+    /// A new password: from the environment variable named by --&lt;option&gt; (default defaultVar), or typed twice.
+    /// The password rules are enforced either way.
+    /// </summary>
+    public static string NewPassword(Options opt, string option, string defaultVar = "BDXL_PASSWORD")
+    {
+        string? password = PasswordFromEnvironment(opt, out string envName, option, defaultVar);
+        if (password == null)
+        {
+            if (Console.IsInputRedirected)
+                throw new UserException($"A new password is needed: set the environment variable {envName}, or run this in an interactive terminal.");
+            password = ReadSecret("New password: ");
+            if (!PasswordPolicy.Check(password, out string why1)) throw new UserException(why1);
+            if (ReadSecret("Repeat the password: ") != password) throw new UserException("The two passwords differ.");
+            Console.Error.WriteLine("Without this password (or a recovery key) nothing can be decrypted - store it safely.");
+            return password;
+        }
+        if (!PasswordPolicy.Check(password, out string why2)) throw new UserException($"The password in {envName}: {why2}");
+        return password;
     }
 
     /// <summary>
