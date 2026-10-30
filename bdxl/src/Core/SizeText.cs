@@ -39,6 +39,35 @@ public static class SizeText
         return text[..head] + "…" + text[^tail..];
     }
 
+    /// <summary>"90s", "30m", "8h", "2d", "1h30m".</summary>
+    public static TimeSpan ParseDuration(string text)
+    {
+        var parts = Regex.Matches(text.Trim().ToLowerInvariant(), @"(\d+)\s*([smhd])");
+        if (parts.Count == 0 || string.Concat(parts.Select(m => m.Value)).Replace(" ", "") != text.Trim().ToLowerInvariant().Replace(" ", ""))
+            throw new UserException($"Cannot parse duration '{text}' (use e.g. 30m, 8h, 1h30m, 2d).");
+        var total = TimeSpan.Zero;
+        foreach (Match m in parts)
+        {
+            long n = long.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+            total += m.Groups[2].Value switch
+            {
+                "s" => TimeSpan.FromSeconds(n), "m" => TimeSpan.FromMinutes(n), "h" => TimeSpan.FromHours(n), _ => TimeSpan.FromDays(n)
+            };
+        }
+        return total;
+    }
+
+    /// <summary>The short form ParseDuration reads: 30m, 8h, 1h30m, 2d.</summary>
+    public static string Duration(TimeSpan t)
+    {
+        var sb = new StringBuilder();
+        if (t.Days > 0) sb.Append(t.Days).Append('d');
+        if (t.Hours > 0) sb.Append(t.Hours).Append('h');
+        if (t.Minutes > 0) sb.Append(t.Minutes).Append('m');
+        if (t.Seconds > 0 || sb.Length == 0) sb.Append(t.Seconds).Append('s');
+        return sb.ToString();
+    }
+
     public static string Money(decimal value, string currency) =>
         value.ToString("N2", CultureInfo.InvariantCulture) + (currency.Length > 0 ? " " + currency : "");
 }

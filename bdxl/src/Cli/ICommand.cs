@@ -11,6 +11,7 @@ public interface ICommand
     bool AllowBrokenCatalog => false;   // may run when the catalog failed its integrity check
     bool NeedsCatalog => true;          // false: does not read the catalog at all (or opens it itself)
     bool NeedsCatalogFor(Options opt) => NeedsCatalog;   // the same, decided per run (e.g. by sub-command)
+    bool Hidden => false;               // not listed by 'bdxl help' (internal)
     bool Interruptible => false;        // stops cleanly on Ctrl+C by checking Interrupt.Requested (others are stopped at once)
 
     int Run(Ctx c);

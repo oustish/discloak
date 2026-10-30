@@ -17,18 +17,19 @@
 - **Encrypted catalog (phase 1 of `ENCRYPTION.md`, the agreed design):** the catalog is encrypted with a random master
   key that `bdxl.key` holds wrapped by the password (Argon2id) and optionally a recovery key; `init`, migration of
   plaintext catalogs, `password change`, `recovery-key`, `catalog export/import`, password-free catalog backups.
-  Still to come: the agent (`unlock`/`lock`), then discs encrypted with the master key, encrypted-only, compression.
+  `unlock` hands the master key to a background agent (memory only, idle/max timeouts, Win+L/sleep), `lock` takes it back.
+  Still to come: discs encrypted with the master key (phase 2), encrypted-only, compression.
 
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 173 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 179 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
 ```
 Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; the password comes from `BDXL_PASSWORD`,
-`--password-env VAR` or is typed (every command that loads the catalog needs it).
+`--password-env VAR` or is typed (every command that loads the catalog needs it). After `unlock` the agent provides it.
 
 ## Source layout
 | Folder | Contents |
@@ -45,6 +46,7 @@ Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; 
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
 | `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (+`PasswordPolicy`, `KeyCache`; `BDXLENC1` per-disc password format and `BDXLENC2` master-key format), `MasterKey` (+`KeyPurpose`, HKDF object keys), `KeyFile` (`bdxl.key`, envelopes), `Kdf` (Argon2id via NSec/libsodium, calibration), `RecoveryKey` (text form with checksum), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
 | `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json, encrypted manifest, hidden names, writing onto a mounted disc), `AppendTarget` (free space of a disc for `--append`), `DiscPassword` (checks the password of an existing encrypted disc), `CatalogSetup` (unlock, `init`, crash-safe migration of plaintext catalogs) |
+| `src/Agent/` | `AgentServer` (keys per catalog id, timeouts, Win+L/sleep via `SystemEvents`, sweep every 5 s: a late sweep = the computer slept), `AgentClient`, `AgentProtocol` (length-prefixed JSON over a `CurrentUserOnly` named pipe, protocol version, pipe name per user or `BDXL_AGENT_PIPE`), `AgentLauncher` (copies the program to `%LOCALAPPDATA%dxlgent<build>`, starts it detached and outside the terminal's job) |
 | `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
 
 ## Adding a command
@@ -71,6 +73,10 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   otherwise `CatalogSetup.Unlock` (env/typed, 3 tries). `Ctx.Key` is the master key; `Catalog.Key` saves with it.
   `bdxl.key` is never in `history/`; a password change rewrites only `bdxl.key`. `ICommand.NeedsCatalogFor(opt)`
   lets `catalog backup verify/restore` run without unlocking (restore unlocks the right key file itself).
+- **Agent:** `CatalogSetup.Unlock` asks the agent first (`BDXL_AGENT=off` skips it; the tests set that). The
+  agent (hidden command `agent`) refuses to start if its pipe exists, keeps one listening pipe instance at all times,
+  exits when its last key is locked (or if no key arrives within a minute), logs to `%LOCALAPPDATA%dxlgentgent.log`
+  without key material. `unlock` replaces an agent of another protocol version. `lock` needs no password.
 - **Migration:** built in `.encrypting/`, plaintext moved to `.plaintext/`, encrypted files moved in, `bdxl.key` last.
   No `bdxl.key` = undo (`RecoverInterruptedMigration`); leftovers + plaintext history snapshots are finished by
   `FinishMigration` (snapshots that failed their old hash check get `unverified`).
@@ -170,6 +176,7 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off`; `TestKeys.Init(dir)` / `T
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
 | `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done (own non-parallel collection: `Interrupt` is process-wide) |
 | `MasterKeyTests` | password/recovery envelopes, password change keeps the master key, envelopes bound to their catalog, `bdxl.key` round trip, KDF limits, `BDXLENC2` round trips/another key/another purpose/tampering, recovery key checksum |
+| `AgentTests` | in-process server on its own pipe with a test clock: hand over / get / lock, idle time restarts with use, maximum, Win+L and sleep per catalog, other protocol, second agent refused, commands use the agent instead of the password |
 | `CatalogTests` | nothing readable in an encrypted catalog, damage, HMAC against mixed saves + accept, snapshots (never `bdxl.key`), pruning, rollback, `init` + wrong password, migration (history too, `--force`, interrupted), export/import, password change + recovery key, backup restore into empty/own/other catalog |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |

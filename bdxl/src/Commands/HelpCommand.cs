@@ -28,10 +28,10 @@ public sealed class HelpCommand : ICommand
     {
         Console.WriteLine("bdxl - plan, stage and keep track of backups on BDXL discs (files are copied as they are: no archive, no compression)\n");
         Console.WriteLine("Usage:  bdxl <command> [arguments] [options]      bdxl <command> --help for details\n");
-        foreach (var group in CommandTable.All.GroupBy(s => s.Group))
+        foreach (var group in CommandTable.All.Where(s => !s.Hidden).GroupBy(s => s.Group))
         {
             Console.WriteLine(group.Key + ":");
-            foreach (var spec in group) Console.WriteLine($"  {spec.Name,-10} {spec.Summary}");
+            foreach (var spec in group) Console.WriteLine($"  {spec.Name,-12} {spec.Summary}");
             Console.WriteLine();
         }
         Console.WriteLine("Option for every command:  --catalog <dir>   catalog folder (default ./catalog)");

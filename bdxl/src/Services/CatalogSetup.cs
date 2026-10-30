@@ -14,10 +14,14 @@ public static class CatalogSetup
 
     // ---- unlocking ------------------------------------------------------------------------------------------------
 
-    /// <summary>The master key of the catalog in dir: from the password (environment, or typed: 3 attempts).</summary>
+    /// <summary>
+    /// The master key of the catalog in dir: from the agent if it holds it ('unlock'), otherwise from the password
+    /// (environment, or typed: 3 attempts).
+    /// </summary>
     public static MasterKey Unlock(string dir, Options opt)
     {
         var file = KeyFile.ReadFrom(dir) ?? throw new UserException($"No catalog in {dir}.");
+        if (AgentProtocol.Enabled && new AgentClient().TryGetKey(file.CatalogId, file.KeyId) is { } fromAgent) return fromAgent;
         string? fromEnv = Ui.PasswordFromEnvironment(opt, out string envName);
         if (fromEnv != null)
             return file.TryUnlock(fromEnv) ?? throw new UserException($"The password in {envName} does not open the catalog in {dir}.");

@@ -19,6 +19,7 @@ public sealed class WorkflowCommand : ICommand
 
             1. One-time setup
                  bdxl init --recovery-key                      encrypted catalog: choose a password, write down the recovery key
+                 bdxl unlock                                   then no password per command until it locks (lock to end it)
                  bdxl settings set label-prefix BDXL-          disc names: BDXL-0001, BDXL-0002 ... (counter never resets)
                  bdxl settings set currency PLN
                  bdxl ignore add "node_modules/" "*.tmp" "Thumbs.db"     .gitignore syntax, kept in the catalog

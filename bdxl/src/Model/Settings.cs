@@ -9,8 +9,13 @@ public class Settings
     public int HistoryKeep { get; set; } = 10;           // how many older catalog versions to keep
     public int DefaultThreads { get; set; } = 1;          // default for 'scan --threads'
     public List<string> IgnoreRules { get; set; } = new(); // .gitignore syntax, applied relative to every source folder
+    public int UnlockIdleMinutes { get; set; } = 30;      // 'unlock': locked after this long without use
+    public int UnlockMaxMinutes { get; set; } = 480;      // 'unlock': locked after this long at the latest
+    public bool LockOnSessionLock { get; set; } = true;   // 'unlock': locked when Windows is locked (Win+L)
+    public bool LockOnSleep { get; set; } = true;         // 'unlock': locked when the computer goes to sleep
 
-    public static readonly string[] Keys = { "label-prefix", "currency", "history-keep", "default-threads" };
+    public static readonly string[] Keys =
+        { "label-prefix", "currency", "history-keep", "default-threads", "unlock-idle", "unlock-max", "lock-on-win-l", "lock-on-sleep" };
 
     public string Get(string key) => key.ToLowerInvariant() switch
     {
@@ -18,6 +23,10 @@ public class Settings
         "currency" => Currency,
         "history-keep" => HistoryKeep.ToString(CultureInfo.InvariantCulture),
         "default-threads" => DefaultThreads.ToString(CultureInfo.InvariantCulture),
+        "unlock-idle" => SizeText.Duration(TimeSpan.FromMinutes(UnlockIdleMinutes)),
+        "unlock-max" => SizeText.Duration(TimeSpan.FromMinutes(UnlockMaxMinutes)),
+        "lock-on-win-l" => LockOnSessionLock ? "yes" : "no",
+        "lock-on-sleep" => LockOnSleep ? "yes" : "no",
         _ => throw new UserException($"Unknown setting '{key}'. Known: {string.Join(", ", Keys)}.")
     };
 
@@ -43,8 +52,36 @@ public class Settings
                     throw new UserException("default-threads must be a number between 1 and 64.");
                 DefaultThreads = threads;
                 break;
+            case "unlock-idle":
+                UnlockIdleMinutes = Minutes(value, "unlock-idle");
+                if (UnlockIdleMinutes > UnlockMaxMinutes) throw new UserException("unlock-idle cannot be longer than unlock-max.");
+                break;
+            case "unlock-max":
+                UnlockMaxMinutes = Minutes(value, "unlock-max");
+                if (UnlockIdleMinutes > UnlockMaxMinutes) throw new UserException("unlock-max cannot be shorter than unlock-idle.");
+                break;
+            case "lock-on-win-l":
+                LockOnSessionLock = YesNo(value, "lock-on-win-l");
+                break;
+            case "lock-on-sleep":
+                LockOnSleep = YesNo(value, "lock-on-sleep");
+                break;
             default:
                 throw new UserException($"Unknown setting '{key}'. Known: {string.Join(", ", Keys)}.");
         }
     }
+
+    static int Minutes(string value, string key)
+    {
+        var t = SizeText.ParseDuration(value);
+        if (t < TimeSpan.FromMinutes(1) || t > TimeSpan.FromDays(7)) throw new UserException($"{key} must be between 1m and 7d.");
+        return (int)t.TotalMinutes;
+    }
+
+    static bool YesNo(string value, string key) => value.ToLowerInvariant() switch
+    {
+        "yes" or "true" or "on" => true,
+        "no" or "false" or "off" => false,
+        _ => throw new UserException($"{key} is yes or no.")
+    };
 }

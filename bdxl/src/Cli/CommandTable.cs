@@ -19,7 +19,7 @@ public static class CommandTable
         // recovery
         new LostCommand(), new DestroyedCommand(), new FoundCommand(), new RestageCommand(), new RestoreCommand(),
         // the catalog itself
-        new CatalogCommand(), new PasswordCommand(), new RecoveryKeyCommand(), new PurgeCommand(), new AliasCommand(), new SettingsCommand(),
+        new CatalogCommand(), new PasswordCommand(), new RecoveryKeyCommand(), new UnlockCommand(), new LockCommand(), new AgentCommand(), new PurgeCommand(), new AliasCommand(), new SettingsCommand(),
         // help
         new WorkflowCommand(), new HelpCommand(),
     ];
