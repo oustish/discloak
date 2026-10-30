@@ -9,7 +9,7 @@ public sealed class StageCommand : ICommand
     public bool Interruptible => true;
     public string Details => """
         Creates <destDir>/<label>/ for each disc. Every file is encrypted on its own with the catalog's master key
-        (AES-256-GCM, one .enc file per file, no archive, no compression) under a name that says nothing
+        (AES-256-GCM, one .enc file per file, no archive; compressed if set, see 'compression') under a name that says nothing
         (data/000/000001.enc ...) and checked against its hash. The disc also gets an encrypted manifest
         (manifest.jsonl.enc) and, readable without the password: disc.json (label, file count, size), bdxl.key (the
         master key, wrapped by today's password) and README.txt (the formats, to read the disc without bdxl).

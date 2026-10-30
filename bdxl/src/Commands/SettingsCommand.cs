@@ -7,7 +7,9 @@ public sealed class SettingsCommand : ICommand
     public string Summary => "Global settings (label prefix, currency, ...)";
     public string Usage => "settings [show] | settings set <key> <value>";
     public string Details => """
-        Keys: label-prefix, currency, history-keep, default-threads.
+        Keys: label-prefix, currency, history-keep, default-threads, unlock-idle, unlock-max, lock-on-win-l, lock-on-sleep.
+        unlock-idle / unlock-max (e.g. 30m, 8h): when an unlocked catalog locks again; lock-on-win-l / lock-on-sleep
+        (yes/no): lock it when Windows is locked or goes to sleep (see 'unlock').
         label-prefix: new discs are named <prefix><counter>. The counter is global and never resets, so changing the
         prefix continues the numbering. Existing labels are not renamed.
         """;

@@ -26,7 +26,7 @@ public sealed class HelpCommand : ICommand
 
     public static void PrintOverview()
     {
-        Console.WriteLine("bdxl - plan, stage and keep track of encrypted backups on BDXL discs (one encrypted file per file: no archive, no compression)\n");
+        Console.WriteLine("bdxl - plan, stage and keep track of encrypted backups on BDXL discs (one encrypted file per file, no archive; compression optional)\n");
         Console.WriteLine("Usage:  bdxl <command> [arguments] [options]      bdxl <command> --help for details\n");
         foreach (var group in CommandTable.All.Where(s => !s.Hidden).GroupBy(s => s.Group))
         {
@@ -41,7 +41,10 @@ public sealed class HelpCommand : ICommand
     public static void PrintCommand(ICommand spec)
     {
         Console.WriteLine($"bdxl {spec.Name} - {spec.Summary}\n");
-        Console.WriteLine("Usage:  bdxl " + spec.Usage.Replace(" | ", "\n        bdxl " + spec.Name + " ") + "\n");
+        // "a | b": b gets the command name in front unless it already starts with it ("init ... | init --key-from ...")
+        var forms = spec.Usage.Split(" | ").Select((form, i) =>
+            i == 0 || form == spec.Name || form.StartsWith(spec.Name + " ", StringComparison.Ordinal) ? form : spec.Name + " " + form);
+        Console.WriteLine("Usage:  bdxl " + string.Join("\n        bdxl ", forms) + "\n");
         if (spec.Details.Length > 0) Console.WriteLine(spec.Details.TrimEnd());
         Console.WriteLine("\nGeneral option:  --catalog <dir>   catalog folder (default ./catalog)");
     }
