@@ -89,7 +89,7 @@ public class KeyRotationTests : IDisposable
         Assert.Equal(0, AfterRotation("stage", tmp.File("stg"), "--append", "BDXL-0001"));
         string session = tmp.File("stg/BDXL-0001.s2");
         Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(session, "data", "000", "000002.enc")));
-        Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(session, DiscFiles.EncryptedManifestName)));
+        Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(session, DiscFiles.EncryptedManifestFor(2))));
         Assert.Equal(oldKey, JsonStore.ReadObject<DiscInfo>(Path.Combine(session, DiscFiles.InfoName))!.KeyId);
 
         foreach (string f in Directory.GetFiles(session, "*", SearchOption.AllDirectories))   // burn the session onto the disc

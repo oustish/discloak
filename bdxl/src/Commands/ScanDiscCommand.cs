@@ -91,7 +91,7 @@ public sealed class ScanDiscCommand : ICommand
         if (method == "auto") method = hasManifest ? "manifest" : "hash";
         if (method == "manifest" && !hasManifest)
             throw new UserException("There is no manifest on this disc; use --method hash or quick.");
-        if (method != "manifest" && File.Exists(Path.Combine(mount, DiscFiles.EncryptedManifestName)))
+        if (method != "manifest" && DiscFiles.EncryptedManifests(mount).Count > 0)
             Console.WriteLine("Note: this disc hides its file names; only its encrypted manifest (--method manifest) links them to real paths.");
         Console.WriteLine($"Method: {method}; {onDisc.Count:N0} file(s), {SizeText.Bytes(onDisc.Sum(x => x.Size))} bytes on the disc.");
 
@@ -238,7 +238,7 @@ public sealed class ScanDiscCommand : ICommand
         disc.FileCount = onDisc.Count;
         disc.UsedBytes = onDisc.Sum(x => x.Size);
         if (found.Any(x => x.Encrypted)) disc.Encrypted = true;
-        if (disc.Encrypted) disc.KeyId ??= info?.KeyId ?? (File.Exists(Path.Combine(mount, DiscFiles.EncryptedManifestName)) ? FileCrypto.KeyIdOf(Path.Combine(mount, DiscFiles.EncryptedManifestName)) : null);
+        if (disc.Encrypted) disc.KeyId ??= info?.KeyId ?? (DiscFiles.EncryptedManifests(mount).FirstOrDefault() is { } first ? FileCrypto.KeyIdOf(first) : null);
         string? capText = c.Opt.Get("capacity");
         if (capText != null) disc.Capacity = SizeText.Parse(capText);
         decimal? cost = c.Opt.GetMoney("cost");
@@ -283,8 +283,7 @@ public sealed class ScanDiscCommand : ICommand
         string.Equals(path.TrimEnd('\\', '/'), d.RootDirectory.FullName.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
 
     static bool IsDiscMeta(string rel) =>
-        rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || rel.Equals(DiscFiles.ManifestName, StringComparison.OrdinalIgnoreCase) ||
-        rel.Equals(DiscFiles.EncryptedManifestName, StringComparison.OrdinalIgnoreCase) ||
+        rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || DiscFiles.IsManifestName(rel) ||
         rel.Equals(KeyFile.FileName, StringComparison.OrdinalIgnoreCase) || rel.Equals(DiscFiles.ReadmeName, StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("_catalog/", StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("System Volume Information/", StringComparison.OrdinalIgnoreCase) ||

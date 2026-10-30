@@ -21,9 +21,10 @@ public sealed class StageCommand : ICommand
                            staged even without --split.
           --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
           --append L       fill the free space of the burned disc L with a new session instead of using a blank disc.
-                           Only the pending files that fit go into <destDir>/L.s2/ (s3, s4 ... later), together with a
-                           manifest of the WHOLE disc, disc.json and, with --with-catalog, _catalog; burned as the next
-                           session they replace the old ones. The disc must not be finalized, and the burning program
+                           Only the pending files that fit go into <destDir>/L.s2/ (s3, s4 ... later), together with
+                           their own manifest (manifest.s2.jsonl.enc: only these files; the earlier ones stay), disc.json
+                           and, with --with-catalog, _catalog; burned as the next session, disc.json and _catalog replace
+                           the old ones. The disc must not be finalized, and the burning program
                            must continue the disc's file system (multisession / "import previous session"), or the
                            earlier files disappear from view. Free space = disc size - earlier sessions - the disc's
                            reserve, which every session needs again (metadata and the medium's session overhead).
@@ -168,15 +169,14 @@ public sealed class StageCommand : ICommand
             return cutShort ? Stopped($"Nothing was staged for {disc.Label}.", 0) : 2;
         }
 
-        // the new manifest replaces the old one on the disc, so it lists every file, old and new
-        var manifest = c.Arc.CopiesOn(disc.Label).Select(x => ManifestLine.For(x.Copy, x.File))
-                            .OrderBy(m => m.Path, StringComparer.Ordinal).ToList();
+        // the session's own manifest (manifest.sN.jsonl.enc) lists only its files; the earlier manifests stay on the disc
+        var manifest = stored.OrderBy(m => m.Path, StringComparer.Ordinal).ToList();
         long sessionFiles = disc.UsedBytes - session.UsedBytesBefore;
         var (dups, folderBytes) = Finish(c, disc, dir, manifest, Space(stored, manifest), occupiedBefore, key);
         Console.WriteLine($"{disc.Label} session {session.Number}: {disc.FileCount - session.FileCountBefore:N0} files, " +
                           $"{SizeText.Bytes(sessionFiles)} bytes staged in {dir}" +
                           (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
-        Console.WriteLine($"Its manifest lists all {manifest.Count:N0} files of the disc.");
+        Console.WriteLine($"Its own manifest ({DiscFiles.EncryptedManifestFor(session.Number)}) lists them; those of the earlier sessions stay on the disc.");
 
         if (folderBytes > target.Room)
         {

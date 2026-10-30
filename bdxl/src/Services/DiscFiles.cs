@@ -3,8 +3,9 @@ namespace Bdxl;
 /// <summary>
 /// Files every staged disc carries so it can describe itself, and writing them onto a mounted disc.
 /// An encrypted disc never gets a readable manifest: its manifest (the only place, besides the catalog, that links
-/// the hidden file names to real paths) is stored as manifest.jsonl.enc, encrypted with the catalog's master key.
-/// It also carries bdxl.key (the master key wrapped by the password of the day, and the recovery key if there was
+/// the hidden file names to real paths) is stored as manifest.jsonl.enc, encrypted with the catalog's master key. A
+/// session appended later ('stage --append') adds manifest.sN.jsonl.enc listing only its own files; a disc's list is
+/// all of them read in session order. It also carries bdxl.key (the master key wrapped by the password of the day, and the recovery key if there was
 /// one) and README.txt describing the formats, so the disc can be read with nothing but itself and the password.
 /// </summary>
 public static class DiscFiles
@@ -13,6 +14,29 @@ public static class DiscFiles
     public const string ManifestName = "manifest.jsonl";
     public const string EncryptedManifestName = ManifestName + FileCrypto.Suffix;
     public const string ReadmeName = "README.txt";
+    static readonly Regex SessionManifest = new(@"^manifest\.s(\d+)\.jsonl\.enc$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>The manifest name of a session: manifest.jsonl.enc for the first, manifest.sN.jsonl.enc for an appended one.</summary>
+    public static string EncryptedManifestFor(int session) => session <= 1 ? EncryptedManifestName : $"manifest.s{session}.jsonl{FileCrypto.Suffix}";
+
+    /// <summary>A disc's encrypted manifests, in session order (full paths).</summary>
+    public static List<string> EncryptedManifests(string mount)
+    {
+        var list = new List<(int Session, string Path)>();
+        if (!Directory.Exists(mount)) return [];
+        foreach (string path in Directory.EnumerateFiles(mount))
+        {
+            string name = Path.GetFileName(path);
+            if (name.Equals(EncryptedManifestName, StringComparison.OrdinalIgnoreCase)) list.Add((1, path));
+            else if (SessionManifest.Match(name) is { Success: true } m) list.Add((int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), path));
+        }
+        return list.OrderBy(x => x.Session).Select(x => x.Path).ToList();
+    }
+
+    /// <summary>A manifest file of the disc itself (disc metadata, not data).</summary>
+    public static bool IsManifestName(string name) =>
+        name.Equals(ManifestName, StringComparison.OrdinalIgnoreCase) || name.Equals(EncryptedManifestName, StringComparison.OrdinalIgnoreCase) ||
+        SessionManifest.IsMatch(name);
 
     /// <summary>Stored name of the n-th file on an encrypted disc: says nothing about the file (1000 per folder).</summary>
     public static string HiddenName(int n) =>
@@ -42,7 +66,9 @@ public static class DiscFiles
             return;
         }
         if (key == null) throw new InvalidOperationException($"{disc.Label} is encrypted; its manifest must not be written without the key.");
-        File.WriteAllBytes(Path.Combine(dir, EncryptedManifestName), FileCrypto.Seal(JsonStore.LinesToBytes(manifest), key, KeyPurpose.Manifest));
+        // an appended session lists only its own files, in its own manifest; the earlier ones stay on the disc as they are
+        string name = EncryptedManifestFor(disc.PendingAppend?.Number ?? 1);
+        File.WriteAllBytes(Path.Combine(dir, name), FileCrypto.Seal(JsonStore.LinesToBytes(manifest), key, KeyPurpose.Manifest));
     }
 
     /// <summary>bdxl.key as the catalog has it now, and README.txt.</summary>
@@ -53,7 +79,7 @@ public static class DiscFiles
     }
 
     public static bool HasManifest(string dir) =>
-        File.Exists(Path.Combine(dir, ManifestName)) || File.Exists(Path.Combine(dir, EncryptedManifestName));
+        File.Exists(Path.Combine(dir, ManifestName)) || EncryptedManifests(dir).Count > 0;
 
     /// <summary>
     /// Writes disc.json (and the manifest if the disc has none; bdxl.key and README.txt if an encrypted disc lacks
@@ -88,23 +114,36 @@ public static class DiscFiles
     }
 
     /// <summary>
-    /// Reads a disc's manifest (an encrypted one with the catalog's master key). null = the disc has none.
-    /// A disc encrypted with another catalog's key is explained, with the way to read it.
+    /// Reads a disc's manifest (an encrypted one with the catalog's master key): every session's, in session order, a
+    /// later line replacing an earlier one for the same stored file (discs appended before the manifests were split
+    /// list every earlier file again). null = the disc has none. A disc encrypted with another catalog's key is
+    /// explained, with the way to read it.
     /// </summary>
     public static List<ManifestLine>? ReadManifest(string mount, KeyRing key)
     {
-        string plainPath = Path.Combine(mount, ManifestName), encPath = Path.Combine(mount, EncryptedManifestName);
-        if (!File.Exists(encPath)) return File.Exists(plainPath) ? JsonStore.ReadLines<ManifestLine>(plainPath) : null;
+        var encrypted = EncryptedManifests(mount);
+        string plainPath = Path.Combine(mount, ManifestName);
+        if (encrypted.Count == 0) return File.Exists(plainPath) ? JsonStore.ReadLines<ManifestLine>(plainPath) : null;
 
-        byte[] plain;
-        try { plain = FileCrypto.Open(File.ReadAllBytes(encPath), key, KeyPurpose.Manifest); }
-        catch (InvalidDataException ex)
+        var lines = new List<ManifestLine>();
+        var at = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);   // stored path -> its index in lines
+        foreach (string path in encrypted)
         {
-            throw new UserException($"Cannot read {EncryptedManifestName}: {ex.Message}." +
-                                    (ex.Message.Contains("another key") ? " " + OtherCatalogHint(mount) : ""));
+            string name = Path.GetFileName(path);
+            byte[] plain;
+            try { plain = FileCrypto.Open(File.ReadAllBytes(path), key, KeyPurpose.Manifest); }
+            catch (InvalidDataException ex)
+            {
+                throw new UserException($"Cannot read {name}: {ex.Message}." +
+                                        (ex.Message.Contains("another key") ? " " + OtherCatalogHint(mount) : ""));
+            }
+            foreach (var line in JsonStore.ParseLines<ManifestLine>(plain, name))
+            {
+                if (at.TryGetValue(line.Path, out int i)) lines[i] = line;
+                else { at[line.Path] = lines.Count; lines.Add(line); }
+            }
         }
-        using var ms = new MemoryStream(plain);
-        return JsonStore.ParseLines<ManifestLine>(ms, EncryptedManifestName);
+        return lines;
     }
 
     /// <summary>What to do with a disc of another catalog.</summary>
@@ -139,6 +178,8 @@ public static class DiscFiles
         disc.json            label, file count, size; catalogId + keyId name the key in bdxl.key (plain JSON)
         bdxl.key             the master key, wrapped (plain JSON, safe to keep openly)
         manifest.jsonl.enc   the list of files: one JSON object per line, encrypted (purpose "manifest")
+        manifest.sN.jsonl.enc   (a disc with several sessions) the files session N added - read every manifest, in
+                             session order; a later line for the same "path" replaces an earlier one
         data/NNN/NNNNNN.enc  the files, encrypted one by one under names that say nothing (purpose "file")
         _catalog/            (optional) a backup of the whole catalog, see its own README.txt
 
@@ -166,13 +207,13 @@ public static class DiscFiles
              "BDXLENC2" (8 bytes) | key id (8) | salt (32) | nonce prefix (8) | chunks...
              chunk: length L (uint32, little endian) | ciphertext (L bytes) | tag (16)
            file key   = HKDF-SHA256 (master key, salt = the file's salt, info = "bdxl-enc2 " + purpose), 32 bytes;
-                        purpose is "file" for data/..., "manifest" for manifest.jsonl.enc, "catalog" for _catalog/*.enc
+                        purpose is "file" for data/..., "manifest" for manifest*.jsonl.enc, "catalog" for _catalog/*.enc
            chunk n (from 0): AES-256-GCM with nonce = prefix (8) + n (uint32 LE), associated data = n (uint32 LE) +
                         1 byte: 1 for the last chunk of the file, else 0
            plaintext of a chunk = 1 mode byte + data; mode 0 = data as it is, 1 = zstd-compressed (RFC 8878)
            The file is the data of all chunks in order. Chunks hold up to 1 MiB of data each.
 
-        3. manifest.jsonl.enc lines: "path" (stored name), "source" (the file's real path: alias/relative path),
+        3. manifest*.jsonl.enc lines: "path" (stored name), "source" (the file's real path: alias/relative path),
            "plainSha256" (SHA-256 of the original content), "size"/"sha256" (of the stored .enc file); split files
            also "part"/"parts"/"offset"/"length" (join the parts in order).
         """;

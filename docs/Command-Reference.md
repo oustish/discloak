@@ -127,8 +127,8 @@ bdxl stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog]
 | `--append <label>` | a new session for a burned, not finalized disc ([Appending](Guide-Appending.md)) |
 | `--mount <path>` | with `--append`: the disc is in the drive |
 
-Folder: `<destDir>\<label>\` (`<label>.s2` … for sessions) holding `data\NNN\NNNNNN.enc`, `manifest.jsonl.enc`,
-`disc.json`, `bdxl.key`, `README.txt`, optional `_catalog\`. Ctrl+C finishes the disc with what was copied.
+Folder: `<destDir>\<label>\` (`<label>.s2` … for sessions) holding `data\NNN\NNNNNN.enc`, `manifest.jsonl.enc`
+(a session: `manifest.sN.jsonl.enc`, only its own files), `disc.json`, `bdxl.key`, `README.txt`, optional `_catalog\`. Ctrl+C finishes the disc with what was copied.
 
 ### burned
 Mark a staged disc, or its staged session, as burned.

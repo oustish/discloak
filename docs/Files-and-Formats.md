@@ -39,6 +39,7 @@ opened. Back up the whole folder.
   bdxl.key                 the catalog's key file as it was when the disc was staged - plain JSON
   README.txt               how to read the disc, with or without bdxl
   manifest.jsonl.enc       list of the disc's files: real path, size, hashes, parts, compression - encrypted
+  manifest.s2.jsonl.enc …  (appended sessions) the files each session added - all manifests together list the disc
   data\000\000001.enc      the files, one encrypted file per original, names that say nothing (1000 per folder)
   data\000\000002.enc
   ...

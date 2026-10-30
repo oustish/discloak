@@ -3,8 +3,10 @@
 [Home](Home.md) › Appending to a Disc
 
 A burned disc that was **not finalized** and is not full can take more data later, as a new *session*. bdxl stages
-only the files that fit, plus a new manifest of the **whole** disc, `disc.json` and (optionally) `_catalog`. Burned
-as the next session, these replace the old ones in the disc's file system.
+only the files that fit, with a manifest of **their own** (`manifest.s2.jsonl.enc`, `.s3` …: only the new files),
+`disc.json` and (optionally) `_catalog`. Burned as the next session, `disc.json` and `_catalog` replace the old ones;
+the earlier manifests stay, and bdxl reads all of them in session order. (Discs appended by older versions of bdxl,
+whose later manifest repeated the whole list, read the same way.)
 
 Requirements:
 - the disc was burned without finalizing (closing) it;

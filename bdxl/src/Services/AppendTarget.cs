@@ -13,8 +13,7 @@ public sealed class AppendTarget
     public required long Room { get; init; }       // bytes the session's folder may take
     public string? Mount { get; init; }
     public long Reserve => Disc.Reserve ?? 0;
-    public long Relisted { get; init; }            // the new session's manifest lists the earlier sessions' files again
-    public long Free => Math.Max(0, Room - Reserve - Relisted);   // bytes for files (and their manifest lines)
+    public long Free => Math.Max(0, Room - Reserve);   // bytes for files (and their manifest lines)
     public int Session => Disc.Sessions + 1;
 
     /// <summary>A bin of exactly the free space, for the packer.</summary>
@@ -66,7 +65,6 @@ public sealed class AppendTarget
         }
         if (room == null)
             throw new UserException($"The size of {disc.Label} is not known. Put it in the drive and add --mount <path> to use the free space the drive reports.");
-        long relisted = JsonStore.LinesToBytes(c.Arc.CopiesOn(disc.Label).Select(x => ManifestLine.For(x.Copy, x.File))).Length;
-        return new AppendTarget { Disc = disc, Room = Math.Max(0, room.Value), Mount = mount, Relisted = relisted };
+        return new AppendTarget { Disc = disc, Room = Math.Max(0, room.Value), Mount = mount };
     }
 }

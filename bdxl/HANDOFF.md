@@ -27,7 +27,7 @@
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 218 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 219 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -167,9 +167,11 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   - Manifest lines of parts carry part/parts/offset/length/fileSize/fileSha256, so `scandisc --method manifest`
     rebuilds them.
 - **Appending (`stage --append <label>`, `plan --append`):** one more session on a burned, not finalized disc.
-  - Folder `<dest>/<label>.sN/` with only the pending pieces that fit, a manifest of the WHOLE disc (old lines are
-    built from the catalog: `BackupRef.StoredSize`), `disc.json` (`sessions`), optional `_catalog`. Burned with a
-    program that continues the file system, the new manifest/disc.json/_catalog replace the old ones.
+  - Folder `<dest>/<label>.sN/` with only the pending pieces that fit, their own manifest `manifest.sN.jsonl.enc`
+    (`DiscFiles.EncryptedManifestFor`; only the session's files), `disc.json` (`sessions`), optional `_catalog`.
+    Burned with a program that continues the file system, disc.json/_catalog replace the old ones; manifests add up.
+    `DiscFiles.ReadManifest` reads every `manifest*.jsonl.enc` in session order, a later line replacing an earlier one
+    with the same stored path (discs from before this, whose later manifest repeated the whole list, read the same).
   - Room: `DiscRecord.OccupiedBytes` = files + per session max(reserve, metadata). Free for files =
     capacity - occupied - reserve (`AppendTarget`); `--mount` checks disc.json's label and caps by the drive's
     free space when the drive reports any (open discs often show 0 in Windows, then the catalog figure is used).
@@ -223,7 +225,7 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off`; `TestKeys.Init(dir)` / `T
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |
 | `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, `bdxl.key` + README + key ids on the disc, verify + restore, a lost catalog rebuilt with `init --key-from` (wrong/no password refused), old and new discs across a password change, `_catalog` repaired without and restored with the password, standalone backup, restage, a disc of another key refused (discjson, restage, restore), discjson puts back manifest + key file |
-| `AppendTests` | only new/changed files in the session, `name~2`, whole-disc manifest, burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only, refusals, encrypted session (same master key, numbering continued, catalog rebuilt from the disc), a disc of another key refused (catalog or `--mount`) |
+| `AppendTests` | only new/changed files in the session, `name~2`, session manifest of its own (merged on the disc; an old full-list disc + new sessions), burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only, refusals, encrypted session (same master key, numbering continued, catalog rebuilt from the disc), a disc of another key refused (catalog or `--mount`) |
 | `CopiesTests` | per-location copies on different discs, never two on one disc, staged copies count for planning but only burned ones as made, lost discs, higher number of two locations, not onto an `--append` disc that holds it, split parts twice, end to end (stage, burn, restore from either disc, lost + restaged, alias rename) |
 | `MirrorTests` | an empty folder gets a copy that every save keeps in step (and opens as a catalog), without the mirror only read-only commands run (password change refused too), a missed save fixed by `mirror sync`, a damaged catalog taken back with `mirror restore` (also a listed-but-damaged file), a newer mirror, password change reaches the mirror, folder rules, `mirror none` while disconnected |
 
