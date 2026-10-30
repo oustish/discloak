@@ -9,7 +9,7 @@ public static class CommandTable
     public static readonly IReadOnlyList<ICommand> All =
     [
         // indexing and planning
-        new InitCommand(), new ScanCommand(), new PlanCommand(), new BlanksCommand(), new IgnoreCommand(),
+        new InitCommand(), new ScanCommand(), new CompressionCommand(), new PlanCommand(), new BlanksCommand(), new IgnoreCommand(),
         // making discs
         new StageCommand(), new BurnedCommand(), new VerifyCommand(), new DiscardCommand(),
         // existing discs

@@ -35,7 +35,7 @@ public static class PasswordPolicy
 ///   magic "BDXLENC2"(8) | key id(8) | object salt(32) | nonce prefix(8) |
 ///   chunks: length(uint32) | AES-256-GCM ciphertext(length) | tag(16)
 /// Key of the object = HKDF(master key, object salt, "bdxl-enc2 " + purpose). Each chunk's plaintext is mode(1) + up to
-/// 1 MiB of data (mode 0 = stored; 1 = zstd, reserved for compression). The nonce is prefix + chunk number; the chunk
+/// 1 MiB of data (mode 0 = stored; 1 = zstd-compressed, used when it made the chunk smaller). The nonce is prefix + chunk number; the chunk
 /// number and a "last chunk" flag are authenticated, so reordering, cutting off or extending is detected.
 /// </summary>
 public static class FileCrypto
@@ -46,7 +46,23 @@ public static class FileCrypto
     const int TagSize = 16;
     public const int HeaderSize = 8 + MasterKey.KeyIdSize + 32 + 8;
     const int ChunkOverhead = 4 + 1 + TagSize;
-    const byte ModeStored = 0;
+    const byte ModeStored = 0, ModeZstd = 1;
+
+    /// <summary>
+    /// One chunk's plaintext as it is encrypted: mode byte + data. With a compressor, the data is zstd-compressed if that
+    /// makes it smaller (mode 1), otherwise kept as it is (mode 0). Returns the length written into block.
+    /// </summary>
+    static int Encode(ZstdSharp.Compressor? zstd, byte[] data, int length, byte[] block)
+    {
+        if (zstd != null && length > 1 && zstd.TryWrap(data.AsSpan(0, length), block.AsSpan(1, length - 1), out int written))
+        {
+            block[0] = ModeZstd;
+            return 1 + written;
+        }
+        block[0] = ModeStored;
+        Buffer.BlockCopy(data, 0, block, 1, length);
+        return 1 + length;
+    }
 
     static byte[] Nonce(byte[] prefix, uint counter)
     {
@@ -83,23 +99,27 @@ public static class FileCrypto
     /// Returns the SHA-256 of the PLAINTEXT that was read. length -1 = to the end.
     /// </summary>
     public static string Encrypt(string srcPath, string dstPath, MasterKey key, string purpose, long offset = 0, long length = -1,
-                                 CancellationToken ct = default)
+                                 CancellationToken ct = default, int level = 0)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
         using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
         using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
         input.Seek(offset, SeekOrigin.Begin);
-        return Encrypt(input, output, key, purpose, length, ct);
+        return Encrypt(input, output, key, purpose, length, ct, level);
     }
 
-    /// <summary>Encrypts length bytes (-1 = to the end) from the current position of input. Returns the SHA-256 of the data read.</summary>
-    public static string Encrypt(Stream input, Stream output, MasterKey key, string purpose, long length = -1, CancellationToken ct = default)
+    /// <summary>
+    /// Encrypts length bytes (-1 = to the end) from the current position of input; level > 0 compresses each chunk
+    /// with zstd at that level where that helps. Returns the SHA-256 of the data read.
+    /// </summary>
+    public static string Encrypt(Stream input, Stream output, MasterKey key, string purpose, long length = -1, CancellationToken ct = default,
+                                 int level = 0)
     {
         using var plainHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long remaining = length < 0 ? long.MaxValue : length;
         int ReadNext(byte[] buffer)
         {
-            int got = ReadFull(input, buffer, 1, (int)Math.Min(ChunkSize, remaining));
+            int got = ReadFull(input, buffer, 0, (int)Math.Min(ChunkSize, remaining));
             remaining -= got;
             return got;
         }
@@ -113,8 +133,10 @@ public static class FileCrypto
         byte[] objectKey = key.ObjectKey(salt, purpose);
         using var aes = new AesGcm(objectKey, TagSize);
         CryptographicOperations.ZeroMemory(objectKey);
-        var current = new byte[1 + ChunkSize];
-        var next = new byte[1 + ChunkSize];
+        using var zstd = level > 0 ? new ZstdSharp.Compressor(level) : null;
+        var current = new byte[ChunkSize];
+        var next = new byte[ChunkSize];
+        var block = new byte[1 + ChunkSize];
         int currentLen = ReadNext(current);
         uint counter = 0;
 
@@ -125,11 +147,11 @@ public static class FileCrypto
             int nextLen = currentLen == ChunkSize ? ReadNext(next) : 0;
             bool last = nextLen == 0;
 
-            plainHash.AppendData(current, 1, currentLen);
-            current[0] = ModeStored;
-            var cipher = new byte[1 + currentLen];
+            plainHash.AppendData(current, 0, currentLen);
+            int blockLen = Encode(zstd, current, currentLen, block);
+            var cipher = new byte[blockLen];
             var tag = new byte[TagSize];
-            aes.Encrypt(Nonce(prefix, counter), current.AsSpan(0, 1 + currentLen), cipher, tag, Aad(counter, last));
+            aes.Encrypt(Nonce(prefix, counter), block.AsSpan(0, blockLen), cipher, tag, Aad(counter, last));
             output.Write(BitConverter.GetBytes((uint)cipher.Length));
             output.Write(cipher);
             output.Write(tag);
@@ -170,6 +192,8 @@ public static class FileCrypto
         var lengthBytes = new byte[4];
         var tag = new byte[TagSize];
         uint counter = 0;
+        using var zstd = new ZstdSharp.Decompressor();
+        byte[]? unpacked = null;
 
         while (true)
         {
@@ -192,10 +216,25 @@ public static class FileCrypto
             {
                 throw new InvalidDataException("the file is damaged or was altered");
             }
-            if (plain[0] != ModeStored)
-                throw new InvalidDataException($"chunk {counter} is stored in mode {plain[0]}, which this version of bdxl cannot read");
-            plainHash.AppendData(plain, 1, plain.Length - 1);
-            output.Write(plain, 1, plain.Length - 1);
+            if (plain[0] == ModeStored)
+            {
+                plainHash.AppendData(plain, 1, plain.Length - 1);
+                output.Write(plain, 1, plain.Length - 1);
+            }
+            else if (plain[0] == ModeZstd)
+            {
+                unpacked ??= new byte[ChunkSize];
+                int got;
+                try
+                {
+                    if (!zstd.TryUnwrap(plain.AsSpan(1), unpacked, out got))
+                        throw new InvalidDataException($"chunk {counter} unpacks to more than 1 MiB");
+                }
+                catch (ZstdSharp.ZstdException ex) { throw new InvalidDataException($"chunk {counter} does not decompress ({ex.Message})"); }
+                plainHash.AppendData(unpacked, 0, got);
+                output.Write(unpacked, 0, got);
+            }
+            else throw new InvalidDataException($"chunk {counter} is stored in mode {plain[0]}, which this version of bdxl cannot read");
 
             if (last) break;
             counter++;
@@ -217,6 +256,31 @@ public static class FileCrypto
         using var output = new MemoryStream();
         Decrypt(new MemoryStream(stored, writable: false), output, key, purpose);
         return output.ToArray();
+    }
+
+    /// <summary>
+    /// What 'scan' needs in one read: the SHA-256 of a file and the exact size its encrypted copy compressed at level
+    /// would have (the same chunks and the same choice per chunk as Encrypt). progress gets the bytes read so far.
+    /// </summary>
+    public static (string Sha256, long StoredSize) HashAndMeasure(string path, int level, Action<long> progress)
+    {
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        using var zstd = new ZstdSharp.Compressor(level);
+        var data = new byte[ChunkSize];
+        var block = new byte[1 + ChunkSize];
+        long stored = HeaderSize, read = 0;
+        while (true)
+        {
+            int n = ReadFull(input, data, 0, ChunkSize);
+            if (n == 0 && read > 0) break;   // the data ended on a chunk boundary (an empty file is one empty chunk, as Encrypt makes it)
+            hash.AppendData(data, 0, n);
+            stored += 4 + Encode(zstd, data, n, block) + TagSize;
+            read += n;
+            progress(read);
+            if (n < ChunkSize) break;
+        }
+        return (Convert.ToHexString(hash.GetHashAndReset()), stored);
     }
 
     /// <summary>The key id in an encrypted file's header, or null if it is not a BDXLENC2 file.</summary>

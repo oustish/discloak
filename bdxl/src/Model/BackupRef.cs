@@ -20,6 +20,9 @@ public class BackupRef
     public string? StoredSha256 { get; set; }      // SHA-256 of the stored (encrypted) file; used by 'verify' without a password
     public long? StoredSize { get; set; }          // bytes of the stored file on the disc (the manifest lists it)
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int Compression { get; set; }           // zstd level the stored copy was made with (0 = none); restage uses it again
+
     // split files (stage --split): this copy is ONE PART of the content; Sha256 above stays the hash of the whole file
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int Part { get; set; }                  // 1-based; 0 = the whole file

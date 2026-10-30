@@ -75,7 +75,7 @@ public sealed class RestageCommand : ICommand
                         {
                             try
                             {
-                                string plain = FileCrypto.Encrypt(src, dst, c.Key, KeyPurpose.File, offset, length, Interrupt.Token);
+                                string plain = FileCrypto.Encrypt(src, dst, c.Key, KeyPurpose.File, offset, length, Interrupt.Token, entry.Compression);   // as before: same size
                                 if (Hashing.SameHash(plain, entry.ContentSha256))
                                 {
                                     storedHash = Hashing.HashFile(dst, Interrupt.Token);

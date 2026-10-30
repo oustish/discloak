@@ -81,7 +81,7 @@ public sealed class StageCommand : ICommand
             };
             c.Cat.Discs.Add(disc);
             int hidden = 0;
-            var manifest = StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key);
+            var manifest = StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key, c.Settings);
             bool cutShort = Interrupt.Requested;
             int notStarted = chosen.Count - n - 1;
 
@@ -155,7 +155,7 @@ public sealed class StageCommand : ICommand
         };
         disc.PendingAppend = session;
         disc.Sessions = session.Number;
-        StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key);
+        StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key, c.Settings);
         bool cutShort = Interrupt.Requested;
 
         if (disc.FileCount == session.FileCountBefore)
@@ -199,7 +199,7 @@ public sealed class StageCommand : ICommand
     /// Returns the manifest lines of the stored copies.
     /// </summary>
     static List<ManifestLine> StorePieces(DiscRecord disc, string dir, IEnumerable<Piece> pieces, Func<Piece, string> storedPathFor,
-                                          MasterKey key)
+                                          MasterKey key, Settings settings)
     {
         var manifest = new List<ManifestLine>();
         foreach (var p in pieces)
@@ -209,6 +209,7 @@ public sealed class StageCommand : ICommand
             string storedPath = storedPathFor(p);
             string src = Path.Combine(f.Root, f.RelPath);
             string dst = Path.Combine(dir, storedPath);
+            int level = p.IsPart ? 0 : Compression.LevelFor(settings, f);   // a part keeps its planned plain size
             Console.WriteLine($"[{disc.Label}] {p.Name}" + (storedPath != p.Name ? $"  ->  {storedPath}" : ""));
 
             // a part cannot be checked against the whole file's hash, so the source must be exactly as scanned
@@ -222,7 +223,7 @@ public sealed class StageCommand : ICommand
             string plainHash;
             try
             {
-                plainHash = FileCrypto.Encrypt(src, dst, key, KeyPurpose.File, p.Offset, p.Length, Interrupt.Token);
+                plainHash = FileCrypto.Encrypt(src, dst, key, KeyPurpose.File, p.Offset, p.Length, Interrupt.Token, level);
             }
             catch (OperationCanceledException)
             {
@@ -249,7 +250,8 @@ public sealed class StageCommand : ICommand
 
             var copy = new BackupRef
             {
-                Disc = disc.Label, DiscPath = storedPath, Sha256 = f.Sha256, Encrypted = true, StoredSha256 = storedHash, StoredSize = storedSize
+                Disc = disc.Label, DiscPath = storedPath, Sha256 = f.Sha256, Encrypted = true, StoredSha256 = storedHash, StoredSize = storedSize,
+                Compression = level
             };
             if (p.IsPart)
             {

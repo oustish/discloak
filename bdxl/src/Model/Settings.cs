@@ -9,6 +9,8 @@ public class Settings
     public int HistoryKeep { get; set; } = 10;           // how many older catalog versions to keep
     public int DefaultThreads { get; set; } = 1;          // default for 'scan --threads'
     public List<string> IgnoreRules { get; set; } = new(); // .gitignore syntax, applied relative to every source folder
+    public CompressionSetting Compression { get; set; } = new();   // default for every alias (see Compression)
+    public Dictionary<string, CompressionSetting> CompressionByAlias { get; set; } = new();   // alias -> its own setting
     public int UnlockIdleMinutes { get; set; } = 30;      // 'unlock': locked after this long without use
     public int UnlockMaxMinutes { get; set; } = 480;      // 'unlock': locked after this long at the latest
     public bool LockOnSessionLock { get; set; } = true;   // 'unlock': locked when Windows is locked (Win+L)

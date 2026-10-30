@@ -131,10 +131,10 @@ public sealed class ScanDiscCommand : ICommand
                 bool isPart = line is { Part: > 0, Parts: > 0, Offset: not null, Length: not null, FileSha256: not null };
                 if (line.Encrypted && line.PlainSha256 != null)
                     found.Add(new DiscFile(line.Path, onThisDisc.Size, onThisDisc.Mtime, (isPart ? line.FileSha256! : line.PlainSha256).ToUpperInvariant(),
-                                           true, true, line.Sha256.ToUpperInvariant()) { SplitLine = isPart ? line : null, Source = line.Source });
+                                           true, true, line.Sha256.ToUpperInvariant()) { SplitLine = isPart ? line : null, Source = line.Source, Compression = line.Compression ?? 0 });
                 else
                     found.Add(new DiscFile(line.Path, onThisDisc.Size, onThisDisc.Mtime, (isPart ? line.FileSha256! : line.Sha256).ToUpperInvariant(), true)
-                              { SplitLine = isPart ? line : null, Source = line.Source });
+                              { SplitLine = isPart ? line : null, Source = line.Source, Compression = line.Compression ?? 0 });
             }
             notListed = onDisc.Where(x => !listed.Contains(x.Path)).Select(x => x.Path).ToList();
         }
@@ -221,7 +221,7 @@ public sealed class ScanDiscCommand : ICommand
             var copy = new BackupRef
             {
                 Disc = label, DiscPath = df.Path, Sha256 = sha, BackedUpUtc = burnedAt, Unverified = df.Unverified,
-                Encrypted = df.Encrypted, StoredSha256 = df.StoredSha256, StoredSize = df.Size
+                Encrypted = df.Encrypted, StoredSha256 = df.StoredSha256, StoredSize = df.Size, Compression = df.Compression
             };
             if (df.SplitLine is { } part)
             {

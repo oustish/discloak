@@ -39,6 +39,12 @@ public sealed class AliasCommand : ICommand
             if (clash) throw new UserException($"The alias '{newName}' is already used by another location.");
 
             foreach (var f in affected) f.RootName = newName;
+            var ownSetting = c.Settings.CompressionByAlias.Keys.FirstOrDefault(k => k.Equals(oldName, StringComparison.OrdinalIgnoreCase));
+            if (ownSetting != null)   // the compression setting goes with the name
+            {
+                c.Settings.CompressionByAlias[newName] = c.Settings.CompressionByAlias[ownSetting];
+                c.Settings.CompressionByAlias.Remove(ownSetting);
+            }
             c.Cat.Save();
             Console.WriteLine($"Renamed '{oldName}' to '{newName}' on {affected.Count:N0} file(s). " +
                               "Discs that were already burned keep the old folder name on the disc; the catalog still finds the files there.");

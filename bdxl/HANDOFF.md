@@ -20,12 +20,12 @@
   `unlock` hands the master key to a background agent (memory only, idle/max timeouts, Win+L/sleep), `lock` takes it back.
   Encrypted discs use the same master key and carry `bdxl.key` + `README.txt` (phase 2); `init --key-from <disc>`.
   Every staged disc is encrypted (phase 3); plain discs only come from `scandisc` (older discs) and are still
-  verified, restored and restaged as they are. Still to come: compression (phase 4).
+  verified, restored and restaged as they are. Compression per location (phase 4, `compression`) completes the design.
 
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 178 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 188 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -46,7 +46,7 @@ Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; 
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
 | `src/Storage/Catalog.cs` | Load/Save (encrypted), integrity (`catalog.hash.json` + HMAC), snapshots in `history/`, rollback |
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
-| `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (`BDXLENC2`, +`PasswordPolicy`), `MasterKey` (+`KeyPurpose`, HKDF object keys), `KeyFile` (`bdxl.key`, envelopes), `Kdf` (Argon2id via NSec/libsodium, calibration), `RecoveryKey` (text form with checksum), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
+| `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (`BDXLENC2`, +`PasswordPolicy`), `MasterKey` (+`KeyPurpose`, HKDF object keys), `KeyFile` (`bdxl.key`, envelopes), `Kdf` (Argon2id via NSec/libsodium, calibration), `RecoveryKey` (text form with checksum), `Compression` (+`CompressionSetting`: per-alias mode/level, auto's extension list, signatures, planned sizes), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
 | `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json [+ bdxl.key + README.txt], encrypted manifest, hidden names, writing onto a mounted disc), `AppendTarget` (free space of a disc for `--append`), `CatalogSetup` (unlock, `init`, crash-safe migration of plaintext catalogs) |
 | `src/Agent/` | `AgentServer` (keys per catalog id, timeouts, Win+L/sleep via `SystemEvents`, sweep every 5 s: a late sweep = the computer slept), `AgentClient`, `AgentProtocol` (length-prefixed JSON over a `CurrentUserOnly` named pipe, protocol version, pipe name per user or `BDXL_AGENT_PIPE`), `AgentLauncher` (copies the program to `%LOCALAPPDATA%dxlgent<build>`, starts it detached and outside the terminal's job) |
 | `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
@@ -108,6 +108,16 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
     `scandisc` each disc. After a password change, old discs' `bdxl.key` still opens with the old password.
   - No per-disc passwords any more (`BDXLENC1`, `KeyCache`, `KeyCheck`, `DiscPassword` are gone: nothing was ever
     staged with them).
+- **Compression (`compression`):** `Settings.Compression` (default, `off`) + `Settings.CompressionByAlias`; modes
+  off/auto/on + zstd level (ZstdSharp). Inside `BDXLENC2` each 1 MiB chunk is compressed (mode byte 1) only if smaller.
+  - `scan` counts the exact stored size in the same read (`FileCrypto.HashAndMeasure`, same `Encode` as `Encrypt`):
+    `FileRecord.CompressedSize` valid for `CompressedWith` = `Compression.Signature(level)` (level + library version).
+    Unchanged files are read again only when that signature is outdated (`Totals.Counted`).
+  - `MakePlan` uses `Compression.PlannedStoredSize`: the counted size if valid, else the uncompressed one (never overfills).
+    Parts of split files are never compressed (their layout is in plain bytes).
+  - `stage` compresses by today's setting and records the level on the copy (`BackupRef.Compression`, also in the
+    manifest, so `scandisc` restores it); `restage` reuses that level, so a rebuilt copy has the same size.
+  - `alias rename` carries the alias's setting along.
 - **Catalog backups** (`_catalog` on every disc staged with `--with-catalog`, `catalog backup create`): the encrypted
   catalog files, `catalog.hash.json` and `bdxl.key` as they are, each with Reed-Solomon data, so creating, checking
   and repairing need no password. `backup restore` repairs, writes to `.restoring/`, checks with the key, then
@@ -176,6 +186,7 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off`; `TestKeys.Init(dir)` / `T
 | `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done (own non-parallel collection: `Interrupt` is process-wide) |
 | `MasterKeyTests` | password/recovery envelopes, password change keeps the master key, envelopes bound to their catalog, `bdxl.key` round trip, KDF limits, `BDXLENC2` round trips/another key/another purpose/tampering, recovery key checksum |
 | `AgentTests` | in-process server on its own pipe with a test clock: hand over / get / lock, idle time restarts with use, maximum, Win+L and sleep per catalog, other protocol, second agent refused, commands use the agent instead of the password |
+| `CompressionTests` | compressed round trips (empty, text, one chunk, random, mixed) and `HashAndMeasure` = real stored size, damaged compressed chunk, auto/on/off, a location that fits only compressed: scan counts, plan, stage at the counted size, verify, restore, restage at the recorded level, level from the manifest; recount on a new level, alias rename, clear |
 | `CatalogTests` | nothing readable in an encrypted catalog, damage, HMAC against mixed saves + accept, snapshots (never `bdxl.key`), pruning, rollback, `init` + wrong password, migration (history too, `--force`, interrupted), export/import, password change + recovery key, backup restore into empty/own/other catalog |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
 | `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, corrupted disc, 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), encrypted split restore one drive at a time, lost + restage, hand-edited catalog |

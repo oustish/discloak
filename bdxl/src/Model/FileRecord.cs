@@ -14,5 +14,8 @@ public class FileRecord
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Ignored { get; set; }              // matches an ignore rule: never staged for NEW backups
 
+    public long? CompressedSize { get; set; }      // stored size of an encrypted, compressed copy, counted by scan ...
+    public string? CompressedWith { get; set; }    // ... for this setting (Compression.Signature); otherwise not valid
+
     public List<BackupRef> Backups { get; set; } = new();   // history of every copy ever staged / burned
 }

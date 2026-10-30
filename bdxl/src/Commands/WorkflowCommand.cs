@@ -28,6 +28,7 @@ public sealed class WorkflowCommand : ICommand
             2. Index your data (hashes every file; --threads speeds it up on SSDs / several disks)
                  bdxl scan D:\Photos --name Photos --threads 4
                  bdxl scan E:\Documents --name Docs
+                 bdxl compression set Docs auto                 compress what compresses (zstd); scan again to count it
                Later, to pick up changes in ALL known locations at once:
                  bdxl scan --threads 4
 

@@ -9,14 +9,15 @@ namespace Bdxl;
 /// </summary>
 public record ManifestLine(string Path, long Size, string Sha256, bool Encrypted = false, string? PlainSha256 = null,
                            int? Part = null, int? Parts = null, long? Offset = null, long? Length = null,
-                           long? FileSize = null, string? FileSha256 = null, string? Source = null)
+                           long? FileSize = null, string? FileSha256 = null, string? Source = null, int? Compression = null)
 {
     public static ManifestLine For(BackupRef b, long storedSize, FileRecord f) =>
         new(b.DiscPath, storedSize, b.Encrypted ? b.StoredSha256 ?? "" : b.ContentSha256, b.Encrypted,
             b.Encrypted ? b.ContentSha256 : null,
             b.IsPart ? b.Part : null, b.IsPart ? b.Parts : null, b.IsPart ? b.Offset : null, b.IsPart ? b.Length : null,
             b.IsPart ? f.Size : null, b.IsPart ? b.Sha256 : null,
-            b.Encrypted || b.DiscPath != NaturalName(b, f) ? $"{f.RootName}/{f.RelPath}" : null);
+            b.Encrypted || b.DiscPath != NaturalName(b, f) ? $"{f.RootName}/{f.RelPath}" : null,
+            b.Compression > 0 ? b.Compression : null);
 
     /// <summary>The same, with the stored size from the catalog.</summary>
     public static ManifestLine For(BackupRef b, FileRecord f) =>

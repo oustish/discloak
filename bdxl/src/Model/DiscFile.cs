@@ -5,4 +5,5 @@ public record DiscFile(string Path, long Size, DateTime Mtime, string? Sha256, b
 {
     public ManifestLine? SplitLine { get; init; }   // set when the manifest says this is one part of a split file
     public string? Source { get; init; }            // catalog path from the manifest when the disc hides file names
+    public int Compression { get; init; }           // zstd level of the stored copy (from the manifest)
 }

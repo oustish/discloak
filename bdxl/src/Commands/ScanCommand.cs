@@ -26,6 +26,9 @@ public sealed class ScanCommand : ICommand
 
         Files matching an ignore rule (see 'ignore') are added to the catalog and marked as ignored, but are not
         hashed and never staged.
+        Compression (see 'compression'): for files that will be stored compressed, the same read also counts the exact
+        size of their compressed, encrypted copy, so 'plan' and 'stage' fill discs exactly. When the compression
+        setting of a location changes, its unchanged files are read once more to count it again.
         Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
         files take long, a status line below shows how far they are (rewritten in place, not written when the output
         is redirected). The catalog is saved every 2 minutes.
@@ -43,6 +46,9 @@ public sealed class ScanCommand : ICommand
         public DateTime Mtime;
         public FileRecord? Rec;
         public string? Hash;
+        public int Level;                          // > 0: also count the compressed stored size at this zstd level
+        public long Stored;                        // that size
+        public bool CountOnly;                     // unchanged, read again only to count the compressed size
         public string? Error;
         public long BytesRead;                     // written by the hashing thread, read for progress
     }
@@ -83,7 +89,7 @@ public sealed class ScanCommand : ICommand
 
     sealed class Totals
     {
-        public int Added, Changed, Unchanged, Skipped, Missing, Moved, IgnoredNew, BecameIgnored, NoLongerIgnored;
+        public int Added, Changed, Unchanged, Skipped, Missing, Moved, IgnoredNew, BecameIgnored, NoLongerIgnored, Counted;
         public bool Interrupted;                   // Ctrl+C: stopped early
         public int Unhashed;                       // files that still needed hashing when it stopped
         public long UnhashedBytes;
@@ -166,6 +172,8 @@ public sealed class ScanCommand : ICommand
             Console.WriteLine($"{totals.NoLongerIgnored} file(s) are no longer ignored.");
         if (linked > 0)
             Console.WriteLine($"{linked} file(s) already backed up under another path (same hash) - linked, nothing to burn.");
+        if (totals.Counted > 0)
+            Console.WriteLine($"{totals.Counted} unchanged file(s) were read again to count their compressed size (the compression setting changed).");
         if (!totals.Interrupted) return 0;
 
         Console.WriteLine($"Stopped by Ctrl+C. What was hashed is saved; {totals.Unhashed:N0} file(s), {SizeText.Bytes(totals.UnhashedBytes)} bytes " +
@@ -246,13 +254,18 @@ public sealed class ScanCommand : ICommand
                 if (rec != null && rec.Ignored) { rec.Ignored = false; t.NoLongerIgnored++; }
 
                 bool needsHash = full || rec == null || rec.Sha256.Length == 0 || rec.Size != size || rec.ModifiedUtc != mtime;
-                if (!needsHash)
+                int level = Compression.LevelFor(c.Settings, name, rel);
+                bool needsCount = !needsHash && level > 0 && rec!.CompressedWith != Compression.Signature(level);
+                if (!needsHash && !needsCount)
                 {
                     rec!.MissingSinceUtc = null;
                     t.Unchanged++;
                     continue;
                 }
-                work.Add(new WorkItem { Index = work.Count, FullPath = fi.FullName, Rel = rel, Size = size, Mtime = mtime, Rec = rec });
+                work.Add(new WorkItem
+                {
+                    Index = work.Count, FullPath = fi.FullName, Rel = rel, Size = size, Mtime = mtime, Rec = rec, Level = level, CountOnly = !needsHash
+                });
             }
         }
 
@@ -260,7 +273,7 @@ public sealed class ScanCommand : ICommand
         //    are applied to the catalog (and printed) on this thread, one by one, in the order they finish
         long totalBytes = work.Sum(w => w.Size), doneBytes = 0;
         if (work.Count > 0)
-            Console.WriteLine($"  {work.Count:N0} file(s), {SizeText.Bytes(totalBytes)} bytes to hash");
+            Console.WriteLine($"  {work.Count:N0} file(s), {SizeText.Bytes(totalBytes)} bytes to read");
         var results = new BlockingCollection<WorkItem>();
         var active = new ConcurrentDictionary<WorkItem, byte>();   // being hashed right now
         int next = -1, running = threads;
@@ -275,11 +288,13 @@ public sealed class ScanCommand : ICommand
                     active[w] = 0;
                     try
                     {
-                        w.Hash = Hashing.HashFile(w.FullPath, read =>
+                        void Progress(long read)
                         {
                             Volatile.Write(ref w.BytesRead, read);
                             if (Interrupt.Requested) throw new OperationCanceledException();   // a large file stops mid-way
-                        });
+                        }
+                        if (w.Level > 0) (w.Hash, w.Stored) = FileCrypto.HashAndMeasure(w.FullPath, w.Level, Progress);
+                        else w.Hash = Hashing.HashFile(w.FullPath, Progress);
                         results.Add(w);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { w.Error = ex.Message; results.Add(w); }
@@ -326,6 +341,7 @@ public sealed class ScanCommand : ICommand
                     }
                     else if (rec.Sha256.Length == 0) t.Added++;
                     else if (!Hashing.SameHash(rec.Sha256, hash)) t.Changed++;
+                    else if (w.CountOnly) t.Counted++;
                     else t.Unchanged++;
 
                     rec.Size = w.Size;
@@ -333,7 +349,10 @@ public sealed class ScanCommand : ICommand
                     rec.Sha256 = hash;
                     rec.MissingSinceUtc = null;
                     rec.Ignored = false;
-                    Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes)");
+                    rec.CompressedSize = w.Level > 0 ? w.Stored : null;
+                    rec.CompressedWith = w.Level > 0 ? Compression.Signature(w.Level) : null;
+                    string compressed = w.Level > 0 ? $", compressed to {100.0 * w.Stored / Math.Max(1, FileCrypto.StoredSize(w.Size)):F0}%" : "";
+                    Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes{compressed})");
                 }
             }
             if (clock.Elapsed - lastStatus >= StatusEvery && !active.IsEmpty)

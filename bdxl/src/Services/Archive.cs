@@ -142,7 +142,8 @@ public sealed class Archive
             .Select(g => g.OrderBy(f => f.RootName + "/" + f.RelPath, StringComparer.Ordinal).First())
             .ToList();
 
-        Func<Piece, long> sizeOf = p => FileCrypto.StoredSize(p.Length);   // every staged piece is encrypted
+        // every staged piece is encrypted; whole files maybe compressed too (sizes counted by scan), parts never
+        Func<Piece, long> sizeOf = p => p.IsPart ? FileCrypto.StoredSize(p.Length) : Compression.PlannedStoredSize(cat.Settings, p.File);
         long largest = cat.Blanks.Select(b => b.Usable).DefaultIfEmpty(0).Max();
         // the part size leaves room for encryption, so a layout works whether later parts are encrypted or not
         long newPartSize = FileCrypto.MaxPlainSize(largest);

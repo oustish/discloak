@@ -159,5 +159,7 @@ plaintext catalog is migrated after confirmation (same code as `init`).
    ids and README on every encrypted disc; `init --key-from`; old per-disc scheme removed.
 3. (done) Encrypted only: plain staging removed (`--encrypt` accepted and ignored); plain discs imported with
    `scandisc` stay readable, verifiable, restorable and restageable as they were, but take no new session.
-4. Compression per alias.
+4. (done) Compression per alias: `compression set <alias>|--default off|auto|on [--level N]`, default off. The
+   level is recorded on each stored copy (`BackupRef.Compression`, manifest) so `restage` reproduces the size; counted
+   sizes are tied to level + zstd library version and fall back to uncompressed sizes (so no overflow guard is needed).
 5. Later, if wanted: key rotation (key ring inside the encrypted catalog, selected by key id).

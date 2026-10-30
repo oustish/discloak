@@ -22,6 +22,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.14" />
     <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
 
 </Project>
