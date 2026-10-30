@@ -6,6 +6,7 @@ public sealed class SettingsCommand : ICommand
     public string Group => CommandGroup.Catalog;
     public string Summary => "Global settings (label prefix, currency, ...)";
     public string Usage => "settings [show] | settings set <key> <value> | settings set mirror <folder>|none";
+    public bool NeedsFilesFor(Options opt) => false;   // settings only
     public bool ReadOnlyFor(Options opt) => opt.Args.Count == 0 || opt.Args[0].Equals("show", StringComparison.OrdinalIgnoreCase);
     public bool FixesMirror(Options opt) => opt.Args.Count > 1 && opt.Args[1].Equals("mirror", StringComparison.OrdinalIgnoreCase);
     public string Details => """

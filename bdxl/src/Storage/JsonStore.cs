@@ -53,8 +53,39 @@ public static class JsonStore
     /// <summary>JSON lines from a stream of UTF-8 text; name is only used in error messages.</summary>
     public static List<T> ParseLines<T>(Stream utf8, string name)
     {
+        if (utf8 is MemoryStream ms && ms.TryGetBuffer(out var buffer))
+            return ParseLines<T>(buffer.AsSpan((int)ms.Position), name);
         using var reader = new StreamReader(utf8, Encoding.UTF8);
         return ParseLines<T>(ReadAllLines(reader), name);
+    }
+
+    /// <summary>One JSON line (UTF-8) with the catalog's options.</summary>
+    public static T? DeserializeLine<T>(ReadOnlySpan<byte> utf8) => JsonSerializer.Deserialize<T>(utf8, Compact);
+
+    /// <summary>JSON lines straight from UTF-8 bytes (no string per line).</summary>
+    public static List<T> ParseLines<T>(ReadOnlySpan<byte> utf8, string name)
+    {
+        var result = new List<T>();
+        if (utf8.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) utf8 = utf8[3..];   // a byte order mark
+        int lineNo = 0;
+        while (utf8.Length > 0)
+        {
+            int end = utf8.IndexOf((byte)'\n');
+            var line = end < 0 ? utf8 : utf8[..end];
+            utf8 = end < 0 ? default : utf8[(end + 1)..];
+            lineNo++;
+            if (line.Trim((ReadOnlySpan<byte>)[(byte)' ', (byte)'\t', (byte)'\r']).IsEmpty) continue;
+            try
+            {
+                var item = JsonSerializer.Deserialize<T>(line, Compact);
+                if (item != null) result.Add(item);
+            }
+            catch (JsonException ex)
+            {
+                throw new JsonException($"{name} line {lineNo}: {ex.Message}");
+            }
+        }
+        return result;
     }
 
     static IEnumerable<string> ReadAllLines(TextReader reader)

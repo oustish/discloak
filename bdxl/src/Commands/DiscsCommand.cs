@@ -6,6 +6,7 @@ public sealed class DiscsCommand : ICommand
     public string Group => CommandGroup.LookingUp;
     public string Summary => "List all discs and their state";
     public string Usage => "discs";
+    public bool NeedsFilesFor(Options opt) => false;   // discs only
     public bool ReadOnlyFor(Options opt) => true;
     public string Details => """
         State is staged, burned, lost or destroyed. Shows encryption, cost and notes, the sessions of a disc that

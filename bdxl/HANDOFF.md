@@ -27,7 +27,7 @@
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 214 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 218 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -78,7 +78,12 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   `catalog.hash.json` = SHA-256 of each stored file + key id + save counter + HMAC (key from the master key).
   Every `Catalog.Save()` serializes each file in memory (no single buffer near 2 GiB any more) and encrypts straight
   into it - unless its plaintext hash equals the one loaded/last saved and it is under the current key (skipped).
-  `Load` shares the Root/RootName/Disc strings between records (memory).
+  `Load` reads the file-list parts in parallel and parses lines while decrypting (`JsonLinesSink`: no part is ever
+  whole in memory), and shares Root/RootName/Disc strings (and a current copy's Sha256) between records. `Save`
+  first only hashes each file (`HashingSink`) and skips unchanged ones; changed ones are serialized again straight
+  into the encryption through a `Pipe`, parts in parallel. `ICommand.NeedsFilesFor(opt) = false` loads without the file
+  list (`Catalog.FilesLoaded`; Save keeps its files). Measured, 1M files: load ~2.7 s, live heap ~806 B/file,
+  peak ~1.5 GB; light commands 0.2 s. Next step if needed: hashes as 32 bytes instead of 64-char strings (~-30%).
 - **Mirror** (`Storage/Mirror.cs`): `mirror.json` (plain) in the catalog folder names it; `Program` runs `Mirror.Check` after
   loading: not in step -> commands are refused (exit 4) unless `ICommand.ReadOnlyFor(opt)` (they run, warned, with
   `Catalog.SaveBlockedBy` set as a backstop) or `FixesMirror(opt)` (`catalog mirror sync|restore`, `settings set
@@ -206,7 +211,7 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off`; `TestKeys.Init(dir)` / `T
 | `GitIgnoreTests` | anchoring, `**`, `?`, classes, dir-only rules, negation, no re-include inside an ignored folder |
 | `PackerTests` | best-fit order, nothing dropped, never overfilled, stored size via `sizeOf`, determinism |
 | `SplitLayoutTests` | parts cover the file, suffixes, `PartSizeOf` from any part |
-| `ArchiveTests` | `CompleteCopy` (layouts never mix), `DiscSpace` (sectors, entries, folder), small files planned with their overhead, old part layouts still fit, dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
+| `ArchiveTests` | `CompleteCopy` (layouts never mix), `DiscSpace` (sectors, entries, folder, manifest share never below the real line), small files planned with their overhead, old part layouts still fit, dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
 | `FileCryptoTests` | `BDXLENC2` files: round trips around chunk boundaries, byte ranges, another key, flipped byte, truncation, cut-off chunks, `MaxPlainSize`, password policy |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
 | `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done (own non-parallel collection: `Interrupt` is process-wide) |

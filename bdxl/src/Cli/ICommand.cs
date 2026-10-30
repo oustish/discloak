@@ -15,6 +15,7 @@ public interface ICommand
     bool Interruptible => false;        // stops cleanly on Ctrl+C by checking Interrupt.Requested (others are stopped at once)
     bool ReadOnlyFor(Options opt) => false;      // never changes the catalog in this run: may run while its mirror is not in step
     bool FixesMirror(Options opt) => false;      // deals with the mirror itself (sync, restore, setting it): runs when it is not in step
+    bool NeedsFilesFor(Options opt) => true;     // false: never uses the file list - it is not read (much faster for a large catalog)
 
     int Run(Ctx c);
 }

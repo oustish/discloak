@@ -86,6 +86,52 @@ public class CatalogTests : IDisposable
     }
 
     [Fact]
+    public void A_command_that_does_not_need_the_file_list_neither_reads_nor_rewrites_it()
+    {
+        Run("scan", c => { c.FilesPerShard = 2; for (int i = 0; i < 5; i++) c.Files.Add(In(@"C:\a", $"{i}.txt")); });
+        var before = Parts(Dir).ToDictionary(n => n, n => System.IO.File.ReadAllBytes(Path.Combine(Dir, n)));
+
+        var light = Catalog.Load(Dir, "settings", Key, files: false);
+        Assert.False(light.FilesLoaded);
+        Assert.Empty(light.Files);
+        light.Settings.Currency = "PLN";
+        light.Save();
+
+        Assert.All(before, e => Assert.Equal(e.Value, System.IO.File.ReadAllBytes(Path.Combine(Dir, e.Key))));   // untouched
+        var full = TestKeys.Load(Dir);
+        Assert.Equal(IntegrityState.Ok, full.Integrity.State);
+        Assert.Equal(5, full.Files.Count);
+        Assert.Equal("PLN", full.Settings.Currency);
+        Assert.Equal(0, Bdxl("blanks", "add", "1"));                                            // a command that skips the list
+        Assert.Equal(5, TestKeys.Load(Dir).Files.Count);
+    }
+
+    [Fact]
+    public void The_file_list_is_parsed_while_it_is_decrypted_in_any_pieces()
+    {
+        var files = Enumerable.Range(0, 50).Select(i => In(@"C:\zdjęcia", $"łódź/{i}.jpg")).ToList();
+        byte[] text = JsonStore.LinesToBytes(files);
+        foreach (int piece in new[] { 1, 3, 7, 100, text.Length })
+        {
+            var sink = new JsonLinesSink<FileRecord>("files.000.jsonl");
+            for (int at = 0; at < text.Length; at += piece) sink.Write(text, at, Math.Min(piece, text.Length - at));
+            var back = sink.Complete();
+            Assert.Equal(files.Select(f => f.RelPath), back.Select(f => f.RelPath));
+        }
+        var noNewline = new JsonLinesSink<FileRecord>("x");
+        noNewline.Write(text.AsSpan(0, text.Length - Environment.NewLine.Length));
+        Assert.Equal(50, noNewline.Complete().Count);
+
+        var marker = new JsonLinesSink<FileRecord>("files.jsonl", "MARKER"u8);
+        marker.Write("MARKER and not JSON at all\n{"u8);
+        Assert.Empty(marker.Complete());
+
+        var bad = new JsonLinesSink<FileRecord>("files.003.jsonl");
+        var ex = Assert.Throws<System.Text.Json.JsonException>(() => { bad.Write(text.AsSpan(0, 300)); bad.Write("\nnot json\n"u8); });
+        Assert.StartsWith("files.003.jsonl line", ex.Message);
+    }
+
+    [Fact]
     public void An_unsplit_file_list_from_before_is_read_and_split_on_the_next_save()
     {
         Run("scan", c => { c.Files.Add(In(@"C:\a", "1.txt")); c.Files.Add(In(@"C:\b", "2.txt")); });

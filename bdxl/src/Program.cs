@@ -47,7 +47,7 @@ public static class Program
         }
 
         string dir = Path.GetFullPath(opt.GetOr("catalog", "catalog"));
-        var cat = spec.NeedsCatalogFor(opt) ? OpenCatalog(dir, spec.Name, opt) : Catalog.CreateEmpty(dir, spec.Name);
+        var cat = spec.NeedsCatalogFor(opt) ? OpenCatalog(dir, spec.Name, opt, spec.NeedsFilesFor(opt)) : Catalog.CreateEmpty(dir, spec.Name);
 
         // the mirror: before anything changes, it has to be there and hold exactly what the catalog holds
         var mirror = cat.Keys != null ? Mirror.Check(dir, cat.Keys) : new Mirror.Report(Mirror.State.None, null, "");
@@ -84,7 +84,7 @@ public static class Program
     }
 
     /// <summary>Unlocks and loads the catalog in dir; a plaintext catalog is encrypted first (after confirmation).</summary>
-    static Catalog OpenCatalog(string dir, string command, Options opt)
+    static Catalog OpenCatalog(string dir, string command, Options opt, bool files)
     {
         CatalogSetup.RecoverInterruptedMigration(dir);
         KeyRing key;
@@ -102,6 +102,6 @@ public static class Program
                 if (CatalogSetup.HasPlaintextLeftovers(dir)) CatalogSetup.FinishMigration(dir, key);
                 break;
         }
-        return Catalog.Load(dir, command, key);
+        return Catalog.Load(dir, command, key, files: files);
     }
 }

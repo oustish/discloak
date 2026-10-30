@@ -141,7 +141,7 @@ public sealed class Archive
             .Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0)
             .GroupBy(f => f.Sha256, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderBy(f => f.RootName + "/" + f.RelPath, StringComparer.Ordinal).First())
-            .Where(f => CompleteCopies(live[f.Sha256], f.Sha256) < wanted[f.Sha256])
+            .Where(f => CompleteCopies(live[f.Sha256], f.Sha256) < wanted(f.Sha256))
             .ToList();
 
         long largest = cat.Blanks.Select(b => b.Usable).DefaultIfEmpty(0).Max();
@@ -168,7 +168,7 @@ public sealed class Archive
             var refs = live[f.Sha256].ToList();
             int before = pending.Count;
             bool hasOne = CompleteCopies(refs, f.Sha256) > 0;
-            int missing = wanted[f.Sha256] - WholeCopies(refs, f.Sha256);   // copies still to make (> what a split layout has)
+            int missing = wanted(f.Sha256) - WholeCopies(refs, f.Sha256);   // copies still to make (> what a split layout has)
             var layout = Layouts(refs, f.Sha256).FirstOrDefault();
             if (layout != null)   // continue the layout: each part until it is on enough discs
             {
@@ -188,7 +188,7 @@ public sealed class Archive
 
         // copies of one content never share a disc (nor go onto a disc that holds it already); with one copy wanted
         // there is nothing to keep apart
-        string? GroupOf(Piece p) => wanted[p.File.Sha256] > 1 || into != null ? p.File.Sha256 : null;
+        string? GroupOf(Piece p) => wanted(p.File.Sha256) > 1 || into != null ? p.File.Sha256 : null;
         bool Holds(BlankDisc disc, string sha) => live[sha].Any(b => b.Disc.Equals(disc.Id, StringComparison.OrdinalIgnoreCase));
 
         var tooBigSet = tooBig.ToHashSet();
@@ -201,15 +201,16 @@ public sealed class Archive
     // ---- copies ---------------------------------------------------------------------------
 
     /// <summary>Copies wanted of each content on a source: the most any location holding it asks for ('copies').</summary>
-    public Dictionary<string, int> WantedCopies()
+    public Func<string, int> WantedCopies()
     {
+        if (!cat.Settings.AnyExtraCopies) return _ => 1;   // the usual case: nothing to look up
         var wanted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in cat.Files.Where(f => !f.Ignored && f.Sha256.Length > 0))
         {
             int n = cat.Settings.CopiesFor(f.RootName);
             if (!wanted.TryGetValue(f.Sha256, out int had) || n > had) wanted[f.Sha256] = n;
         }
-        return wanted;
+        return sha => wanted.TryGetValue(sha, out int n) ? n : 1;
     }
 
     /// <summary>A split layout of a content: its part count and size, and on how many different discs each part is.</summary>
@@ -227,14 +228,20 @@ public sealed class Archive
                 .Select(p => g.Where(b => b.Part == p).Select(b => b.Disc).Distinct(StringComparer.OrdinalIgnoreCase).Count()).ToArray()))
             .OrderByDescending(l => l.Copies).ThenByDescending(l => l.Discs.Count(n => n > 0));
 
-    static int WholeCopies(IEnumerable<BackupRef> refs, string sha) =>
-        refs.Where(b => !b.IsPart && Hashing.SameHash(b.Sha256, sha)).Select(b => b.Disc).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+    static int WholeCopies(IList<BackupRef> refs, string sha)
+    {
+        if (refs.Count == 1) return !refs[0].IsPart && Hashing.SameHash(refs[0].Sha256, sha) ? 1 : 0;   // the usual case, cheaply
+        return refs.Where(b => !b.IsPart && Hashing.SameHash(b.Sha256, sha)).Select(b => b.Disc).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+    }
 
     /// <summary>Complete copies of content sha among refs, each on its own disc(s): whole copies + copies of its best split layout.</summary>
     public static int CompleteCopies(IEnumerable<BackupRef> refs, string sha)
     {
         var list = refs as IList<BackupRef> ?? refs.ToList();
-        return WholeCopies(list, sha) + (Layouts(list, sha).FirstOrDefault()?.Copies ?? 0);
+        if (list.Count == 0) return 0;
+        bool parts = false;
+        foreach (var b in list) parts |= b.IsPart;
+        return WholeCopies(list, sha) + (parts ? Layouts(list, sha).FirstOrDefault()?.Copies ?? 0 : 0);
     }
 
     /// <summary>Burned copies on live discs (staged ones do not count yet) of the file's current content.</summary>

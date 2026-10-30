@@ -62,6 +62,12 @@ master key (not the password) is held in the agent's memory until it locks.
 Deriving the key from the password is deliberately expensive (Argon2id, ~2 s), so guessing passwords is slow too.
 `bdxl unlock` makes it a one-off.
 
+**How fast is it with a large catalog?**
+Every command reads the catalog (and checks it) before it starts. Measured with 1 million files (every one on a disc):
+about 3 s and 1.5 GB of memory to load; `status` and `plan` about 4-5 s. It grows in proportion: 5 million files would
+take roughly 15 s and 7 GB (estimated). Commands that never look at the file list (`blanks`, `settings`, `cost`, `discs`, `found`,
+`recovery-key`) skip it and start at once. A [catalog mirror](Guide-Mirror.md) adds the time to read it back once.
+
 **Why did a `scan` read files that had not changed?**
 Their location's compression setting changed (or `--full` was given); their compressed size is counted again.
 

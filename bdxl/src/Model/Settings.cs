@@ -14,6 +14,7 @@ public class Settings
     public int Copies { get; set; } = 1;                  // copies on different discs wanted of every file (see 'copies') ...
     public Dictionary<string, int> CopiesByAlias { get; set; } = new();   // ... unless its location (alias) has its own number
     public const int MaxCopies = 9;
+    [JsonIgnore] public bool AnyExtraCopies => Copies > 1 || CopiesByAlias.Values.Any(n => n > 1);
 
     public int CopiesFor(string alias) =>
         CopiesByAlias.FirstOrDefault(kv => kv.Key.Equals(alias, StringComparison.OrdinalIgnoreCase)).Value is int n and > 0 ? n : Math.Max(1, Copies);

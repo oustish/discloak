@@ -87,6 +87,9 @@ public sealed class Catalog
     /// <summary>Records per part of the file list; a part never mixes locations. Tests make it small.</summary>
     public int FilesPerShard { get; set; } = 200_000;
 
+    /// <summary>false: loaded without the file list (Load(files: false)); Files is empty and Save keeps its stored files.</summary>
+    public bool FilesLoaded { get; private set; } = true;
+
     /// <summary>Set when the catalog may not be saved in this run (its mirror is not in step): Save refuses with this.</summary>
     public string? SaveBlockedBy { get; set; }
 
@@ -102,23 +105,21 @@ public sealed class Catalog
         return CoveredFiles.Any(n => File.Exists(Path.Combine(dir, n))) ? CatalogKind.Plain : CatalogKind.None;
     }
 
-    /// <summary>Loads, verifies and decrypts the catalog. A broken catalog is returned EMPTY with State = Broken (unless ignoreIntegrity).</summary>
-    public static Catalog Load(string dir, string commandName, KeyRing key, bool ignoreIntegrity = false)
+    /// <summary>
+    /// Loads, verifies and decrypts the catalog. A broken catalog is returned EMPTY with State = Broken (unless
+    /// ignoreIntegrity). files = false: the file list (by far the largest part) is not read, for commands that never use
+    /// it; Files stays empty and Save leaves its stored files as they are.
+    /// </summary>
+    public static Catalog Load(string dir, string commandName, KeyRing key, bool ignoreIntegrity = false, bool files = true)
     {
-        var cat = new Catalog { Dir = dir, CommandName = commandName, Keys = key };
+        var cat = new Catalog { Dir = dir, CommandName = commandName, Keys = key, FilesLoaded = files };
         cat.Integrity = CheckIntegrity(dir, key, out var manifest);
         cat.generation = manifest?.Generation ?? 0;
         if (cat.Integrity.State == IntegrityState.Broken && !ignoreIntegrity) return cat;
 
         try
         {
-            cat.Files = new List<FileRecord>();
-            foreach (string name in StoredFilesIn(dir).Where(n => ShardName.IsMatch(n)))
-                cat.Files.AddRange(cat.ReadLines<FileRecord>(dir, name, key));
-            using (var unsplit = cat.ReadPlain(dir, UnsplitFiles, key))   // the whole file list of an older catalog, or the marker
-                if (unsplit != null && !unsplit.GetBuffer().AsSpan(0, (int)unsplit.Length).StartsWith(TooOldMarker))
-                    cat.Files.AddRange(JsonStore.ParseLines<FileRecord>(unsplit, "files.jsonl"));
-            cat.ShareStrings();
+            cat.Files = files ? cat.ReadFileList(dir, key) : new List<FileRecord>();
             cat.Discs = cat.ReadLines<DiscRecord>(dir, "discs.jsonl" + Suffix, key);
             cat.Blanks = cat.ReadLines<BlankDisc>(dir, "blanks.jsonl" + Suffix, key);
             using var settings = cat.ReadPlain(dir, "settings.json" + Suffix, key);
@@ -136,6 +137,40 @@ public sealed class Catalog
         return cat;
     }
 
+    /// <summary>
+    /// The file list: its parts decrypted and parsed in parallel (each is independent), kept in name order. Lines are
+    /// parsed as they are decrypted, so no part is ever held whole in memory.
+    /// </summary>
+    List<FileRecord> ReadFileList(string dir, KeyRing key)
+    {
+        var names = StoredFilesIn(dir).Where(n => ShardName.IsMatch(n) || n == UnsplitFiles).ToArray();
+        var parts = new List<FileRecord>[names.Length];
+        try
+        {
+            Parallel.For(0, names.Length, i =>
+            {
+                // files.jsonl.enc: the whole file list of an older catalog, or (since the split) only the marker
+                var sink = new JsonLinesSink<FileRecord>(names[i][..^Suffix.Length], names[i] == UnsplitFiles ? TooOldMarker : default);
+                string hash;
+                using (var input = new FileStream(Path.Combine(dir, names[i]), FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan))
+                {
+                    try { hash = FileCrypto.Decrypt(input, sink, key, KeyPurpose.Catalog); }
+                    catch (InvalidDataException ex) { throw new InvalidDataException($"{names[i]}: {ex.Message}"); }
+                }
+                lock (plainHashes) plainHashes[names[i]] = hash;
+                parts[i] = sink.Complete();
+            });
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.FirstOrDefault(e => e is JsonException or InvalidDataException) is { } first)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
+        }
+        var all = new List<FileRecord>(parts.Sum(p => p.Count));
+        foreach (var p in parts) all.AddRange(p);
+        ShareStrings(all);
+        return all;
+    }
+
     List<T> ReadLines<T>(string dir, string name, KeyRing key)
     {
         using var plain = ReadPlain(dir, name, key);
@@ -151,21 +186,29 @@ public sealed class Catalog
         var plain = new MemoryStream();
         try { FileCrypto.Decrypt(input, plain, key, KeyPurpose.Catalog); }
         catch (InvalidDataException ex) { plain.Dispose(); throw new InvalidDataException($"{name}: {ex.Message}"); }
-        plainHashes[name] = Convert.ToHexString(SHA256.HashData(plain.GetBuffer().AsSpan(0, (int)plain.Length)));
+        string hash = Convert.ToHexString(SHA256.HashData(plain.GetBuffer().AsSpan(0, (int)plain.Length)));
+        lock (plainHashes) plainHashes[name] = hash;
         plain.Position = 0;
         return plain;
     }
 
-    /// <summary>Every record of a location repeats its path and alias (and every copy its disc label): one string each in memory.</summary>
-    void ShareStrings()
+    /// <summary>
+    /// Every record of a location repeats its path and alias, every copy its disc label, and a copy of the current version
+    /// the file's own hash: one string each in memory.
+    /// </summary>
+    static void ShareStrings(List<FileRecord> files)
     {
         var pool = new Dictionary<string, string>(StringComparer.Ordinal);
         string One(string s) { if (pool.TryGetValue(s, out var known)) return known; pool[s] = s; return s; }
-        foreach (var f in Files)
+        foreach (var f in files)
         {
             f.Root = One(f.Root);
             f.RootName = One(f.RootName);
-            foreach (var b in f.Backups) b.Disc = One(b.Disc);
+            foreach (var b in f.Backups)
+            {
+                b.Disc = One(b.Disc);
+                if (string.Equals(b.Sha256, f.Sha256, StringComparison.Ordinal)) b.Sha256 = f.Sha256;
+            }
         }
     }
 
@@ -279,23 +322,26 @@ public sealed class Catalog
         using var _ = Interrupt.Critical();   // Ctrl+C waits until all files and their hashes are written
         Directory.CreateDirectory(Dir);
         // the file list in parts of at most FilesPerShard records, one location never sharing a part with another, so a
-        // change to one location leaves the parts of the others as they are (and unchanged parts are not rewritten)
-        var shards = Files.GroupBy(f => f.Root, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal)
-            .SelectMany(g => g.OrderBy(f => f.RelPath, StringComparer.Ordinal).Chunk(Math.Max(1, FilesPerShard))).ToList();
+        // change to one location leaves the parts of the others as they are (and unchanged parts are not rewritten).
+        // Each part is serialized, compressed and encrypted on its own, in parallel.
         var written = new HashSet<string>(StringComparer.Ordinal);
-        for (int i = 0; i < shards.Count; i++)
+        if (FilesLoaded)
         {
-            var part = shards[i];
-            written.Add(WriteEncrypted($"files.{i:D3}.jsonl", ms => JsonStore.WriteLinesTo(ms, part)));
+            var shards = Files.GroupBy(f => f.Root, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal)
+                .SelectMany(g => g.OrderBy(f => f.RelPath, StringComparer.Ordinal).Chunk(Math.Max(1, FilesPerShard))).ToList();
+            var names = new string[shards.Count];
+            Parallel.For(0, shards.Count, i => names[i] = WriteEncrypted($"files.{i:D3}.jsonl", ms => JsonStore.WriteLinesTo(ms, shards[i])));
+            written.UnionWith(names);
+            written.Add(WriteEncrypted("files.jsonl", ms => ms.Write(TooOldMarker)));
         }
-        written.Add(WriteEncrypted("files.jsonl", ms => ms.Write(TooOldMarker)));
+        else written.UnionWith(StoredFilesIn(Dir).Where(n => ShardName.IsMatch(n) || n == UnsplitFiles));   // not read: kept as they are
         written.Add(WriteEncrypted("discs.jsonl", ms => JsonStore.WriteLinesTo(ms, Discs.OrderBy(d => d.Label, StringComparer.Ordinal))));
         written.Add(WriteEncrypted("blanks.jsonl", ms => JsonStore.WriteLinesTo(ms, Blanks.OrderBy(b => b.Id, StringComparer.Ordinal))));
         written.Add(WriteEncrypted("settings.json", ms => ms.Write(JsonStore.ObjectToBytes(Settings))));
         foreach (string stale in StoredFilesIn(Dir).Where(n => !written.Contains(n)))   // parts no longer needed
         {
             File.Delete(Path.Combine(Dir, stale));
-            plainHashes.Remove(stale);
+            lock (plainHashes) plainHashes.Remove(stale);
         }
         WriteIntegrity(Dir, Keys.Current, ++generation);
         Integrity = new IntegrityReport { State = IntegrityState.Ok };
@@ -306,20 +352,51 @@ public sealed class Catalog
     /// Serializes into memory and encrypts (compressed) straight into &lt;name&gt;.enc, via a temp file, then renamed -
     /// unless the file already holds exactly this, encrypted with the current key. Returns the stored name.
     /// </summary>
-    string WriteEncrypted(string name, Action<MemoryStream> write)
+    string WriteEncrypted(string name, Action<Stream> write)
     {
-        using var plain = new MemoryStream();
-        write(plain);
+        // 1. only hash what would be written: an unchanged file is neither kept in memory nor rewritten
         string stored = name + Suffix, path = Path.Combine(Dir, stored), tmp = path + ".tmp";
-        string hash = Convert.ToHexString(SHA256.HashData(plain.GetBuffer().AsSpan(0, (int)plain.Length)));
-        if (plainHashes.TryGetValue(stored, out var known) && known == hash && File.Exists(path) && FileCrypto.KeyIdOf(path) == Keys!.Current.KeyId)
+        string hash;
+        using (var hashing = new HashingSink()) { write(hashing); hash = hashing.Hex(); }
+        string? known;
+        lock (plainHashes) plainHashes.TryGetValue(stored, out known);
+        if (known == hash && File.Exists(path) && FileCrypto.KeyIdOf(path) == Keys!.Current.KeyId)
             return stored;
 
-        plain.Position = 0;
-        using (var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
-            FileCrypto.Encrypt(plain, output, Keys!.Current, KeyPurpose.Catalog, level: CompressionLevel);
+        // 2. serialize again, straight into the encryption through a pipe (never the whole file in memory)
+        var pipe = new System.IO.Pipelines.Pipe();
+        var producer = Task.Factory.StartNew(() =>   // its own thread: the saving threads wait on it
+        {
+            try
+            {
+                using (var s = pipe.Writer.AsStream(leaveOpen: true)) write(s);
+                pipe.Writer.Complete();
+            }
+            catch (Exception ex) { pipe.Writer.Complete(ex); throw; }
+        }, TaskCreationOptions.LongRunning);
+        string written;
+        try
+        {
+            using var input = pipe.Reader.AsStream(leaveOpen: true);
+            using var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
+            written = FileCrypto.Encrypt(input, output, Keys!.Current, KeyPurpose.Catalog, level: CompressionLevel);
+        }
+        catch
+        {
+            pipe.Reader.Complete();   // lets a producer waiting for room fail instead of waiting forever
+            try { producer.Wait(); } catch (AggregateException) { }
+            if (File.Exists(tmp)) File.Delete(tmp);
+            throw;
+        }
+        pipe.Reader.Complete();
+        producer.GetAwaiter().GetResult();
+        if (written != hash)
+        {
+            File.Delete(tmp);
+            throw new InvalidOperationException($"{stored}: the catalog changed while it was being written; nothing was replaced.");
+        }
         File.Move(tmp, path, overwrite: true);
-        plainHashes[stored] = hash;
+        lock (plainHashes) plainHashes[stored] = hash;
         return stored;
     }
 

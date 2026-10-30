@@ -6,6 +6,7 @@ public sealed class FoundCommand : ICommand
     public string Group => CommandGroup.Recovery;
     public string Summary => "A disc marked lost turned up";
     public string Usage => "found <label>";
+    public bool NeedsFilesFor(Options opt) => false;   // the disc's state only
     public string Details => "Puts a lost disc back to burned / staged. Check it with 'verify'.";
 
     public int Run(Ctx c)

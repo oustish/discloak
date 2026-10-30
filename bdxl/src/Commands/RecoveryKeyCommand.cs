@@ -6,6 +6,7 @@ public sealed class RecoveryKeyCommand : ICommand
     public string Group => CommandGroup.Catalog;
     public string Summary => "Create, replace or remove the catalog's recovery key";
     public string Usage => "recovery-key create | remove";
+    public bool NeedsFilesFor(Options opt) => false;   // bdxl.key only
     public string Details => """
         The recovery key is a second way to open the master key, for when the password is lost:
         'password change --recovery' sets a new password with it. It is 32 random bytes shown once as text; bdxl

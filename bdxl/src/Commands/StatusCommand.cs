@@ -31,7 +31,7 @@ public sealed class StatusCommand : ICommand
 
         Console.WriteLine($"Files still on source (not ignored): {onSource:N0}; current version burned: {safe:N0}");
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} files, {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
-        var tooFew = c.Arc.TooFewCopies();
+        var tooFew = c.Settings.AnyExtraCopies ? c.Arc.TooFewCopies() : [];   // with one copy wanted, "current version burned" says it all
         int wantMore = tooFew.Count(f => Archive.BurnedCopies(f, dead) > 0);   // the first copy is what 'current version burned' counts
         if (wantMore > 0)
             Console.WriteLine($"Copies: {wantMore:N0} burned file(s) have fewer burned copies than their location wants (see 'copies list').");
