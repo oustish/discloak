@@ -68,7 +68,7 @@ Their location's compression setting changed (or `--full` was given); their comp
 **How big should the reserve be?**
 Enough for the file system's fixed overhead (a few tens of MB on a 100 GB disc; the space each file takes in
 sectors and entries is counted by the plan itself), the disc's own files (manifest ~300 bytes per file)
-and, with `--with-catalog`, the catalog backup (~1.25× the catalog's `.enc` files; those take roughly 200 bytes per
+and, with `--with-catalog`, the catalog backup (~1.25× the catalog's `.enc` files; those take roughly 100-150 bytes per
 catalogued file). `stage` warns when it does not fit.
 
 **Which file system should I burn with?**

@@ -65,7 +65,7 @@ bdxl settings set mirror none   # works also while the mirror is not connected; 
 - A save that cannot reach the mirror (the drive was pulled during the command) still saves the catalog and then
   stops with an error; the next command asks for `catalog mirror sync`.
 - Every command reads the whole mirror once to check it, like the catalog itself. On a slow network share that
-  adds time per command (a catalog of 1 million files is roughly 200 MB).
+  adds time per command (a catalog of 1 million files is roughly 100-150 MB).
 - The mirror's location is kept in `mirror.json` in the catalog folder (plain JSON, `{"path": "F:\bdxl-mirror"}`),
   so that `password change` and a damaged catalog still know it.
 - The mirror complements catalog backups (`stage --with-catalog`, `catalog backup create`); it does not replace
