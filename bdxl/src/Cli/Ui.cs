@@ -38,8 +38,9 @@ public static class Ui
     }
 
     /// <summary>
-    /// A new password: from the environment variable named by --&lt;option&gt; (default defaultVar), or typed twice.
-    /// The password rules are enforced either way.
+    /// A new password: from the environment variable named by --&lt;option&gt; (default defaultVar), or typed twice -
+    /// the second time copied from wherever the user keeps it - and confirmed as saved. The password rules are
+    /// enforced either way.
     /// </summary>
     public static string NewPassword(Options opt, string option, string defaultVar = "BDXL_PASSWORD")
     {
@@ -48,10 +49,18 @@ public static class Ui
         {
             if (Console.IsInputRedirected)
                 throw new UserException($"A new password is needed: set the environment variable {envName}, or run this in an interactive terminal.");
+            Console.Error.WriteLine("""
+                Without this password (or a recovery key) nothing can be decrypted. Best: create it in your password
+                manager and SAVE the entry first, then paste it here - and paste the repetition back FROM the saved entry,
+                so what you keep is exactly what bdxl uses. (Characters are not shown while typing or pasting.)
+                """);
             password = ReadSecret("New password: ");
             if (!PasswordPolicy.Check(password, out string why1)) throw new UserException(why1);
-            if (ReadSecret("Repeat the password: ") != password) throw new UserException("The two passwords differ.");
-            Console.Error.WriteLine("Without this password (or a recovery key) nothing can be decrypted - store it safely.");
+            if (ReadSecret("Repeat it, copied from where you saved it (not from memory): ") != password)
+                throw new UserException("The two passwords differ; nothing was changed. If the second one came from your " +
+                                        "password manager, the saved entry is not the password you typed first.");
+            if (!Confirm(opt, $"Is exactly this password ({password.Length} characters) saved where you will look for it later?"))
+                throw new UserException("Nothing was changed. Save the password first, then run this again.");
             return password;
         }
         if (!PasswordPolicy.Check(password, out string why2)) throw new UserException($"The password in {envName}: {why2}");

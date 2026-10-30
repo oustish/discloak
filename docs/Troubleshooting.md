@@ -20,7 +20,8 @@
 | `No catalog in … Create one with: bdxl init` | Wrong folder? Pass `--catalog <dir>`. Otherwise `bdxl init`. |
 | `The catalog is encrypted: set the environment variable BDXL_PASSWORD, or run this in an interactive terminal.` | The command runs with redirected input (a script, a pipe). Set `BDXL_PASSWORD`, `bdxl unlock` first, or run it in a terminal. |
 | `The password in BDXL_PASSWORD does not open the catalog …` | The variable holds an old or wrong password. |
-| `Wrong password (3 attempts).` | See [Forgotten password](Guide-Disaster-Recovery.md#forgotten-password). |
+| `Wrong password (3 attempts).` | `bdxl password check` tells when the password was set, to find the right entry; see [Forgotten password](Guide-Disaster-Recovery.md#forgotten-password). |
+| `The two passwords differ; nothing was changed.` | During `password change` / `init`: the copy in your password manager is not what you typed first. Fix the entry, run again. |
 | `Confirmation needed but input is redirected; add --yes.` | Add `--yes` in scripts. |
 | `The catalog in … failed its integrity check, so no work is done` (exit 4) | [The catalog is damaged](Guide-Disaster-Recovery.md#the-catalog-is-damaged-or-fails-its-check). |
 | `No blank discs are registered.` | `bdxl blanks add …` |

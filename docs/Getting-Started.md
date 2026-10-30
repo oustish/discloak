@@ -38,7 +38,9 @@ either always run bdxl from the folder above it or always pass `--catalog D:\bdx
 bdxl init --recovery-key
 ```
 
-1. Type a new password twice. It needs at least 12 characters and 3 of: lowercase, uppercase, digits, special characters.
+1. Create the password in your password manager and save the entry first. Paste it, then paste it again **from the
+   saved entry** and confirm it is saved (see [Changing the password](Guide-Security.md#changing-the-password)).
+   It needs at least 12 characters and 3 of: lowercase, uppercase, digits, special characters.
 2. bdxl measures how much key derivation your computer does in about 2 seconds (Argon2id) and uses that.
 3. **The recovery key is shown once.** Write it down or print it and keep it away from the computer. It replaces a
    lost password (see [Security](Guide-Security.md)). You can also add one later with `bdxl recovery-key create`.

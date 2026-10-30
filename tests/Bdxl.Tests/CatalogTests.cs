@@ -265,6 +265,38 @@ public class CatalogTests : IDisposable
     }
 
     [Fact]
+    public void Password_check_tells_which_password_opens_the_catalog_and_an_older_key_file()
+    {
+        Run("scan", c => c.Files.Add(File("a.txt")));
+        string disc = tmp.File("disc");   // a disc staged before the change keeps the old bdxl.key
+        Directory.CreateDirectory(disc);
+        System.IO.File.Copy(KeyFile.PathIn(Dir), KeyFile.PathIn(disc));
+
+        Environment.SetEnvironmentVariable("BDXL_TEST_NEW_PW", "Brand-New-Pass-99#");
+        Assert.Equal(0, Bdxl("password", "change", "--new-password-env", "BDXL_TEST_NEW_PW"));
+        string before = System.IO.File.ReadAllText(KeyFile.PathIn(Dir));
+
+        string Check(params string[] args)
+        {
+            var output = new StringWriter();
+            var stdout = Console.Out;
+            Console.SetOut(output);
+            try { Bdxl(args); }
+            finally { Console.SetOut(stdout); }
+            return output.ToString();
+        }
+        Assert.Contains("YES: it opens", Check("password", "check", "--password-env", "BDXL_TEST_NEW_PW"));
+        Assert.Contains("NO: this password does not open", Check("password", "check"));                    // the old one
+        Assert.Contains("YES: it opens", Check("password", "check", disc));                                  // ... still opens the disc
+        Assert.Contains("NO:", Check("password", "check", disc, "--password-env", "BDXL_TEST_NEW_PW"));
+        Assert.Equal(1, Bdxl("password", "check"));
+        Assert.Equal(0, Bdxl("password", "check", "--password-env", "BDXL_TEST_NEW_PW"));
+        Assert.Equal(1, Bdxl("password", "check", "--recovery"));                                            // has no recovery key
+        Assert.Equal(1, Bdxl("password", "check", tmp.File("nowhere")));
+        Assert.Equal(before, System.IO.File.ReadAllText(KeyFile.PathIn(Dir)));                               // nothing changed
+    }
+
+    [Fact]
     public void A_backup_restores_into_an_empty_folder_and_into_its_own_catalog_but_not_another()
     {
         Run("scan", c => c.Files.Add(File("a.txt")));

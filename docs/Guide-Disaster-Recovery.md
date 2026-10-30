@@ -88,11 +88,14 @@ Every encrypted disc carries the catalog's key file (`bdxl.key`) of the day it w
 
 ## Forgotten password
 
+- **First, find out which password you have:** `bdxl password check` tries one password without changing anything
+  and says when the catalog's password was set, so you can look for the entry (or entry history) of that date.
+  `bdxl password check <disc>` does the same for a disc. See [Checking a password](Guide-Security.md#checking-a-password).
 - **With the recovery key:**
   ```
   bdxl password change --recovery
   ```
-  Type (or set `BDXL_RECOVERY_KEY` to) the recovery key, then a new password twice.
+  Type (or set `BDXL_RECOVERY_KEY` to) the recovery key, then a new password (pasted twice from your password manager, then confirmed).
 - **Without the recovery key, but you remember an older password:** discs staged while that password was valid still
   open with it. `bdxl init --key-from <such a disc> --catalog D:\recovered` starts a catalog that reads them.
 - **Neither:** the data cannot be decrypted. That is the point of the encryption.

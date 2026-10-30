@@ -264,12 +264,14 @@ bdxl catalog backup restore <dir> [--force] [--recovery]
 ### password
 ```
 bdxl password change [--rotate-key] [--recovery] [--new-password-env VAR] [--kdf-memory <size>] [--kdf-passes N]
+bdxl password check [<folder>] [--recovery]
 ```
 | Option | |
 |---|---|
 | `--rotate-key` | also start a new master key (older keys kept in the key ring; recovery key replaced) |
-| `--recovery` | unlock with the recovery key (`BDXL_RECOVERY_KEY` or typed) instead of the password |
-| `--new-password-env VAR` | the new password from this variable (default `BDXL_NEW_PASSWORD`, else typed twice) |
+| `--recovery` | `change`: unlock with the recovery key (`BDXL_RECOVERY_KEY` or typed) instead of the password; `check`: check the recovery key |
+| `--new-password-env VAR` | the new password from this variable (default `BDXL_NEW_PASSWORD`); else typed twice, the second time copied from where you saved it, then confirmed |
+| `check [<folder>]` | does this password open the `bdxl.key` of the catalog or of `<folder>` (a disc, a backup)? Shows when that password was set. Exit 0 = yes, 1 = no. Changes nothing, never uses the agent |
 
 ### recovery-key
 ```

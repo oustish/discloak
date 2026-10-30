@@ -16,7 +16,7 @@
   `scan` prints every file as soon as it is hashed (progress by bytes, speed, time left), with a status line rewritten in place while large files are hashed.
 - **Encrypted catalog (phase 1 of `ENCRYPTION.md`, the agreed design):** the catalog is encrypted with a random master
   key that `bdxl.key` holds wrapped by the password (Argon2id) and optionally a recovery key; `init`, migration of
-  plaintext catalogs, `password change`, `recovery-key`, `catalog export/import`, password-free catalog backups.
+  plaintext catalogs, `password change`, `password check` (one password against any bdxl.key, no agent), `recovery-key`, `catalog export/import`, password-free catalog backups.
   `unlock` hands the master key to a background agent (memory only, idle/max timeouts, Win+L/sleep), `lock` takes it back.
   Encrypted discs use the same master key and carry `bdxl.key` + `README.txt` (phase 2); `init --key-from <disc>`.
   Every staged disc is encrypted (phase 3); plain discs only come from `scandisc` (older discs) and are still
@@ -26,7 +26,7 @@
 ## Build / run
 ```
 dotnet build -c Release
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 193 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 194 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -41,7 +41,7 @@ Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; 
 | `src/Cli/Options.cs` | Arg parser. `Flags` set = options without a value (add new boolean options there!) |
 | `src/Cli/ICommand.cs` | `ICommand`: `Name`, `Group` (a `CommandGroup` constant), `Summary`, `Usage`, `Details` (help text), `AllowBrokenCatalog` / `NeedsCatalog` (default false / true), `Run(Ctx)` |
 | `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
-| `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing) |
+| `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing); a new password: typed, then copied back from the password manager, then confirmed as saved |
 | `src/Cli/Interrupt.cs` | Ctrl+C: `Interruptible` commands get `Interrupt.Requested` and stop cleanly; others (or a 2nd Ctrl+C) exit at once with a note. `Catalog.Save` runs inside `Interrupt.Critical()`, so a save is never cut off |
 | `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `AppendSession`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `DiscFile`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |

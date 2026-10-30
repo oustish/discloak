@@ -60,11 +60,37 @@ bdxl password change
 ```
 
 1. Type the current password (or it comes from `BDXL_PASSWORD` / the agent).
-2. Type the new one twice (or set `BDXL_NEW_PASSWORD` / `--new-password-env VAR`).
-3. Done. Nothing but `bdxl.key` changed; the catalog stays unlocked if it was.
+2. **Create the new password in your password manager and save the entry first.** Paste it at `New password:`.
+3. At `Repeat it, copied from where you saved it`, copy it again **from the saved entry**, not from memory or from
+   the clipboard you still have. If the entry was saved wrong (an old value, a typo, an unsaved database), the two
+   differ and nothing is changed.
+4. Answer `y` to "Is exactly this password (N characters) saved …?". The length helps to compare with the entry.
+5. Done. Nothing but `bdxl.key` changed; the catalog stays unlocked if it was.
+
+With `BDXL_NEW_PASSWORD` / `--new-password-env VAR` (scripts) there are no prompts: check the stored copy afterwards
+with `bdxl password check` (below).
 
 Discs burned before keep opening with the old password. That is expected for write-once media; to make sure an old
-password that leaked cannot open anything *new*, rotate the key (below).
+password that leaked cannot open anything *new*, rotate the key (below). Keep the old password (KeePass keeps it
+in the entry's history) for as long as you have discs made before the change.
+
+## Checking a password
+
+Not sure which password is the right one (for the catalog, or for an older disc)? Check it; nothing is changed and
+the agent is not used, so the password itself is tested:
+
+```
+bdxl password check              # the catalog's bdxl.key
+bdxl password check G:\          # a disc (its bdxl.key is the one from the day it was staged)
+bdxl password check E:\bk\catalog-2026-10-30    # a catalog backup
+bdxl password check --recovery   # the recovery key instead
+```
+
+It answers `YES: it opens …` (exit code 0) or `NO: this password does not open …` (exit code 1), and tells when that
+`bdxl.key`'s password was set, e.g. `its password was set 2026-10-29 21:14`. With that date, look for the password
+manager entry, or the version of the entry in its history, that was current then.
+
+Good habit: after every password change, run `bdxl password check` once with the password pasted from the manager.
 
 ## The recovery key
 
@@ -83,7 +109,7 @@ set BDXL_RECOVERY_KEY=7F9YQ-9HNGB-YPQSA-...          (or leave it out and type i
 bdxl password change --recovery
 ```
 
-Type the new password twice. The catalog opens with it again, and through the catalog every disc. A disc on its
+Enter the new password as described in [Changing the password](#changing-the-password). The catalog opens with it again, and through the catalog every disc. A disc on its
 own (without the catalog) opens with the password it was staged with, or with the recovery key if the disc was
 staged after the recovery key was made.
 
