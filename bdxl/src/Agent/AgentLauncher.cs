@@ -8,6 +8,7 @@ namespace Bdxl;
 /// Starts the agent: the program files are copied to %LOCALAPPDATA%\bdxl\agent\&lt;build&gt;\ first (so a rebuild or an
 /// update never meets a bdxl.exe locked by a running agent) and the agent is started from there, detached from the
 /// console and, where Windows allows it, outside the terminal's job (so closing the terminal does not end it).
+/// A single-file build (publish profile win-x64) is just bdxl.exe; a normal build also has its DLLs and runtimes\.
 /// </summary>
 public static class AgentLauncher
 {

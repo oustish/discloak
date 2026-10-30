@@ -6,15 +6,19 @@ This page takes you from nothing to a first verified, burned disc.
 
 ## 1. Build bdxl
 
-You need the .NET 10 SDK.
+You need the .NET 10 SDK to build, and the .NET 10 runtime (part of the SDK) to run.
 
 ```
 cd <repository>\bdxl
-dotnet build -c Release
+dotnet publish -p:PublishProfile=win-x64
 ```
 
-The program is `bdxl\bin\Release\net10.0\bdxl.exe`. Either add that folder to your `PATH`, or copy the whole folder
-somewhere and add that. The examples on these pages just write `bdxl`.
+The program is a single file, `<repository>\publish\bdxl.exe` (about 1.7 MB; libsodium, used for the password's
+Argon2id, is inside it). Copy it anywhere you like, e.g. `C:\Tools\bdxl.exe`, and add that folder to your `PATH`.
+The examples on these pages just write `bdxl`.
+
+(`dotnet build -c Release` also works; then the program is `bdxl\bin\Release\net10.0\bdxl.exe` together with the
+DLLs and the `runtimes` folder next to it, which have to stay together.)
 
 Check it runs:
 

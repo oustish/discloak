@@ -26,6 +26,7 @@
 ## Build / run
 ```
 dotnet build -c Release
+dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
 dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 194 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details

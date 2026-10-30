@@ -129,5 +129,5 @@ Delete the plain folder afterwards.
 
 ## Updating bdxl
 
-Rebuild (`dotnet build -c Release`). Catalogs, discs and key files of older versions are read as they are. A running
+Publish again (`dotnet publish -p:PublishProfile=win-x64`) and copy the new `bdxl.exe` over the old one. Catalogs, discs and key files of older versions are read as they are. A running
 agent keeps working; if the new version talks to it differently, the next `unlock` replaces it (unlock again then).

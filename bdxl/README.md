@@ -8,7 +8,8 @@ everything.
 **Documentation:** [`../docs/Home.md`](../docs/Home.md) - getting started, step-by-step guides, command reference,
 formats, troubleshooting. Design: [`ENCRYPTION.md`](ENCRYPTION.md). Developer notes: [`HANDOFF.md`](HANDOFF.md).
 
-    dotnet build -c Release          (needs the .NET 10 SDK)
+    dotnet publish -p:PublishProfile=win-x64   one file: ../publish/bdxl.exe (needs the .NET 10 SDK; runs on the .NET 10 runtime)
+    dotnet build -c Release          (or a normal build: bin/Release/net10.0/, exe + DLLs)
     dotnet run -- help               list of commands
     dotnet run -- workflow           sample session
     dotnet run -- <command> --help   details for one command
