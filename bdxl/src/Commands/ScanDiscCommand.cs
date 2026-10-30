@@ -10,8 +10,9 @@ public sealed class ScanDiscCommand : ICommand
     public string Details => """
         Reads a mounted disc (or a folder laid out like one) and links its files to the catalog.
           --method manifest  trust the disc's manifest (fast; entries stay 'unverified' until 'verify'). An encrypted
-                             disc's manifest (manifest.jsonl.enc) needs its password: BDXL_PASSWORD, --password-env
-                             or typed. It is the only way to link the hidden file names of such a disc.
+                             disc's manifest (manifest.jsonl.enc) is read with the catalog's master key; it is the
+                             only way to link the hidden file names of such a disc. A disc of another catalog needs
+                             that catalog (or one made with 'init --key-from <disc>').
           --method hash      read and SHA-256 every file (slow, authoritative, finds files nobody listed)
           --method quick     no hashing: match path + size + time against the catalog
           --method auto      manifest if the disc has one, otherwise hash (default)
@@ -96,7 +97,6 @@ public sealed class ScanDiscCommand : ICommand
         var found = new List<DiscFile>();
         var problems = new List<string>();      // listed in the manifest but missing / different size, or unreadable
         var notListed = new List<string>();     // on the disc but not in the manifest
-        KeyCache? manifestKeys = null;          // the password that opened an encrypted manifest
 
         if (method == "hash")
         {
@@ -123,7 +123,7 @@ public sealed class ScanDiscCommand : ICommand
         {
             var diskByPath = onDisc.ToDictionary(x => x.Path, x => x, StringComparer.Ordinal);
             var listed = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var line in DiscFiles.ReadManifest(mount, c.Opt, out manifestKeys)!)
+            foreach (var line in DiscFiles.ReadManifest(mount, c.Key)!)
             {
                 listed.Add(line.Path);
                 if (!diskByPath.TryGetValue(line.Path, out var onThisDisc)) { problems.Add($"{line.Path}: listed in the manifest but not on the disc"); continue; }
@@ -170,7 +170,7 @@ public sealed class ScanDiscCommand : ICommand
                 if (logical.EndsWith(suffix, StringComparison.Ordinal)) logical = logical[..^suffix.Length];
             }
             var candidates = byPathIdx.TryGetValue(logical, out var known) ? known : [];
-            long fileSize = df.SplitLine?.FileSize ?? (df.Encrypted ? Math.Max(0, df.Size - 36) : df.Size);
+            long fileSize = df.SplitLine?.FileSize ?? (df.Encrypted ? FileCrypto.MaxPlainSize(df.Size) : df.Size);
 
             if (df.Sha256 == null)   // quick: nothing was hashed, so the catalog entry has to match on path, size and time
             {
@@ -237,7 +237,7 @@ public sealed class ScanDiscCommand : ICommand
         disc.FileCount = onDisc.Count;
         disc.UsedBytes = onDisc.Sum(x => x.Size);
         if (found.Any(x => x.Encrypted)) disc.Encrypted = true;
-        if (manifestKeys != null) disc.KeyCheck ??= FileCrypto.NewKeyCheck(manifestKeys);   // lets 'stage --append' recognise the password
+        if (disc.Encrypted) disc.KeyId ??= info?.KeyId ?? (found.Any(x => x.Encrypted) ? c.Key.KeyId : null);
         string? capText = c.Opt.Get("capacity");
         if (capText != null) disc.Capacity = SizeText.Parse(capText);
         decimal? cost = c.Opt.GetMoney("cost");
@@ -269,7 +269,7 @@ public sealed class ScanDiscCommand : ICommand
         if (existing == null) c.Cat.Discs.Add(disc);
         if (c.Opt.Has("write-disc-json"))
         {
-            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), null, null, out string why))
+            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), c.Key, c.Cat.Dir, out string why))
                 Console.WriteLine("\ndisc.json (and the manifest if it was missing) written onto the disc. If your burning software needs it, close the session/disc now.");
             else
                 Console.WriteLine($"\nCould not write disc.json: {why}. The label is recorded in the catalog only.");
@@ -284,6 +284,7 @@ public sealed class ScanDiscCommand : ICommand
     static bool IsDiscMeta(string rel) =>
         rel.Equals("disc.json", StringComparison.OrdinalIgnoreCase) || rel.Equals(DiscFiles.ManifestName, StringComparison.OrdinalIgnoreCase) ||
         rel.Equals(DiscFiles.EncryptedManifestName, StringComparison.OrdinalIgnoreCase) ||
+        rel.Equals(KeyFile.FileName, StringComparison.OrdinalIgnoreCase) || rel.Equals(DiscFiles.ReadmeName, StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("_catalog/", StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("System Volume Information/", StringComparison.OrdinalIgnoreCase) ||
         rel.StartsWith("$RECYCLE.BIN/", StringComparison.OrdinalIgnoreCase);

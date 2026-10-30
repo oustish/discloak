@@ -130,8 +130,13 @@ plaintext catalog is migrated after confirmation (same code as `init`).
 - Every disc gets `bdxl.key` (envelope current at staging), the catalog id and key id in `disc.json`, and a
   `README.txt` describing `bdxl.key` and `BDXLENC2` (Argon2id: RFC 9106; AES-256-GCM; HKDF: RFC 5869) so a
   decryptor can be written without bdxl.
-- `restore --mount` without a catalog unlocks with the disc's `bdxl.key` (password or recovery key);
-  `--key-from <disc>` takes the envelope from another (newer) disc.
+- A lost catalog: `init --key-from <disc>` creates a new catalog with the disc's `bdxl.key` (password of that
+  disc's day, or `--recovery`), so it has the same master key and catalog id and reads every disc of that catalog;
+  then `catalog backup restore` the newest `_catalog`, or `scandisc` each disc. (Decided while building phase 2
+  instead of a catalog-less `restore --mount`: every command keeps working on a catalog, and `scandisc`,
+  `verify --deep` and `restore` need nothing special.) A newer disc's `bdxl.key` holds the newer password.
+- A disc whose key id is not the catalog's is refused by `stage --append`, `restage`, `discjson`; `restore`
+  ignores its mount; `scandisc` explains how to read it (`init --key-from`).
 - `DiscRecord.KeyCheck`, `DiscPassword`, `KeyCache`, `BDXLENC1` are removed; a disc's key check is its key id.
 
 ## Compression (phase 4)
@@ -148,10 +153,10 @@ plaintext catalog is migrated after confirmation (same code as `init`).
 
 ## Phases
 
-1. Master key, `bdxl.key` (Argon2id), recovery key, `BDXLENC2`, encrypted catalog with HMAC integrity,
+1. (done) Master key, `bdxl.key` (Argon2id), recovery key, `BDXLENC2`, encrypted catalog with HMAC integrity,
    migration, `init`, `password change`, `recovery-key`, `catalog export/import`, encrypted catalog backups, the agent.
-2. Discs use the master key (stage, restage, restore, verify, scandisc, discjson, `_catalog`); `bdxl.key`, ids and
-   README on every disc; old per-disc scheme removed.
+2. (done) Discs use the master key (stage, restage, restore, verify, scandisc, discjson, `_catalog`); `bdxl.key`,
+   ids and README on every encrypted disc; `init --key-from`; old per-disc scheme removed.
 3. Encrypted only: plain staging removed.
 4. Compression per alias.
 5. Later, if wanted: key rotation (key ring inside the encrypted catalog, selected by key id).

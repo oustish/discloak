@@ -22,14 +22,20 @@ public static class CatalogSetup
     {
         var file = KeyFile.ReadFrom(dir) ?? throw new UserException($"No catalog in {dir}.");
         if (AgentProtocol.Enabled && new AgentClient().TryGetKey(file.CatalogId, file.KeyId) is { } fromAgent) return fromAgent;
+        return UnlockWithPassword(file, opt, $"the catalog in {dir}");
+    }
+
+    /// <summary>The master key of a key file from the password (environment, or typed: 3 attempts). what names it in messages.</summary>
+    public static MasterKey UnlockWithPassword(KeyFile file, Options opt, string what)
+    {
         string? fromEnv = Ui.PasswordFromEnvironment(opt, out string envName);
         if (fromEnv != null)
-            return file.TryUnlock(fromEnv) ?? throw new UserException($"The password in {envName} does not open the catalog in {dir}.");
+            return file.TryUnlock(fromEnv) ?? throw new UserException($"The password in {envName} does not open {what}.");
         if (Console.IsInputRedirected)
-            throw new UserException($"The catalog is encrypted: set the environment variable {envName}, or run this in an interactive terminal.");
+            throw new UserException($"{char.ToUpperInvariant(what[0])}{what[1..]} is encrypted: set the environment variable {envName}, or run this in an interactive terminal.");
         for (int attempt = 1; ; attempt++)
         {
-            var key = file.TryUnlock(Ui.ReadSecret("Catalog password: "));
+            var key = file.TryUnlock(Ui.ReadSecret("Password: "));
             if (key != null) return key;
             if (attempt == 3) throw new UserException("Wrong password (3 attempts).");
             Console.Error.WriteLine("Wrong password, try again.");
@@ -72,6 +78,28 @@ public static class CatalogSetup
         file.WriteTo(dir);
         Console.WriteLine($"Created an encrypted catalog in {dir}.");
         AfterCreate(recovery);
+        return key;
+    }
+
+    /// <summary>
+    /// A new, empty catalog in dir with the master key of an existing bdxl.key (from a disc, a catalog backup or
+    /// another catalog folder): it can read every disc made with that key. The password (or --recovery) is the one
+    /// that key file was written with.
+    /// </summary>
+    public static MasterKey CreateFromKeyFile(string dir, string source, Options opt)
+    {
+        string from = Path.GetFullPath(source);
+        var file = KeyFile.ReadFrom(from) ?? throw new UserException($"No {KeyFile.FileName} in {from}.");
+        var key = opt.Has("recovery") ? UnlockWithRecoveryKey(file) : UnlockWithPassword(file, opt, $"{KeyFile.FileName} in {from}");
+        Directory.CreateDirectory(dir);
+        Catalog.CreateEmpty(dir, "init", key).Save();
+        file.WriteTo(dir);
+        Console.WriteLine($"Created an encrypted catalog in {dir} with the key from {from} (catalog id {file.CatalogId}).");
+        Console.WriteLine("It is empty. Fill it from a catalog backup or from the discs:");
+        Console.WriteLine($"  bdxl catalog backup restore <disc>\\_catalog --force --catalog \"{dir}\"    (the newest backup you have)");
+        Console.WriteLine($"  bdxl scandisc <disc> --catalog \"{dir}\"                                    (each disc)");
+        if (file.Password?.CreatedUtc is { } changed)
+            Console.WriteLine($"Its password is the one of {changed:yyyy-MM-dd}; change it with 'password change' if you like.");
         return key;
     }
 

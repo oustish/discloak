@@ -57,31 +57,4 @@ public static class Ui
         if (!PasswordPolicy.Check(password, out string why2)) throw new UserException($"The password in {envName}: {why2}");
         return password;
     }
-
-    /// <summary>
-    /// Password from the environment variable named by --password-env (default BDXL_PASSWORD) if it is set,
-    /// otherwise typed in (hidden). For a NEW encryption the password rules are enforced and it is typed twice.
-    /// </summary>
-    public static string GetPassword(Options opt, bool forNewEncryption)
-    {
-        string envName = opt.GetOr("password-env", "BDXL_PASSWORD");
-        string? password = Environment.GetEnvironmentVariable(envName);
-
-        if (string.IsNullOrEmpty(password))
-        {
-            if (Console.IsInputRedirected)
-                throw new UserException($"A password is needed: set the environment variable {envName}, or run this in an interactive terminal.");
-            password = ReadSecret(forNewEncryption ? "New encryption password: " : "Password: ");
-            if (forNewEncryption)
-            {
-                if (!PasswordPolicy.Check(password, out string why1)) throw new UserException(why1);
-                if (ReadSecret("Repeat the password: ") != password) throw new UserException("The two passwords differ.");
-                Console.Error.WriteLine("There is no way to recover files if this password is lost - store it safely.");
-            }
-            return password;
-        }
-
-        if (forNewEncryption && !PasswordPolicy.Check(password, out string why2)) throw new UserException(why2);
-        return password;
-    }
 }

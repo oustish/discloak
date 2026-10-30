@@ -317,8 +317,7 @@ public sealed class CatalogCommand : ICommand
             if (backupKeyFile.Format != KeyFile.CurrentFormat) throw new UserException($"{KeyFile.FileName} in the backup is not one this version understands.");
             key = c.Opt.Has("recovery")
                 ? CatalogSetup.UnlockWithRecoveryKey(backupKeyFile)
-                : backupKeyFile.TryUnlock(Ui.GetPassword(c.Opt, forNewEncryption: false))
-                  ?? throw new UserException("That password does not open the backup's key file.");
+                : CatalogSetup.UnlockWithPassword(backupKeyFile, c.Opt, "the backup's key file");
         }
 
         // write to a side folder and check it there with the key, so a bad backup leaves the catalog as it was

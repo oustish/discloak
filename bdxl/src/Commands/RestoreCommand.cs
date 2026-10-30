@@ -10,7 +10,7 @@ public sealed class RestoreCommand : ICommand
     public string Details => """
         Finds the files in the catalog, tells you which discs it needs, and copies them from the discs you mounted.
         Discs are recognised by disc.json (or --disc for a single mount). Every file is verified by hash; encrypted
-        files are decrypted (password from BDXL_PASSWORD or typed). Layout: <destDir>/<alias>/<path>, or --flat.
+        files are decrypted with the catalog's master key. Layout: <destDir>/<alias>/<path>, or --flat.
         Ctrl+C stops after the file being copied (that one is removed; parts of split files already verified are
         kept) and lists what is left; running the same command again continues (restored files show as EXISTS).
         """;
@@ -29,8 +29,14 @@ public sealed class RestoreCommand : ICommand
         foreach (var mp in (c.Opt.Get("mount") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             string info = Path.Combine(mp, "disc.json");
-            string? lbl = File.Exists(info) ? JsonStore.ReadObject<DiscInfo>(info)?.Label : c.Opt.Get("disc");
+            var discInfo = File.Exists(info) ? DiscFiles.ReadInfo(mp) : null;
+            string? lbl = discInfo?.Label ?? c.Opt.Get("disc");
             if (lbl == null) { Console.WriteLine($"Ignoring {mp}: no disc.json there (for a single mount you can pass --disc <label>)."); continue; }
+            if (discInfo?.KeyId != null && !discInfo.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"Ignoring {mp}: {lbl} is encrypted with another key. " + DiscFiles.OtherCatalogHint(mp));
+                continue;
+            }
             mounts[lbl] = mp;
         }
 
@@ -58,14 +64,11 @@ public sealed class RestoreCommand : ICommand
 
         int done = 0, failed = 0, skipped = 0, waiting = 0, authFailures = 0;
         var needDiscs = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        KeyCache? keys = null;
-
         // copies (or decrypts) one stored file to dst; returns the plaintext hash
         string Fetch(BackupRef copy, string src, string dst)
         {
             if (!copy.Encrypted) return Hashing.CopyAndHash(src, dst, ct: Interrupt.Token);
-            keys ??= new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: false));
-            return FileCrypto.Decrypt(src, dst, keys, Interrupt.Token);
+            return FileCrypto.Decrypt(src, dst, c.Key, KeyPurpose.File, Interrupt.Token);
         }
 
         int handled = 0;
@@ -190,7 +193,7 @@ public sealed class RestoreCommand : ICommand
                 if (inProgress != null && File.Exists(inProgress)) File.Delete(inProgress);
                 Console.WriteLine($"FAILED   {rel}: {ex.Message}");
                 failed++;
-                if (++authFailures >= 3) { Console.WriteLine("Stopping after 3 decryption failures - check the password."); break; }
+                if (++authFailures >= 3) { Console.WriteLine("Stopping after 3 decryption failures."); break; }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

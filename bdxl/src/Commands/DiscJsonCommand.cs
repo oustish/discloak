@@ -8,8 +8,8 @@ public sealed class DiscJsonCommand : ICommand
     public string Usage => "discjson <label> <mountPath> [--overwrite]";
     public string Details => """
         For a disc already in the catalog. Fails with an explanation if the disc is finalized or read-only.
-        If the disc has no manifest, one is written too; for an encrypted disc it is encrypted (manifest.jsonl.enc),
-        so the password is needed (BDXL_PASSWORD, --password-env or typed); it is checked against the disc's password.
+        If the disc has no manifest, one is written too; for an encrypted disc it is encrypted (manifest.jsonl.enc)
+        with the catalog's master key, and bdxl.key and README.txt are added if they are missing.
         """;
 
     /// <summary>discjson &lt;label&gt; &lt;mountPath&gt;: writes disc.json (and the manifest if missing) onto a disc that can still be written to.</summary>
@@ -26,15 +26,12 @@ public sealed class DiscJsonCommand : ICommand
             .ToList();
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, new FileInfo(x.FullPath).Length, x.File)).ToList();
 
-        KeyCache? keys = null;
-        bool hadKeyCheck = disc.KeyCheck != null;
-        if (disc.Encrypted && manifest.Count > 0 && !DiscFiles.HasManifest(mount))   // the disc's own password, checked against its files
-            keys = DiscPassword.Get(c, disc, onDisc.Where(x => x.Copy.Encrypted).Select(x => x.FullPath), allowUnchecked: true);
+        if (disc.Encrypted && disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
+            throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
 
-        if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), keys, keys != null ? FileCrypto.NewSalt() : null, out string why))
+        if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), c.Key, c.Cat.Dir, out string why))
         {
             Console.WriteLine($"disc.json written for {disc.Label} ({manifest.Count:N0} file(s) found on the disc).");
-            if (!hadKeyCheck && disc.KeyCheck != null) c.Cat.Save();   // the password can be recognised from now on
             return 0;
         }
         Console.WriteLine($"Could not write disc.json: {why}.");

@@ -8,15 +8,12 @@ namespace Bdxl.Tests;
 public class AppendTests : IDisposable
 {
     const string PasswordVar = "BDXL_TEST_PASSWORD";
-    const string WrongVar = "BDXL_TEST_WRONG_PASSWORD";
-    const string NoVar = "BDXL_TEST_NO_PASSWORD";   // never set
     readonly TempDir tmp = new();
     public void Dispose() => tmp.Dispose();
 
     static AppendTests()
     {
         Environment.SetEnvironmentVariable(PasswordVar, "Correct-Horse-42!");
-        Environment.SetEnvironmentVariable(WrongVar, "Wrong-Horse-42!!");
     }
 
     int BdxlIn(string catalog, string passwordVar, params string[] args)
@@ -178,19 +175,15 @@ public class AppendTests : IDisposable
     }
 
     [Fact]
-    public void An_encrypted_disc_gets_an_encrypted_session_with_the_same_password()
+    public void An_encrypted_disc_gets_an_encrypted_session_with_the_same_master_key()
     {
         tmp.RandomFile("src/tax-secret-2024.pdf", 50_000, seed: 1);
         tmp.RandomFile("src/notes/diary.txt", 3_000, seed: 2);
         FirstDisc("300KB", "--encrypt", "--with-catalog");
-        Assert.NotNull(Disc1.KeyCheck);
+        Assert.Equal(TestKeys.Key(tmp.File("cat")).KeyId, Disc1.KeyId);
 
         var added = tmp.RandomFile("src/notes/new-secret.txt", 4_000, seed: 3);
         Scan();
-        Assert.Equal(1, BdxlIn("cat", WrongVar, "stage", tmp.File("stg"), "--append", "BDXL-0001"));
-        Assert.Equal(1, BdxlIn("cat", NoVar, "stage", tmp.File("stg"), "--append", "BDXL-0001"));
-        Assert.False(Directory.Exists(Session2));
-
         Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001", "--with-catalog"));
         var files = FilesIn(Session2);
         Assert.Contains("data/000/000003.enc", files);                                    // numbering goes on
@@ -206,29 +199,31 @@ public class AppendTests : IDisposable
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", DiscDir, "--deep"));
         Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
 
+        // the catalog is lost: a new one with the disc's own key reads it
+        Assert.Equal(0, Program.Main(["init", "--key-from", DiscDir, "--catalog", tmp.File("other")]));
         Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", DiscDir));             // the session's manifest covers the whole disc
         Assert.Equal(3, Cat("other").Files.Count);
-        Assert.NotNull(Cat("other").Discs.Single().KeyCheck);
+        Assert.Equal(Disc1.KeyId, Cat("other").Discs.Single().KeyId);
         Assert.Equal(0, BdxlIn("other", PasswordVar, "restore", tmp.File("out"), "*", "--mount", DiscDir));
         Assert.Equal(added, File.ReadAllBytes(tmp.File("out/S/notes/new-secret.txt")));
     }
 
     [Fact]
-    public void Without_a_password_check_value_the_password_is_checked_against_the_disc()
+    public void A_disc_encrypted_with_another_key_gets_no_session()
     {
         tmp.RandomFile("src/a.bin", 50_000);
         FirstDisc("300KB", "--encrypt");
-        var cat = Cat();
-        cat.Discs.Single().KeyCheck = null;   // as for a disc imported without its manifest
-        cat.Save();
-
         tmp.RandomFile("src/b.bin", 5_000, seed: 2);
         Scan();
-        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));                        // nothing to check against
-        Assert.Equal(1, BdxlIn("cat", WrongVar, "stage", tmp.File("stg"), "--append", "BDXL-0001", "--mount", DiscDir));
-        Assert.Null(Disc1.KeyCheck);
 
-        Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001", "--mount", DiscDir));
-        Assert.NotNull(Disc1.KeyCheck);
+        var info = JsonStore.ReadObject<DiscInfo>(Path.Combine(DiscDir, DiscFiles.InfoName))!;
+        JsonStore.WriteObject(Path.Combine(DiscDir, DiscFiles.InfoName), info with { KeyId = "0000000000000000" });
+        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001", "--mount", DiscDir));   // the disc in the drive says so
+
+        var cat = Cat();
+        cat.Discs.Single().KeyId = "0000000000000000";                                                    // or the catalog does
+        cat.Save();
+        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));
+        Assert.False(Directory.Exists(Session2));
     }
 }

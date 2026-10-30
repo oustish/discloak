@@ -35,7 +35,7 @@ public sealed class WorkflowCommand : ICommand
                  bdxl plan
                It tells you when the data does not fit on the blank discs you registered.
 
-            4. Prepare a disc folder (add --encrypt to encrypt every file with a password)
+            4. Prepare a disc folder (add --encrypt to encrypt every file with the catalog's key)
                  bdxl stage E:\Staging --max-discs 1 --min-fill 0.9 --with-catalog
                Burn the folder E:\Staging\BDXL-0001 with your burning software (UDF 2.50 file system).
 
@@ -50,7 +50,7 @@ public sealed class WorkflowCommand : ICommand
 
             6. Day-to-day
                  bdxl status        bdxl find holiday        bdxl discs
-                 bdxl restore D:\Recovered "holiday" --mount G:\       copy files back (asks for the password if encrypted)
+                 bdxl restore D:\Recovered "holiday" --mount G:\       copy files back (encrypted ones are decrypted)
 
             7. When things go wrong
                  bdxl lost BDXL-0003 --reason "left on the train"     its files become pending again
@@ -59,6 +59,9 @@ public sealed class WorkflowCommand : ICommand
                  bdxl catalog history   /   bdxl catalog rollback <id>   older catalog versions (one per command)
                  bdxl catalog backup create F:\safe                    catalog copy with repair data
                  bdxl catalog backup verify F:\safe\catalog-... --repair
+                 bdxl catalog export F:\plain   /   catalog import F:\plain     read or fix the catalog as plain JSON
+                 bdxl password change                                  new password (--recovery if it was lost)
+                 bdxl init --key-from G:\ --catalog D:\new-catalog      catalog lost: start again with an encrypted disc's key
 
             8. Discs you already have
                  bdxl scandisc G:\ --label OLD-2019-01 --method hash --cost 30 --write-disc-json

@@ -18,7 +18,7 @@ public class DiscRecord
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Encrypted { get; set; }            // files on this disc were encrypted when staged
 
-    public string? KeyCheck { get; set; }          // recognises the disc's password (encrypted discs; see FileCrypto.NewKeyCheck)
+    public string? KeyId { get; set; }             // encrypted discs: id of the master key their files are encrypted with
 
     public int Sessions { get; set; } = 1;         // sessions burned (or staged) onto the disc: 'stage --append' adds one
     public long OccupiedBytes { get; set; }        // space all sessions take: files + per session max(reserve, metadata)

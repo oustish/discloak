@@ -1,8 +1,9 @@
 namespace Bdxl.Tests;
 
 /// <summary>
-/// Discs staged with --encrypt: hidden file names, encrypted manifest and encrypted catalog backup. Nothing but
-/// disc.json (label, count, size) may be readable without the password.
+/// Discs staged with --encrypt: files, manifest and catalog backup encrypted with the catalog's master key, hidden
+/// file names. Readable without the password: disc.json (label, count, size, key id), bdxl.key (the wrapped master
+/// key) and README.txt (the formats).
 /// </summary>
 public class EncryptedDiscTests : IDisposable
 {
@@ -14,13 +15,14 @@ public class EncryptedDiscTests : IDisposable
 
     static EncryptedDiscTests()
     {
-        Environment.SetEnvironmentVariable(PasswordVar, "Correct-Horse-42!");
+        Environment.SetEnvironmentVariable(PasswordVar, TestKeys.Password);
         Environment.SetEnvironmentVariable(WrongVar, "Wrong-Horse-42!!");
     }
 
     int BdxlIn(string catalog, string passwordVar, params string[] args)
     {
-        if (!(args.Length > 1 && args[0] == "catalog" && args[1] == "backup")) TestKeys.Init(tmp.File(catalog));   // a backup restores into an empty folder
+        if (!(args.Length > 1 && args[0] == "catalog" && args[1] == "backup") && args[0] != "init")
+            TestKeys.Init(tmp.File(catalog));   // a backup restores into, and init makes, an empty folder
         return Program.Main([.. args, "--catalog", tmp.File(catalog), "--password-env", passwordVar, "--yes"]);
     }
 
@@ -35,7 +37,7 @@ public class EncryptedDiscTests : IDisposable
     {
         secret = tmp.RandomFile("src/tax-secret-2024.pdf", 50_000, seed: 1);
         diary = tmp.RandomFile("src/notes/diary.txt", 3_000, seed: 2);
-        Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "1MB", "--reserve", "300KB"));
+        Assert.Equal(0, Bdxl("blanks", "add", "2", "--size", "1MB", "--reserve", "300KB"));
         Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "PrivateDocs"));
         Assert.Equal(0, withCatalog ? Bdxl("stage", tmp.File("stg"), "--encrypt", "--with-catalog") : Bdxl("stage", tmp.File("stg"), "--encrypt"));
     }
@@ -59,7 +61,15 @@ public class EncryptedDiscTests : IDisposable
         Assert.DoesNotContain("manifest.jsonl", relPaths);
         Assert.Contains("_catalog/files.jsonl.enc", relPaths);
         Assert.DoesNotContain("_catalog/files.jsonl", relPaths);
-        Assert.Contains("\"encrypted\": true", File.ReadAllText(Path.Combine(Disc, "disc.json")));
+
+        // what the disc needs to be read on its own: its key file (the catalog's) and a description of the formats
+        Assert.Equal(File.ReadAllText(KeyFile.PathIn(tmp.File("cat"))), File.ReadAllText(KeyFile.PathIn(Disc)));
+        Assert.Contains("BDXLENC2", File.ReadAllText(Path.Combine(Disc, DiscFiles.ReadmeName)));
+        var info = JsonStore.ReadObject<DiscInfo>(Path.Combine(Disc, DiscFiles.InfoName))!;
+        Assert.True(info.Encrypted);
+        Assert.Equal(KeyFile.ReadFrom(Disc)!.KeyId, info.KeyId);
+        Assert.Equal(KeyFile.ReadFrom(Disc)!.CatalogId, info.CatalogId);
+        Assert.All(relPaths.Where(p => p.StartsWith("data/")), p => Assert.Equal(info.KeyId, FileCrypto.KeyIdOf(Path.Combine(Disc, p))));
 
         // and it still works: verify (with and without decrypting) and restore by the real names
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", Disc));
@@ -70,23 +80,56 @@ public class EncryptedDiscTests : IDisposable
     }
 
     [Fact]
-    public void Scandisc_rebuilds_a_lost_catalog_from_the_encrypted_manifest()
+    public void A_lost_catalog_is_rebuilt_from_the_disc_with_its_own_key()
     {
         StageEncrypted(withCatalog: false);
 
-        Assert.Equal(1, BdxlIn("other", WrongVar, "scandisc", Disc));
-        Assert.Empty(TestKeys.Load(tmp.File("other")).Discs);         // nothing recorded with a wrong password
-        Assert.Equal(1, BdxlIn("other", NoVar, "scandisc", Disc));
+        // a catalog with another master key cannot read the disc, and says what to do
+        Assert.Equal(1, BdxlIn("stranger", PasswordVar, "scandisc", Disc));
+        Assert.Empty(TestKeys.Load(tmp.File("stranger")).Discs);
+
+        // a new catalog from the disc's bdxl.key: only with the right password
+        Assert.Equal(1, BdxlIn("other", WrongVar, "init", "--key-from", Disc));
+        Assert.Equal(1, BdxlIn("other", NoVar, "init", "--key-from", Disc));
+        Assert.False(File.Exists(KeyFile.PathIn(tmp.File("other"))));
+        Assert.Equal(0, BdxlIn("other", PasswordVar, "init", "--key-from", Disc));
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", Disc));
         var cat = TestKeys.Load(tmp.File("other"));
         var rec = Assert.Single(cat.Files, f => f.RelPath == "tax-secret-2024.pdf");
         Assert.Equal("PrivateDocs", rec.RootName);
         Assert.Equal("data/000/000001.enc", Assert.Single(rec.Backups).DiscPath);
+        Assert.Equal(info().KeyId, cat.Discs.Single().KeyId);
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "restore", tmp.File("out"), "*", "--mount", Disc));
         Assert.Equal(secret, File.ReadAllBytes(tmp.File("out/PrivateDocs/tax-secret-2024.pdf")));
         Assert.Equal(diary, File.ReadAllBytes(tmp.File("out/PrivateDocs/notes/diary.txt")));
+
+        DiscInfo info() => JsonStore.ReadObject<DiscInfo>(Path.Combine(Disc, DiscFiles.InfoName))!;
+    }
+
+    [Fact]
+    public void After_a_password_change_old_discs_open_with_the_old_password_and_new_discs_with_the_new_one()
+    {
+        StageEncrypted(withCatalog: false);
+        Environment.SetEnvironmentVariable("BDXL_TEST_NEW_PW", "Brand-New-Pass-99#");
+        Assert.Equal(0, Bdxl("password", "change", "--new-password-env", "BDXL_TEST_NEW_PW", "--kdf-memory", "8MiB", "--kdf-passes", "1"));
+
+        tmp.RandomFile("src/later.txt", 2_000, seed: 9);
+        Assert.Equal(0, BdxlIn("cat", "BDXL_TEST_NEW_PW", "scan", tmp.File("src"), "--name", "PrivateDocs"));
+        Assert.Equal(0, BdxlIn("cat", "BDXL_TEST_NEW_PW", "stage", tmp.File("stg"), "--encrypt"));
+        string disc2 = tmp.File(Path.Combine("stg", "BDXL-0002"));
+
+        Assert.NotNull(KeyFile.ReadFrom(Disc)!.TryUnlock(TestKeys.Password));          // burned before the change
+        Assert.Null(KeyFile.ReadFrom(Disc)!.TryUnlock("Brand-New-Pass-99#"));
+        Assert.NotNull(KeyFile.ReadFrom(disc2)!.TryUnlock("Brand-New-Pass-99#"));       // staged after it
+        Assert.Null(KeyFile.ReadFrom(disc2)!.TryUnlock(TestKeys.Password));
+
+        // either way it is one master key: a catalog made from the old disc reads the new one
+        Assert.Equal(0, BdxlIn("other", PasswordVar, "init", "--key-from", Disc));
+        Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", disc2));
+        Assert.Equal(0, BdxlIn("other", PasswordVar, "restore", tmp.File("out"), "later.txt", "--mount", disc2));
+        Assert.True(File.Exists(tmp.File("out/PrivateDocs/later.txt")));
     }
 
     [Fact]
@@ -105,7 +148,7 @@ public class EncryptedDiscTests : IDisposable
 
         Assert.Equal(1, BdxlIn("other", NoVar, "catalog", "backup", "restore", backup));
         Assert.Equal(1, BdxlIn("other", WrongVar, "catalog", "backup", "restore", backup));
-        Assert.False(File.Exists(Path.Combine(tmp.File("other"), "files.jsonl.enc")));                  // nothing half-restored
+        Assert.False(File.Exists(Path.Combine(tmp.File("other"), "files.jsonl.enc")));              // nothing half-restored
 
         Assert.Equal(0, BdxlIn("other", PasswordVar, "catalog", "backup", "restore", backup));
         var cat = TestKeys.Load(tmp.File("other"));
@@ -114,12 +157,12 @@ public class EncryptedDiscTests : IDisposable
     }
 
     [Fact]
-    public void A_standalone_backup_can_be_encrypted()
+    public void A_standalone_backup_is_encrypted()
     {
         tmp.RandomFile("src/tax-secret-2024.pdf", 1000);
         Bdxl("scan", tmp.File("src"), "--name", "PrivateDocs");
 
-        Assert.Equal(0, Bdxl("catalog", "backup", "create", tmp.File("bk"), "--encrypt"));
+        Assert.Equal(0, Bdxl("catalog", "backup", "create", tmp.File("bk")));
         string backup = Assert.Single(Directory.GetDirectories(tmp.File("bk")));
         Assert.True(File.Exists(Path.Combine(backup, "files.jsonl.enc")));
         Assert.False(File.Exists(Path.Combine(backup, "files.jsonl")));
@@ -135,42 +178,55 @@ public class EncryptedDiscTests : IDisposable
         StageEncrypted(withCatalog: false);
         Bdxl("burned", "BDXL-0001");
         Assert.Equal(0, Bdxl("lost", "BDXL-0001"));
-        Assert.Equal(1, BdxlIn("cat", NoVar, "restage", "BDXL-0001", tmp.File("re")));   // the manifest needs the password
 
         Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re")));
         string rebuilt = Path.Combine(tmp.File("re"), "BDXL-0001");
         Assert.True(File.Exists(Path.Combine(rebuilt, "data", "000", "000001.enc")));
         Assert.True(File.Exists(Path.Combine(rebuilt, "manifest.jsonl.enc")));
+        Assert.True(File.Exists(KeyFile.PathIn(rebuilt)));
+        Assert.True(File.Exists(Path.Combine(rebuilt, DiscFiles.ReadmeName)));
         Assert.False(File.Exists(Path.Combine(rebuilt, "manifest.jsonl")));
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", rebuilt, "--deep"));
     }
 
     [Fact]
-    public void Restage_and_discjson_refuse_a_different_password()
+    public void Restage_discjson_and_restore_refuse_a_disc_of_another_key()
     {
         StageEncrypted(withCatalog: false);
         Bdxl("burned", "BDXL-0001");
+        var cat = TestKeys.Load(tmp.File("cat"));
+        cat.Discs.Single().KeyId = "0000000000000000";   // as if it had been made with another master key
+        cat.Save();
+
         File.Delete(Path.Combine(Disc, "manifest.jsonl.enc"));
-        Assert.Equal(1, BdxlIn("cat", WrongVar, "discjson", "BDXL-0001", Disc, "--overwrite"));
+        Assert.Equal(1, Bdxl("discjson", "BDXL-0001", Disc, "--overwrite"));
         Assert.False(File.Exists(Path.Combine(Disc, "manifest.jsonl.enc")));
 
         Assert.Equal(0, Bdxl("lost", "BDXL-0001"));
-        Assert.Equal(1, BdxlIn("cat", WrongVar, "restage", "BDXL-0001", tmp.File("re")));
+        Assert.Equal(1, Bdxl("restage", "BDXL-0001", tmp.File("re")));
         Assert.False(Directory.Exists(Path.Combine(tmp.File("re"), "BDXL-0001")));
         Assert.Equal("lost", TestKeys.Load(tmp.File("cat")).Discs.Single().State);
+
+        var info = JsonStore.ReadObject<DiscInfo>(Path.Combine(Disc, DiscFiles.InfoName))!;
+        JsonStore.WriteObject(Path.Combine(Disc, DiscFiles.InfoName), info with { KeyId = "0000000000000000" });
+        Assert.Equal(0, Bdxl("found", "BDXL-0001"));
+        Assert.NotEqual(0, Bdxl("restore", tmp.File("out"), "*", "--mount", Disc));       // the mount is ignored: another key
+        Assert.False(File.Exists(tmp.File("out/PrivateDocs/notes/diary.txt")));
     }
 
     [Fact]
-    public void Discjson_puts_back_an_encrypted_manifest()
+    public void Discjson_puts_back_an_encrypted_manifest_and_the_key_file()
     {
         StageEncrypted(withCatalog: false);
-        File.Delete(Path.Combine(Disc, "disc.json"));
-        File.Delete(Path.Combine(Disc, "manifest.jsonl.enc"));
+        foreach (string name in new[] { "disc.json", "manifest.jsonl.enc", KeyFile.FileName, DiscFiles.ReadmeName })
+            File.Delete(Path.Combine(Disc, name));
 
         Assert.Equal(0, Bdxl("discjson", "BDXL-0001", Disc));
         Assert.True(File.Exists(Path.Combine(Disc, "manifest.jsonl.enc")));
+        Assert.True(File.Exists(KeyFile.PathIn(Disc)));
         Assert.False(File.Exists(Path.Combine(Disc, "manifest.jsonl")));
 
+        Assert.Equal(0, BdxlIn("other", PasswordVar, "init", "--key-from", Disc));
         Assert.Equal(0, BdxlIn("other", PasswordVar, "scandisc", Disc));   // the rewritten manifest is complete
         Assert.Equal(2, TestKeys.Load(tmp.File("other")).Files.Count);
     }

@@ -46,6 +46,9 @@ public sealed class AppendTarget
             if (info == null || !info.Label.Equals(disc.Label, StringComparison.OrdinalIgnoreCase))
                 throw new UserException($"The disc in {mount} is " + (info == null ? "not a bdxl disc (no readable disc.json)" : info.Label) +
                                         $", not {disc.Label}.");
+            if (info.KeyId != null && !info.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
+                throw new UserException($"The disc in {mount} is encrypted with another key (key id {info.KeyId}, this catalog's is {c.Key.KeyId}). " +
+                                        DiscFiles.OtherCatalogHint(mount));
 
             long? driveFree = null;
             try { driveFree = DiscFiles.FindDrive(mount)?.AvailableFreeSpace; }

@@ -5,14 +5,14 @@ public sealed class RestageCommand : ICommand
     public string Name => "restage";
     public string Group => CommandGroup.Recovery;
     public string Summary => "Rebuild a disc's folder (same label, same files) to burn it again";
-    public string Usage => "restage <label> <destDir> [--from dirA;dirB] [--allow-partial] [--password-env VAR]";
+    public string Usage => "restage <label> <destDir> [--from dirA;dirB] [--allow-partial]";
     public bool Interruptible => true;
     public string Details => """
         Takes the data from the current source files (if their hash still matches) or from the --from folders, checks
         every file against the catalog and writes the folder again. Files that are ignored now are included: the
         disc is rebuilt the way it was. Encrypted discs: intact encrypted copies are reused, other files are
-        encrypted again; the password (BDXL_PASSWORD, --password-env or typed) is always needed for an
-        encrypted disc, because its manifest is written encrypted, and it is checked against the disc's password.
+        encrypted again with the catalog's master key (the disc must have been made with it); bdxl.key and README.txt
+        are written as the catalog has them now.
         A disc with appended sessions is rebuilt as one folder. Afterwards the disc is 'staged' until you run
         'burned'.
         Without --allow-partial nothing is staged if any file cannot be rebuilt.
@@ -44,16 +44,8 @@ public sealed class RestageCommand : ICommand
 
         var manifest = new List<ManifestLine>();
         var missing = new List<BackupRef>();
-        KeyCache? keys = null;
-        byte[]? salt = null;
-        // the password must be the disc's own (copies under --from are reused as they are); without a check value
-        // in the catalog, it is checked against one of them
-        var probes = entries.Where(e => e.Copy.Encrypted).SelectMany(e => fromDirs.Select(fd => Path.Combine(fd, e.Copy.DiscPath)));
-        if (disc.Encrypted)   // the manifest of an encrypted disc is always written encrypted
-        {
-            keys = DiscPassword.Get(c, disc, probes, allowUnchecked: true);
-            salt = FileCrypto.NewSalt();
-        }
+        if (disc.Encrypted && disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
+            throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
 
         string? writing = null;   // file being written when Ctrl+C cut it off
         try
@@ -79,13 +71,11 @@ public sealed class RestageCommand : ICommand
                     // 2. otherwise encrypt the source again (new salt/nonces, so the stored hash changes)
                     if (!restored && sourceFiles.Count > 0)
                     {
-                        keys ??= DiscPassword.Get(c, disc, probes, allowUnchecked: true);
-                        salt ??= FileCrypto.NewSalt();
                         foreach (var src in sourceFiles)
                         {
                             try
                             {
-                                string plain = FileCrypto.Encrypt(src, dst, keys, salt, offset, length, Interrupt.Token);
+                                string plain = FileCrypto.Encrypt(src, dst, c.Key, KeyPurpose.File, offset, length, Interrupt.Token);
                                 if (Hashing.SameHash(plain, entry.ContentSha256))
                                 {
                                     storedHash = Hashing.HashFile(dst, Interrupt.Token);
@@ -174,7 +164,8 @@ public sealed class RestageCommand : ICommand
         disc.Sessions = 1;               // the whole disc (all its sessions) is in one folder now
         foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
 
-        DiscFiles.Write(dir, disc, manifest, keys, salt);
+        if (disc.Encrypted) disc.KeyId = c.Key.KeyId;
+        DiscFiles.Write(dir, disc, manifest, c.Key, c.Cat.Dir);
         long metadata = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length) - disc.UsedBytes;
         disc.OccupiedBytes = disc.UsedBytes + Math.Max(disc.Reserve ?? 0, metadata);
         c.Arc.LinkDuplicates();

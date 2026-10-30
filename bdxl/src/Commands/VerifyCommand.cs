@@ -5,11 +5,11 @@ public sealed class VerifyCommand : ICommand
     public string Name => "verify";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Re-read a disc and compare it with the catalog";
-    public string Usage => "verify <label> <mountedDiscPath> [--deep] [--password-env VAR]";
+    public string Usage => "verify <label> <mountedDiscPath> [--deep]";
     public bool Interruptible => true;
     public string Details => """
-        Hashes every file on the disc. Encrypted files are checked against the hash of the stored file, so no
-        password is needed; --deep decrypts them as well and compares the original content.
+        Hashes every file on the disc. Encrypted files are checked against the hash of the stored file, so nothing
+        is decrypted; --deep decrypts them as well (with the catalog's master key) and compares the original content.
         Entries recorded by 'scandisc' without hashing are marked 'unverified' until this has run.
         Ctrl+C stops after the file being read and reports what was checked so far.
         """;
@@ -21,7 +21,6 @@ public sealed class VerifyCommand : ICommand
         bool deep = c.Opt.Has("deep");
         int ok = 0, bad = 0, miss = 0, unchecked_ = 0;
         bool changed = false;
-        KeyCache? keys = null;
 
         // aliases share one stored copy, so each stored file is checked once
         var items = c.Cat.Files.SelectMany(rec => rec.Backups.Where(bk => bk.Disc == disc.Label))
@@ -56,8 +55,7 @@ public sealed class VerifyCommand : ICommand
 
             if (deep && bk.Encrypted)
             {
-                keys ??= new KeyCache(Ui.GetPassword(c.Opt, forNewEncryption: false));
-                if (!DeepCheck(p, bk, keys)) { bad++; continue; }
+                if (!DeepCheck(p, bk, c.Key)) { bad++; continue; }
             }
             if (deep && bk.Encrypted && Interrupt.Requested) { finished--; break; }   // decrypting was cut off: not judged
 
@@ -89,12 +87,12 @@ public sealed class VerifyCommand : ICommand
         catch (OperationCanceledException) { return ""; }
     }
 
-    static bool DeepCheck(string storedPath, BackupRef bk, KeyCache keys)
+    static bool DeepCheck(string storedPath, BackupRef bk, MasterKey key)
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "bdxl-" + Guid.NewGuid().ToString("N"));
         try
         {
-            string plain = FileCrypto.Decrypt(storedPath, Path.Combine(tempDir, "x"), keys, Interrupt.Token);
+            string plain = FileCrypto.Decrypt(storedPath, Path.Combine(tempDir, "x"), key, KeyPurpose.File, Interrupt.Token);
             if (Hashing.SameHash(plain, bk.ContentSha256)) return true;
             Console.WriteLine($"CORRUPT  {bk.DiscPath}  (decrypts, but the content differs from the catalog)");
             return false;
