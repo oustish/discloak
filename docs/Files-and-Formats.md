@@ -16,6 +16,7 @@ Full design and cryptographic details: [`bdxl/ENCRYPTION.md`](../bdxl/ENCRYPTION
   settings.json.enc        settings, ignore rules, compression settings                   }  zstd-compressed)
   files.jsonl.enc          only a marker line that older bdxl versions cannot read (see below)
   catalog.hash.json        SHA-256 of each .enc file + key id + save counter + HMAC
+  mirror.json              (optional) where the catalog mirror is: {"path": "F:\\bdxl-mirror"} - plain JSON
   history\<time>-<command>\   previous versions (.enc files + their catalog.hash.json, never bdxl.key)
 ```
 

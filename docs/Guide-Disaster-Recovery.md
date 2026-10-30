@@ -23,6 +23,11 @@ Every command checks the catalog first and refuses to work on a damaged one (exi
    It lists each problem: a file damaged, altered, missing, written with another key, or a hash list that fails its
    HMAC (files from different saves mixed together).
 2. Pick a way out:
+   - **Take it from the mirror**, if you have a [catalog mirror](Guide-Mirror.md) (the message says whether it
+     checks out): the most recent state, nothing lost:
+     ```
+     bdxl catalog mirror restore
+     ```
    - **Go back to an earlier version** (one is kept before every command that changed the catalog):
      ```
      bdxl catalog history

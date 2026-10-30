@@ -49,12 +49,26 @@ public static class Program
         string dir = Path.GetFullPath(opt.GetOr("catalog", "catalog"));
         var cat = spec.NeedsCatalogFor(opt) ? OpenCatalog(dir, spec.Name, opt) : Catalog.CreateEmpty(dir, spec.Name);
 
+        // the mirror: before anything changes, it has to be there and hold exactly what the catalog holds
+        var mirror = cat.Keys != null ? Mirror.Check(dir, cat.Keys) : new Mirror.Report(Mirror.State.None, null, "");
         if (cat.Integrity.State == IntegrityState.Broken && !spec.AllowBrokenCatalog)
         {
             Console.Error.WriteLine($"The catalog in {dir} failed its integrity check, so no work is done:");
             foreach (string problem in cat.Integrity.Problems) Console.Error.WriteLine("  " + problem);
             Console.Error.WriteLine("\nSee 'bdxl catalog check' for the ways out (rollback to an older version, restore a backup, or accept).");
+            if (mirror.State is Mirror.State.Differs or Mirror.State.InSync)
+                Console.Error.WriteLine($"The catalog mirror {mirror.Path} passes its check: 'bdxl catalog mirror restore' takes the catalog from it.");
             return 4;
+        }
+        if (!mirror.Ok && cat.Integrity.State != IntegrityState.Broken && !spec.FixesMirror(opt))
+        {
+            if (!spec.ReadOnlyFor(opt))
+            {
+                Console.Error.WriteLine(Mirror.Advice(mirror));
+                return 4;
+            }
+            Console.Error.WriteLine($"Warning: {mirror.Message}. Read-only commands still run; nothing can be changed until it is fixed ('catalog mirror status').");
+            cat.SaveBlockedBy = Mirror.Advice(mirror);
         }
 
         Interrupt.Begin(spec);

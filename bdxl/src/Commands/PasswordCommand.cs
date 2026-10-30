@@ -37,6 +37,7 @@ public sealed class PasswordCommand : ICommand
         string dir = c.Cat.Dir;
         var file = KeyFile.ReadFrom(dir) ?? throw new UserException($"No encrypted catalog in {dir}.");
         using var keys = c.Opt.Has("recovery") ? CatalogSetup.UnlockWithRecoveryKey(file) : CatalogSetup.Unlock(dir, c.Opt);
+        Mirror.RequireInSync(dir, keys);   // bdxl.key must reach the mirror too
         bool rotate = c.Opt.Has("rotate-key");
 
         // the catalog has to load with the keys it has now; a broken one is not re-encrypted under a new key
@@ -62,6 +63,7 @@ public sealed class PasswordCommand : ICommand
             cat!.Save();   // re-encrypted with the new key (the version before goes to history, under the old key)
             if (AgentProtocol.Enabled) new AgentClient().Lock(keys.CatalogId);   // it holds the old ring: 'unlock' again
         }
+        Mirror.Sync(dir);
 
         Console.WriteLine($"Password changed ({kdf}).");
         if (rotate)

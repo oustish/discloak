@@ -11,6 +11,7 @@ public sealed class CostCommand : ICommand
     public string Group => CommandGroup.LookingUp;
     public string Summary => "What the discs cost: per disc, per GB and per TB";
     public string Usage => "cost [report] | cost set <label> <amount>";
+    public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "report", "report");
     public string Details => """
         Prices come from 'blanks add --cost', 'blanks cost', 'scandisc --cost' and 'cost set <label> <amount>' (also for
         discs you bought earlier). 'cost report' shows cost per disc, per GB and per TB of data stored and of

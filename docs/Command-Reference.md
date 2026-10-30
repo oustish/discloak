@@ -259,6 +259,7 @@ bdxl catalog import <dir>
 bdxl catalog backup create <dir> [--parity-percent 25]
 bdxl catalog backup verify <dir> [--repair]
 bdxl catalog backup restore <dir> [--force] [--recovery]
+bdxl catalog mirror status | sync | restore [--recovery]
 ```
 | Sub-command | |
 |---|---|
@@ -271,6 +272,9 @@ bdxl catalog backup restore <dir> [--force] [--recovery]
 | `backup create <dir>` | encrypted catalog + `bdxl.key` + Reed-Solomon repair data into `<dir>\catalog-<date>` |
 | `backup verify <dir>` | check (and `--repair`) a backup, no password needed |
 | `backup restore <dir>` | into an empty folder: with the backup's key (password or `--recovery`); into the same catalog: `--force`, current password stays; another catalog: refused |
+| `mirror status` | is the mirror there and in step? (exit 2 if not) |
+| `mirror sync` | copy the catalog over the mirror |
+| `mirror restore` | take the catalog from the mirror (current one to history; the mirror's `bdxl.key` and password come along) |
 
 ### password
 ```
@@ -325,6 +329,7 @@ bdxl settings set <key> <value>
 | `unlock-max` | 8h | … and after this long at the latest |
 | `lock-on-win-l` | yes | lock when Windows is locked |
 | `lock-on-sleep` | yes | lock when the computer goes to sleep |
+| `mirror` | (none) | a folder for the [catalog mirror](Guide-Mirror.md), or `none`; kept in `mirror.json`, not in the encrypted settings |
 
 ### workflow / help
 ```

@@ -30,6 +30,7 @@ public sealed class RecoveryKeyCommand : ICommand
                 }
                 string text = file.SetRecoveryKey(c.Keys);
                 file.WriteTo(dir);
+                Mirror.Sync(dir);
                 CatalogSetup.ShowRecoveryKey(text);
                 return 0;
             case "remove":
@@ -37,6 +38,7 @@ public sealed class RecoveryKeyCommand : ICommand
                 if (!Ui.Confirm(c.Opt, "Remove the recovery key? Without the password nothing can be decrypted then.")) { Console.WriteLine("Cancelled."); return 1; }
                 file.RemoveRecoveryKey();
                 file.WriteTo(dir);
+                Mirror.Sync(dir);
                 Console.WriteLine("Recovery key removed.");
                 return 0;
             default:

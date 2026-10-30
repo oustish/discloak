@@ -23,6 +23,7 @@ catalog, with nothing but the password.
 - [Large Files (split across discs)](Guide-Large-Files.md)
 - [Compression](Guide-Compression.md)
 - [Several Copies](Guide-Copies.md): two or more copies of important locations, on different discs
+- [Catalog Mirror](Guide-Mirror.md): a second, always current copy of the catalog on another drive
 - [Maintenance](Guide-Maintenance.md): rescans, moved files, ignore rules, aliases, purge, settings, costs
 - [Discs You Already Have](Guide-Existing-Discs.md): bring discs burned without bdxl (or by another catalog) in
 - [Disaster Recovery](Guide-Disaster-Recovery.md): lost or damaged catalog, lost or damaged disc, forgotten password

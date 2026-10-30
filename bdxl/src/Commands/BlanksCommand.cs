@@ -13,6 +13,7 @@ public sealed class BlanksCommand : ICommand
     public string Group => CommandGroup.Indexing;
     public string Summary => "Register the blank discs you own (sizes, reserve, price)";
     public string Usage => "blanks [list] | add <count> [--size S] [--reserve R] [--cost P] | reserve <R> [--size S] | cost <P> [--size S] | remove <id|all> [--size S]";
+    public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => """
           blanks add 5 --size 96882130944 --reserve 200MB --cost 45    five discs; sizes accept 25GB, 90GiB, bytes ...
           blanks reserve 300MB            change the reserve of ALL blank discs   (--size S: only discs of that size)

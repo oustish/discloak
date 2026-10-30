@@ -9,8 +9,8 @@ public sealed class CatalogCommand : ICommand
 {
     public string Name => "catalog";
     public string Group => CommandGroup.Catalog;
-    public string Summary => "Integrity check, older versions, export/import, backups with repair data";
-    public string Usage => "catalog check | accept | history | rollback <id> | export <dir> | import <dir> | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force]";
+    public string Summary => "Integrity check, older versions, export/import, backups with repair data, the mirror";
+    public string Usage => "catalog check | accept | history | rollback <id> | export <dir> | import <dir> | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force] | mirror status | mirror sync | mirror restore [--recovery]";
     public string Details => """
         The catalog is stored encrypted. catalog.hash.json holds a hash of every stored file and an HMAC over that
         list, checked every time the catalog is loaded; if a file is damaged, altered or mixed in from another save,
@@ -26,12 +26,25 @@ public sealed class CatalogCommand : ICommand
           catalog backup restore <dir> [--force] put a backup back (password, or --recovery for the recovery key, when restoring
                                                  into an empty folder; into this catalog, the current bdxl.key and password stay)
         Every staged disc with --with-catalog carries the same kind of backup in _catalog.
+        The mirror ('settings set mirror <folder>') is a second copy kept in step by every save:
+          catalog mirror status      is it there and in step?
+          catalog mirror sync        copy the catalog over the mirror (after it was not connected, or a save did not reach it)
+          catalog mirror restore     take the catalog from the mirror (the catalog is damaged or behind; its current state goes
+                                     to history; the mirror's bdxl.key comes along, so its password applies)
         """;
     public bool AllowBrokenCatalog => true;
 
     public bool NeedsCatalogFor(Options opt) =>
-        !(opt.Args.Count > 1 && opt.Args[0].Equals("backup", StringComparison.OrdinalIgnoreCase) &&
-          (opt.Args[1].Equals("verify", StringComparison.OrdinalIgnoreCase) || opt.Args[1].Equals("restore", StringComparison.OrdinalIgnoreCase)));
+        !(Is(opt, "backup", "verify") || Is(opt, "backup", "restore") || Is(opt, "mirror", "restore"));
+
+    public bool ReadOnlyFor(Options opt) =>
+        opt.Args.Count > 0 && opt.Args[0].ToLowerInvariant() is "check" or "history" or "export" ||
+        Is(opt, "backup", "create") || Is(opt, "mirror", "status");
+
+    public bool FixesMirror(Options opt) => Is(opt, "mirror", "sync") || Is(opt, "mirror", "restore");
+
+    static bool Is(Options opt, string sub, string action) =>
+        opt.Args.Count > 1 && opt.Args[0].Equals(sub, StringComparison.OrdinalIgnoreCase) && opt.Args[1].Equals(action, StringComparison.OrdinalIgnoreCase);
 
     public int Run(Ctx c)
     {
@@ -51,6 +64,14 @@ public sealed class CatalogCommand : ICommand
                 if (action == "verify") return BackupVerify(c, c.Args[2]);
                 if (action == "restore") return BackupRestore(c, c.Args[2]);
                 throw new UserException("Usage: catalog backup create <dir> | verify <dir> [--repair] | restore <dir> [--force]");
+            case "mirror":
+                switch (c.Args.Count > 1 ? c.Args[1].ToLowerInvariant() : "status")
+                {
+                    case "status": return MirrorStatus(c);
+                    case "sync": return MirrorSync(c);
+                    case "restore": return MirrorRestore(c);
+                    default: throw new UserException("Usage: catalog mirror status | sync | restore [--recovery]");
+                }
             default:
                 throw new UserException("Usage: catalog check | accept | history | rollback <id> | export <dir> | import <dir> | backup create|verify|restore <dir>");
         }
@@ -127,9 +148,80 @@ public sealed class CatalogCommand : ICommand
         if (!Ui.Confirm(c.Opt, $"Replace the current catalog with version {id}? (the current one is saved to history first)")) { Console.WriteLine("Cancelled."); return 1; }
 
         Catalog.RestoreSnapshot(c.Cat.Dir, id, "catalog-rollback", Math.Max(1, c.Settings.HistoryKeep), c.Keys);
+        Mirror.Sync(c.Cat.Dir);
         var after = Catalog.Load(c.Cat.Dir, "catalog-rollback", c.Keys);
         Console.WriteLine($"Restored version {id}: {after.Files.Count:N0} files, {after.Discs.Count:N0} discs (integrity: {after.Integrity.State}).");
         return after.Integrity.State == IntegrityState.Broken ? 4 : 0;
+    }
+
+    // ---- mirror ------------------------------------------------------------------------------
+
+    static int MirrorStatus(Ctx c)
+    {
+        var r = Mirror.Check(c.Cat.Dir, c.Keys);
+        if (r.State == Mirror.State.None) { Console.WriteLine("No mirror. Set one with:  settings set mirror <folder on another drive>"); return 0; }
+        Console.WriteLine($"Mirror: {r.Path}");
+        if (r.Ok) { Console.WriteLine("In step with the catalog."); return 0; }
+        Console.WriteLine(Mirror.Advice(r));
+        return 2;
+    }
+
+    /// <summary>catalog mirror sync: the catalog (which must check out) is copied over the mirror.</summary>
+    static int MirrorSync(Ctx c)
+    {
+        string dir = c.Cat.Dir;
+        if (c.Cat.Integrity.State == IntegrityState.Broken)
+            throw new UserException("The catalog itself fails its check, so it is not copied over the mirror. See 'catalog check' (or 'catalog mirror restore').");
+        var r = Mirror.Check(dir, c.Keys);
+        if (r.State == Mirror.State.None) throw new UserException("No mirror is set (settings set mirror <folder>).");
+        if (r.Ok) { Console.WriteLine($"The mirror {r.Path} is already in step."); return 0; }
+        if (r.State == Mirror.State.Unreachable) throw new UserException(r.Message + ".");
+        if (r.MirrorGeneration > r.MainGeneration &&
+            !Ui.Confirm(c.Opt, $"The mirror is NEWER (save {r.MirrorGeneration}, the catalog is at save {r.MainGeneration}). Overwrite it with the catalog anyway?"))
+        {
+            Console.WriteLine("Cancelled. To take the mirror's version instead: catalog mirror restore");
+            return 1;
+        }
+        Mirror.CopyCatalog(dir, r.Path!);
+        var after = Mirror.Check(dir, c.Keys);
+        Console.WriteLine(after.Ok ? $"The mirror {r.Path} is in step again." : $"Copied, but: {after.Message}.");
+        return after.Ok ? 0 : 1;
+    }
+
+    /// <summary>
+    /// catalog mirror restore: the mirror's catalog (checked with its own bdxl.key) replaces the catalog; the catalog's
+    /// current state is kept in history first.
+    /// </summary>
+    static int MirrorRestore(Ctx c)
+    {
+        string dir = c.Cat.Dir;
+        string path = Mirror.PathFor(dir) ?? throw new UserException($"No mirror is set for {dir}.");
+        if (!Directory.Exists(path)) throw new UserException($"The mirror {path} is not reachable.");
+        var mirrorKey = KeyFile.ReadFrom(path) ?? throw new UserException($"The mirror {path} holds no {KeyFile.FileName}.");
+        KeyFile? mainKey;
+        try { mainKey = KeyFile.ReadFrom(dir); }
+        catch (InvalidDataException) { mainKey = null; }   // damaged: the mirror's replaces it
+        if (mainKey != null && mainKey.CatalogId != mirrorKey.CatalogId)
+            throw new UserException($"The mirror holds another catalog (id {mirrorKey.CatalogId}, not {mainKey.CatalogId}).");
+
+        using var keys = c.Opt.Has("recovery") ? CatalogSetup.UnlockWithRecoveryKey(mirrorKey)
+            : AgentProtocol.Enabled && new AgentClient().TryGetKey(mirrorKey.CatalogId, mirrorKey.KeyId) is { } fromAgent ? fromAgent
+            : CatalogSetup.UnlockWithPassword(mirrorKey, c.Opt, "the mirror's key file");
+        var check = Catalog.Load(path, "catalog-mirror-restore", keys);
+        if (check.Integrity.State != IntegrityState.Ok)
+            throw new UserException($"The mirror fails its check too ({string.Join("; ", check.Integrity.Problems)}); nothing was changed.");
+        if (!Ui.Confirm(c.Opt, $"Replace the catalog in {dir} with the mirror's version ({check.Files.Count:N0} files, {check.Discs.Count:N0} discs)? " +
+                               "(the current one is kept in history)"))
+        {
+            Console.WriteLine("Cancelled.");
+            return 1;
+        }
+
+        Catalog.CreateSnapshot(dir, "catalog-mirror-restore", Math.Max(1, check.Settings.HistoryKeep));
+        Mirror.CopyCatalog(path, dir);
+        var after = Catalog.Load(dir, "catalog-mirror-restore", keys);
+        Console.WriteLine($"Took the catalog from the mirror: {after.Files.Count:N0} files, {after.Discs.Count:N0} discs (integrity: {after.Integrity.State}).");
+        return after.Integrity.State == IntegrityState.Ok ? 0 : 4;
     }
 
     // ---- export / import (plaintext) --------------------------------------------------------
@@ -348,6 +440,9 @@ public sealed class CatalogCommand : ICommand
         var after = Catalog.Load(target, "catalog-backup-restore", key);
         Console.WriteLine($"Catalog restored into {target}: {after.Files.Count:N0} files, {after.Discs.Count:N0} discs (integrity: {after.Integrity.State})." +
                           (existing ? " Its password stays as it was." : ""));
-        return after.Integrity.State == IntegrityState.Broken ? 4 : 0;
+        if (after.Integrity.State == IntegrityState.Broken) return 4;
+        try { if (Mirror.Sync(target)) Console.WriteLine("Its mirror was brought up to date too."); }
+        catch (UserException ex) { Console.WriteLine(ex.Message); }   // not reachable: the next command says what to do
+        return 0;
     }
 }

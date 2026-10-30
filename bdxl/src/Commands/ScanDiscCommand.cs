@@ -6,6 +6,7 @@ public sealed class ScanDiscCommand : ICommand
     public string Group => CommandGroup.ExistingDiscs;
     public string Summary => "Record an already burned disc in the catalog";
     public string Usage => "scandisc <mountPath> [--label L] [--method auto|manifest|hash|quick] [--date D] [--capacity S] [--cost P] [--update] [--dry-run] [--write-disc-json]";
+    public bool ReadOnlyFor(Options opt) => opt.Has("dry-run");
     public bool Interruptible => true;
     public string Details => """
         Reads a mounted disc (or a folder laid out like one) and links its files to the catalog.

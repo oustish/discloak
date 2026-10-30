@@ -6,6 +6,7 @@ public sealed class FindCommand : ICommand
     public string Group => CommandGroup.LookingUp;
     public string Summary => "Where is this file backed up?";
     public string Usage => "find <text|hashPrefix|*>";
+    public bool ReadOnlyFor(Options opt) => true;
     public string Details => "Matches part of a path, or the start of a SHA-256. Shows every disc holding the file, when, and whether it is the current version.";
 
     public int Run(Ctx c)

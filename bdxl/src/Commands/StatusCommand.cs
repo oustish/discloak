@@ -6,6 +6,7 @@ public sealed class StatusCommand : ICommand
     public string Group => CommandGroup.LookingUp;
     public string Summary => "Summary of sources, pending data, blank discs and discs";
     public string Usage => "status";
+    public bool ReadOnlyFor(Options opt) => true;
     public string Details => "Also warns about files that exist nowhere any more.";
 
     public int Run(Ctx c)

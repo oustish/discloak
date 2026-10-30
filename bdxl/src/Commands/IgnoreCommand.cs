@@ -10,6 +10,7 @@ public sealed class IgnoreCommand : ICommand
     public string Group => CommandGroup.Indexing;
     public string Summary => "Define ignored files and folders (.gitignore syntax)";
     public string Usage => "ignore [list] | add <pattern>... | remove <pattern|number>... | test <path> | apply";
+    public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list", "test");
     public string Details => """
         Rules live in settings.json inside the catalog and are matched against paths relative to each scanned folder.
           ignore add "node_modules/" "*.tmp" "/cache/**" "!keep.tmp"

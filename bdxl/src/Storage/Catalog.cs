@@ -87,6 +87,9 @@ public sealed class Catalog
     /// <summary>Records per part of the file list; a part never mixes locations. Tests make it small.</summary>
     public int FilesPerShard { get; set; } = 200_000;
 
+    /// <summary>Set when the catalog may not be saved in this run (its mirror is not in step): Save refuses with this.</summary>
+    public string? SaveBlockedBy { get; set; }
+
     bool snapshotDone;
     long generation;
     readonly Dictionary<string, string> plainHashes = new(StringComparer.Ordinal);   // stored name -> SHA-256 of its plaintext, as loaded / last saved
@@ -265,6 +268,7 @@ public sealed class Catalog
         if (Integrity.State == IntegrityState.Broken)
             throw new InvalidOperationException("The catalog is broken; refusing to overwrite it. Run 'catalog check'.");
         if (Keys == null) throw new InvalidOperationException("This catalog has no key and cannot be saved.");
+        if (SaveBlockedBy != null) throw new UserException(SaveBlockedBy);
 
         if (!snapshotDone)
         {
@@ -295,6 +299,7 @@ public sealed class Catalog
         }
         WriteIntegrity(Dir, Keys.Current, ++generation);
         Integrity = new IntegrityReport { State = IntegrityState.Ok };
+        Mirror.Sync(Dir);   // the mirror (if any) gets the same files
     }
 
     /// <summary>

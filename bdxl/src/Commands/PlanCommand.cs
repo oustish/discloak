@@ -6,6 +6,7 @@ public sealed class PlanCommand : ICommand
     public string Group => CommandGroup.Indexing;
     public string Summary => "Show which files would go on which blank disc (changes nothing)";
     public string Usage => "plan [--split] [--append <label> [--mount <path>]]";
+    public bool ReadOnlyFor(Options opt) => true;
     public string Details => """
         Allocates all pending files to the blank discs registered with 'blanks'. Prints how full each disc would be
         and, if the data does not fit on the designated discs, which files are left over and roughly how many

@@ -6,6 +6,7 @@ public sealed class CompressionCommand : ICommand
     public string Group => CommandGroup.Indexing;
     public string Summary => "Compress files of a location on the discs (zstd, per location)";
     public string Usage => "compression [list] | compression set <alias> off|auto|on [--level N] | compression set --default off|auto|on [--level N] | compression clear <alias>";
+    public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => $"""
         Staged copies can be compressed (zstd) inside their encryption: every 1 MiB piece of a file is compressed on its
         own and kept compressed only if that made it smaller, so nothing ever grows by more than a byte per MiB.

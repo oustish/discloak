@@ -6,6 +6,7 @@ public sealed class RestoreCommand : ICommand
     public string Group => CommandGroup.Recovery;
     public string Summary => "Copy files back from mounted discs into a folder";
     public string Usage => "restore <destDir> <text|hashPrefix|*> --mount F:\\;G:\\ [--disc label] [--source alias] [--flat] [--overwrite]";
+    public bool ReadOnlyFor(Options opt) => true;
     public bool Interruptible => true;
     public string Details => """
         Finds the files in the catalog, tells you which discs it needs, and copies them from the discs you mounted.

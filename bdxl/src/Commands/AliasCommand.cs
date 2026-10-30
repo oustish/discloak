@@ -6,6 +6,7 @@ public sealed class AliasCommand : ICommand
     public string Group => CommandGroup.Catalog;
     public string Summary => "List or rename the names of scanned locations";
     public string Usage => "alias [list] | alias rename <old> <new>";
+    public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => "The alias is what 'scan --name' gave a folder. Renaming affects the catalog and future discs; discs already burned keep the old name on the disc.";
 
     /// <summary>

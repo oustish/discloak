@@ -10,7 +10,7 @@
 | 1 | error (wrong arguments, wrong password, refused, nothing to do where something was expected) |
 | 2 | partial: not everything fits (`plan`, `stage`), more discs needed (`restore`), data lost (`lost`), fewer copies than wanted (`copies list`) |
 | 3 | problems found: corrupt or missing files (`verify`, `restore`), an unrecoverable backup file |
-| 4 | the catalog failed its integrity check; only `catalog …` commands run |
+| 4 | the catalog failed its integrity check (only `catalog …` commands run), or its [mirror](Guide-Mirror.md) is not connected or not in step (only read-only commands run) |
 | 130 | stopped with Ctrl+C (after cleaning up; see the command's message) |
 
 ## Common messages
@@ -25,6 +25,9 @@
 | `Confirmation needed but input is redirected; add --yes.` | Add `--yes` in scripts. |
 | `The catalog in … failed its integrity check, so no work is done` (exit 4) | [The catalog is damaged](Guide-Disaster-Recovery.md#the-catalog-is-damaged-or-fails-its-check). |
 | `Cannot be read: files.jsonl line 1: 'b' is an invalid start of a value` (exit 4) | An **older bdxl** on a catalog a newer one has saved. Use the current version; nothing is damaged. |
+| `Nothing that changes the catalog runs while the catalog mirror … is not reachable` | Connect the mirror drive; or `bdxl settings set mirror none`. See [Catalog Mirror](Guide-Mirror.md). |
+| `… the catalog mirror … is not in step` / `fails its integrity check` | `bdxl catalog mirror sync` (or, if the catalog is the one that is wrong or behind, `catalog mirror restore`). |
+| `The catalog was saved, but its mirror … is not reachable` | The drive went away during the command. Connect it, `bdxl catalog mirror sync`. |
 | `No blank discs are registered.` | `bdxl blanks add …` |
 | `Nothing staged: no blank disc would be full enough (see --min-fill).` | Lower or drop `--min-fill`, or wait for more data. |
 | `Nothing staged: the pending files do not fit on any registered blank disc` | A file is larger than every disc: `--split`, or larger blanks. |

@@ -12,6 +12,7 @@
 - [Large Files](Guide-Large-Files.md)
 - [Compression](Guide-Compression.md)
 - [Several Copies](Guide-Copies.md)
+- [Catalog Mirror](Guide-Mirror.md)
 - [Maintenance](Guide-Maintenance.md)
 - [Discs You Already Have](Guide-Existing-Discs.md)
 - [Disaster Recovery](Guide-Disaster-Recovery.md)

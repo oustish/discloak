@@ -71,6 +71,8 @@ Details: [Security](Guide-Security.md#unlocking-for-a-while).
 bdxl settings set label-prefix BDXL-       # discs are named BDXL-0001, BDXL-0002 ... (the counter never resets)
 bdxl settings set currency PLN             # shown next to costs
 bdxl settings set default-threads 4        # hash with 4 threads by default (helps on SSDs / several disks)
+bdxl settings set mirror F:\bdxl-mirror    # a second copy of the catalog on another drive (see Catalog Mirror)
+bdxl copies set --default 1                # or 2 for locations that must survive a lost disc (see Several Copies)
 bdxl ignore add "Thumbs.db" "desktop.ini" "*.tmp" "node_modules/"
 ```
 

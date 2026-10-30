@@ -27,7 +27,7 @@
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 207 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 214 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -50,7 +50,7 @@ Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; 
 | `src/Storage/JsonStore.cs`, `Hashing.cs` | JSONL/JSON read+write (atomic via .tmp), SHA-256 helpers |
 | `src/Core/` | `Packer` (best-fit-decreasing onto fixed blank discs), `GitIgnore`, `FileCrypto` (`BDXLENC2`, +`PasswordPolicy`), `MasterKey` (+`KeyPurpose`, HKDF object keys), `KeyRing` (every master key so far, oldest first; current = last), `KeyFile` (`bdxl.key`, envelopes), `Kdf` (Argon2id via NSec/libsodium, calibration), `RecoveryKey` (text form with checksum), `Compression` (+`CompressionSetting`: per-alias mode/level, auto's extension list, signatures, planned sizes), `ReedSolomon` (`Gf`, `Rs`), `SizeText` |
 | `src/Services/` | `Ctx` (what every command gets; `Arg(i, usage)`), `Archive` (dedup, planning, labels, ignore application), `DiscFiles` (manifest + disc.json [+ bdxl.key + README.txt], encrypted manifest, hidden names, writing onto a mounted disc), `AppendTarget` (free space of a disc for `--append`), `CatalogSetup` (unlock, `init`, crash-safe migration of plaintext catalogs) |
-| `src/Agent/` | `AgentServer` (keys per catalog id, timeouts, Win+L/sleep via `SystemEvents`, sweep every 5 s: a late sweep = the computer slept), `AgentClient`, `AgentProtocol` (length-prefixed JSON over a `CurrentUserOnly` named pipe, protocol version, pipe name per user or `BDXL_AGENT_PIPE`), `AgentLauncher` (copies the program to `%LOCALAPPDATA%dxlgent<build>`, starts it detached and outside the terminal's job) |
+| `src/Agent/` | `AgentServer` (keys per catalog id, timeouts, Win+L/sleep via `SystemEvents`, sweep every 5 s: a late sweep = the computer slept), `AgentClient`, `AgentProtocol` (length-prefixed JSON over a `CurrentUserOnly` named pipe, protocol version, pipe name per user or `BDXL_AGENT_PIPE`), `AgentLauncher` (copies the program to `%LOCALAPPDATA%\bdxl\agent\<build>`, starts it detached and outside the terminal's job) |
 | `src/Commands/` | One file per command: `<Name>Command.cs`, a sealed class implementing `ICommand` with its own help text |
 
 ## Adding a command
@@ -79,6 +79,13 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   Every `Catalog.Save()` serializes each file in memory (no single buffer near 2 GiB any more) and encrypts straight
   into it - unless its plaintext hash equals the one loaded/last saved and it is under the current key (skipped).
   `Load` shares the Root/RootName/Disc strings between records (memory).
+- **Mirror** (`Storage/Mirror.cs`): `mirror.json` (plain) in the catalog folder names it; `Program` runs `Mirror.Check` after
+  loading: not in step -> commands are refused (exit 4) unless `ICommand.ReadOnlyFor(opt)` (they run, warned, with
+  `Catalog.SaveBlockedBy` set as a backstop) or `FixesMirror(opt)` (`catalog mirror sync|restore`, `settings set
+  mirror`). `Catalog.Save` ends with `Mirror.Sync` (trusts the mirror's hash list: it was checked at the start);
+  explicit sync/restore hash the real files (`CopyCatalog(trustTarget: false)`). Commands that write `bdxl.key` or
+  restore files without `Save` call `Mirror.Sync` themselves (password change after `RequireInSync`, recovery-key,
+  rollback, backup restore). The mirror never gets history or `mirror.json`.
 - **Keys:** `Program.OpenCatalog`: no catalog = "run init"; plaintext catalog = migrate after confirmation;
   otherwise `CatalogSetup.Unlock` (env/typed, 3 tries). `Ctx.Key` is the master key; `Catalog.Key` saves with it.
   `bdxl.key` is never in `history/`; a password change rewrites only `bdxl.key`. `ICommand.NeedsCatalogFor(opt)`
@@ -90,7 +97,7 @@ Shared pieces: `lost` and `destroyed` both call `MarkDeadDisc.Run`; `stage --wit
   catalog and locks the agent (protocol 2 carries the ring; a stale ring is ignored: its current key id differs).
 - **Agent:** `CatalogSetup.Unlock` asks the agent first (`BDXL_AGENT=off` skips it; the tests set that). The
   agent (hidden command `agent`) refuses to start if its pipe exists, keeps one listening pipe instance at all times,
-  exits when its last key is locked (or if no key arrives within a minute), logs to `%LOCALAPPDATA%dxlgentgent.log`
+  exits when its last key is locked (or if no key arrives within a minute), logs to `%LOCALAPPDATA%\bdxl\agent\agent.log`
   without key material. `unlock` replaces an agent of another protocol version. `lock` needs no password.
 - **Migration:** built in `.encrypting/`, plaintext moved to `.plaintext/`, encrypted files moved in, `bdxl.key` last.
   No `bdxl.key` = undo (`RecoverInterruptedMigration`); leftovers + plaintext history snapshots are finished by
@@ -213,6 +220,7 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off`; `TestKeys.Init(dir)` / `T
 | `EncryptedDiscTests` | nothing on an encrypted disc shows names/hashes, `bdxl.key` + README + key ids on the disc, verify + restore, a lost catalog rebuilt with `init --key-from` (wrong/no password refused), old and new discs across a password change, `_catalog` repaired without and restored with the password, standalone backup, restage, a disc of another key refused (discjson, restage, restore), discjson puts back manifest + key file |
 | `AppendTests` | only new/changed files in the session, `name~2`, whole-disc manifest, burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only, refusals, encrypted session (same master key, numbering continued, catalog rebuilt from the disc), a disc of another key refused (catalog or `--mount`) |
 | `CopiesTests` | per-location copies on different discs, never two on one disc, staged copies count for planning but only burned ones as made, lost discs, higher number of two locations, not onto an `--append` disc that holds it, split parts twice, end to end (stage, burn, restore from either disc, lost + restaged, alias rename) |
+| `MirrorTests` | an empty folder gets a copy that every save keeps in step (and opens as a catalog), without the mirror only read-only commands run (password change refused too), a missed save fixed by `mirror sync`, a damaged catalog taken back with `mirror restore` (also a listed-but-damaged file), a newer mirror, password change reaches the mirror, folder rules, `mirror none` while disconnected |
 
 ## Suggested next steps
 Ideas not built yet:

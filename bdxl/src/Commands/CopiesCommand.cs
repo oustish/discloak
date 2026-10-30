@@ -6,6 +6,7 @@ public sealed class CopiesCommand : ICommand
     public string Group => CommandGroup.Indexing;
     public string Summary => "How many copies (on different discs) each location's files should have";
     public string Usage => "copies [list] | copies set <alias> N | copies set --default N | copies clear <alias>";
+    public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => $"""
         Every file is stored once by default. A location (alias) can ask for more: 'plan' and 'stage' then keep
         planning further copies of its files until each is on that many different discs - never two copies of one
