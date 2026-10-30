@@ -123,6 +123,27 @@ public class ArchiveTests
     }
 
     [Fact]
+    public void The_manifest_share_is_never_less_than_the_real_line()
+    {
+        foreach (string rel in new[] { "a.txt", "zdjęcia/łódź \"nad\" morzem\\x.jpg", new string('x', 300) + "/y.bin" })
+        {
+            var f = AddFile(rel, 123_456_789_012, new string('A', 64));
+            var whole = new BackupRef
+            {
+                Disc = "BDXL-0001", DiscPath = "data/123/123456.enc", Sha256 = f.Sha256, Encrypted = true,
+                StoredSha256 = new string('B', 64), StoredSize = 123_456_799_999, Compression = 19
+            };
+            Assert.True(JsonStore.LinesToBytes([ManifestLine.For(whole, f)]).Length <= DiscSpace.ManifestShare(Piece.Whole(f)));
+            var part = new BackupRef
+            {
+                Disc = "BDXL-0001", DiscPath = "data/123/123457.enc", Sha256 = f.Sha256, Encrypted = true, StoredSha256 = new string('B', 64),
+                StoredSize = 96_000_000_000, Part = 12, Parts = 13, Offset = 1_100_000_000_000, Length = 96_000_000_000, PartSha256 = new string('C', 64)
+            };
+            Assert.True(JsonStore.LinesToBytes([ManifestLine.For(part, f)]).Length <= DiscSpace.ManifestShare(new Piece(f, 12, 13, 0, 0)));
+        }
+    }
+
+    [Fact]
     public void Small_files_are_planned_with_their_sectors_and_file_system_entries()
     {
         AddBlanks(3, 1_000_000);
@@ -130,9 +151,10 @@ public class ArchiveTests
 
         var plan = Arc.MakePlan();
         Assert.Empty(plan.Unplaced);
-        long each = DiscSpace.OnDisc(FileCrypto.StoredSize(10));
-        Assert.Equal(DiscSpace.Sector * 2 + DiscSpace.FolderEntry, each);
-        Assert.Equal(1_000_000 / each, plan.Bins[0].Pieces.Count);                   // ... but on the disc they take 2 sectors each
+        long onDisc = DiscSpace.OnDisc(FileCrypto.StoredSize(10));
+        Assert.Equal(DiscSpace.Sector * 2 + DiscSpace.FolderEntry, onDisc);                 // ... but on the disc they take 2 sectors each
+        long each = onDisc + DiscSpace.ManifestShare(Piece.Whole(cat.Files[0]));           // and a line in the disc's manifest
+        Assert.Equal(1_000_000 / each, plan.Bins[0].Pieces.Count);
         Assert.Equal(400, plan.Bins.Sum(b => b.Pieces.Count));
         Assert.All(plan.Bins, b => Assert.True(b.Used <= b.Usable));
     }
@@ -170,11 +192,11 @@ public class ArchiveTests
     [Fact]
     public void Split_cuts_into_parts_that_fit_even_encrypted()
     {
-        // room for the encryption and for the part's sectors and file system entries on the disc
-        long partSize = FileCrypto.MaxPlainSize(10_000 - DiscSpace.OnDisc(0) - DiscSpace.Sector);
+        // room for the encryption, the part's sectors and file system entries, and its manifest line on the disc
+        var big = AddFile("big.bin", 25_000, "AA");
+        long partSize = FileCrypto.MaxPlainSize(10_000 - DiscSpace.OnDisc(0) - DiscSpace.Sector - DiscSpace.ManifestShare(new Piece(big, 1, 2, 0, 0)));
         int parts = (int)((25_000 + partSize - 1) / partSize);
         AddBlanks(parts, 10_000);
-        AddFile("big.bin", 25_000, "AA");
 
         var plan = Arc.MakePlan(split: true);
         Assert.Empty(plan.TooBig);

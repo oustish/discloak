@@ -21,7 +21,7 @@ big. With `--split`, it is cut into parts, one per disc, each encrypted on its o
 ## How it behaves
 
 - Parts are as large as the largest blank disc allows (minus its reserve, the encryption overhead and a few KB for
-  the file system). Parts staged by older versions were a few KB larger; they still fit (the few KB come out of the
+  the file system and the manifest line). Parts staged by older versions were a few KB larger; they still fit (the few KB come out of the
   reserve).
 - The file counts as backed up only when **every** part is on a live disc. `plan` says how many split files still
   have parts to store.

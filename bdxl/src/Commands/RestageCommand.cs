@@ -167,7 +167,8 @@ public sealed class RestageCommand : ICommand
 
         if (disc.Encrypted) disc.KeyId = key.KeyId;
         DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir);
-        long files = manifest.Sum(x => DiscSpace.OnDisc(x.Size));   // on the disc: whole sectors + file system entries
+        long files = manifest.Sum(x => DiscSpace.OnDisc(x.Size))   // on the disc: whole sectors + file system entries, and the manifest
+                     + DiscSpace.OnDisc(FileCrypto.StoredSize(JsonStore.LinesToBytes(manifest).Length));
         disc.OccupiedBytes = Math.Max(files + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
         c.Arc.LinkDuplicates();
         c.Cat.Save();

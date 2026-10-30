@@ -116,7 +116,9 @@ public class AppendTests : IDisposable
         tmp.RandomFile("src/a.bin", 300_000);
         FirstDisc();
         var disc = Disc1;
-        Assert.Equal(DiscSpace.OnDisc(disc.UsedBytes) + 100_000, disc.OccupiedBytes);   // its one file in whole sectors + entries, and the reserve
+        long ManifestSpace(string dir) => DiscSpace.OnDisc(new FileInfo(Path.Combine(dir, DiscFiles.EncryptedManifestName)).Length);
+        // its one file and its manifest in whole sectors + entries, and the reserve
+        Assert.Equal(DiscSpace.OnDisc(disc.UsedBytes) + ManifestSpace(DiscDir) + 100_000, disc.OccupiedBytes);
         long free = 1_000_000 - disc.OccupiedBytes - 100_000;
         Assert.Equal(free, AppendTarget.FreeFor(disc));
 
@@ -132,7 +134,7 @@ public class AppendTests : IDisposable
         Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));
         Assert.Equal(new[] { "README.txt", "bdxl.key", "data/000/000002.enc", "disc.json", "manifest.jsonl.enc" }, FilesIn(Session2));
         var after = Disc1;
-        Assert.Equal((2, disc.OccupiedBytes + DiscSpace.OnDisc(FileCrypto.StoredSize(200_000)) + 100_000), (after.Sessions, after.OccupiedBytes));
+        Assert.Equal((2, disc.OccupiedBytes + DiscSpace.OnDisc(FileCrypto.StoredSize(200_000)) + ManifestSpace(Session2) + 100_000), (after.Sessions, after.OccupiedBytes));
         Assert.Contains(Cat().Files, f => f.RelPath == "big.bin" && f.Backups.Count == 0);   // still pending
     }
 

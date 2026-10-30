@@ -146,17 +146,19 @@ public sealed class Archive
 
         long largest = cat.Blanks.Select(b => b.Usable).DefaultIfEmpty(0).Max();
         // every staged piece is encrypted; whole files maybe compressed too (sizes counted by scan), parts never; on the
-        // disc each takes whole sectors plus its file system entries. A part of a layout from before that was counted
-        // (as big as a whole disc's usable space) still counts as fitting: its few KB come out of the reserve.
+        // disc each takes whole sectors plus its file system entries, and a line in the disc's manifest. A part of a
+        // layout from before those were counted (as big as a whole disc's usable space) still counts as fitting: its
+        // few KB come out of the reserve.
         Func<Piece, long> sizeOf = p =>
         {
             long stored = p.IsPart ? FileCrypto.StoredSize(p.Length) : Compression.PlannedStoredSize(cat.Settings, p.File);
-            long space = DiscSpace.OnDisc(stored);
+            long space = DiscSpace.OnDisc(stored) + DiscSpace.ManifestShare(p);
             return p.IsPart && stored <= largest ? Math.Min(space, largest) : space;
         };
-        // the part size leaves room for encryption and the file system, so a layout works whether later parts are
-        // encrypted or not
-        long newPartSize = FileCrypto.MaxPlainSize(largest - DiscSpace.OnDisc(0) - DiscSpace.Sector);
+        // the part size leaves room for encryption, the file system and the manifest line, so a layout works whether
+        // later parts are encrypted or not
+        long PartSizeFor(FileRecord f) =>
+            FileCrypto.MaxPlainSize(largest - DiscSpace.OnDisc(0) - DiscSpace.Sector - DiscSpace.ManifestShare(new Piece(f, 1, 2, 0, 0)));
         var pending = new List<Piece>();
         var tooBig = new List<FileRecord>();
         int furtherCopies = 0;
@@ -175,8 +177,8 @@ public sealed class Archive
             }
             else if (cat.Blanks.Count > 0 && sizeOf(Piece.Whole(f)) > largest)
             {
-                if (split && newPartSize > 0)
-                    for (int n = 0; n < missing; n++) pending.AddRange(SplitLayout.Pieces(f, newPartSize));
+                if (split && PartSizeFor(f) is > 0 and long partSize)
+                    for (int n = 0; n < missing; n++) pending.AddRange(SplitLayout.Pieces(f, partSize));
                 else { tooBig.Add(f); pending.Add(Piece.Whole(f)); }
             }
             else

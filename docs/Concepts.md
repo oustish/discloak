@@ -55,16 +55,16 @@ A burned disc that is not finalized can take more data in further *sessions* ([A
 
 <a id="disc-space"></a>**Space on a disc** is counted the way the disc's file system (UDF) uses it: every file ends on a
 2 KiB sector and has a file entry (one more sector) and an entry in its folder's list. So a file takes its encrypted
-size rounded up to 2 KiB, plus about 2.1 KB. For large files that is nothing; for 100,000 small files it is about
-300 MB, and `plan`, `stage` and `--append` count it, so a disc full of small files still burns. (`plan` shows these
+size rounded up to 2 KiB, plus about 2.1 KB. Each file also has a line in the disc's encrypted manifest (its path and
+hashes, roughly 300-500 bytes). For large files that is nothing; for 100,000 small files it is about 330 MB, and
+`plan`, `stage` and `--append` count all of it, so a disc full of small files still burns. (`plan` shows these
 figures: a disc of small files holds fewer bytes than its size.)
 
 <a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's own fixed overhead
-(volume descriptors, the metadata partition) and the disc's own files: `disc.json`, `bdxl.key`, `README.txt`, the
-encrypted manifest (roughly 300 bytes per file on the disc) and, with `--with-catalog`, the catalog backup: the
-catalog's `.enc` files (compressed, roughly 100-150 bytes per catalogued file) plus 25% repair data. If those come out
-larger than the reserve, `stage` warns that the folder will not fit. Raise it with
-`bdxl blanks reserve 500MB`.
+(volume descriptors, the metadata partition), the disc's folders and its own small files (`disc.json`, `bdxl.key`,
+`README.txt`; the manifest is counted with the files) and, with `--with-catalog`, the catalog backup: the catalog's
+`.enc` files (compressed, roughly 100-150 bytes per catalogued file) plus 25% repair data. If those come out larger
+than the reserve, `stage` warns that the folder will not fit. Raise it with `bdxl blanks reserve 500MB`.
 
 ## Encryption, the password and the master key
 

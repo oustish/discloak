@@ -52,6 +52,18 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
+    public void A_disc_of_tiny_files_fits_with_its_manifest_and_file_system()
+    {
+        for (int i = 0; i < 200; i++) tmp.RandomFile($"src/tiny/{i:D3}.txt", 10, seed: i);
+        Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "400KB", "--reserve", "40KB"));   // ~30 KB: folders, disc.json, bdxl.key, README
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg")));                       // no "will not burn" warning (exit 2)
+        Assert.True(DiscSpace.Folder(Disc("BDXL-0001")) <= 400_000);
+        int staged = Directory.GetFiles(Path.Combine(Disc("BDXL-0001"), "data"), "*.enc", SearchOption.AllDirectories).Length;
+        Assert.InRange(staged, 50, 199);                                       // only what fits, by space on the disc, not by bytes
+    }
+
+    [Fact]
     public void Scanning_with_several_threads_gives_the_same_catalog_as_one_thread()
     {
         tmp.RandomFile("src/big.bin", 3_000_000, seed: 100);   // finishes last, while the others are hashed beside it

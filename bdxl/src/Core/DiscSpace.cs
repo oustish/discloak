@@ -17,6 +17,26 @@ public static class DiscSpace
     /// <summary>Space one file of this size takes, its folder-list entry included (for planning).</summary>
     public static long OnDisc(long bytes) => RoundUp(bytes) + Sector + FolderEntry;
 
+    /// <summary>
+    /// Bytes the piece's line takes in the disc's manifest (manifest.jsonl.enc lists every stored file with its path and
+    /// hashes, ~300 bytes each: a disc of a million tiny files has a 300 MB manifest). Measured on a line with the
+    /// longest values a field can have, plus the file's own path - so never less than the real line.
+    /// </summary>
+    public static long ManifestShare(Piece p) =>
+        (p.IsPart ? ManifestPartLine : ManifestWholeLine) + Encoding.UTF8.GetByteCount(p.File.RootName) + 1 +
+        Encoding.UTF8.GetByteCount(p.File.RelPath) + p.File.RelPath.Count(ch => ch is '"' or '\\');
+
+    static readonly long ManifestWholeLine = SampleLine(part: false), ManifestPartLine = SampleLine(part: true);
+
+    static long SampleLine(bool part)
+    {
+        string hash = new('F', 64);
+        var line = new ManifestLine("data/9999/9999999.enc", long.MaxValue, hash, true, hash,
+            part ? 99_999 : null, part ? 99_999 : null, part ? long.MaxValue : null, part ? long.MaxValue : null,
+            part ? long.MaxValue : null, part ? hash : null, "", 22);
+        return JsonStore.LinesToBytes([line]).Length + 1;   // + encryption: 21 bytes per MiB of manifest
+    }
+
     /// <summary>Space a whole folder takes when burned: every file and sub-folder with its entries.</summary>
     public static long Folder(string dir)
     {

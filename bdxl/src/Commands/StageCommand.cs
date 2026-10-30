@@ -95,7 +95,7 @@ public sealed class StageCommand : ICommand
             }
 
             c.Cat.Blanks.Remove(bin.Blank);   // this blank disc is now spoken for
-            var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionSpace: Space(manifest), occupiedBefore: 0, c.Key);
+            var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionSpace: Space(manifest, manifest), occupiedBefore: 0, c.Key);
             Console.WriteLine($"{label}: {disc.FileCount:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes staged in {dir}" +
                               (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
 
@@ -172,7 +172,7 @@ public sealed class StageCommand : ICommand
         var manifest = c.Arc.CopiesOn(disc.Label).Select(x => ManifestLine.For(x.Copy, x.File))
                             .OrderBy(m => m.Path, StringComparer.Ordinal).ToList();
         long sessionFiles = disc.UsedBytes - session.UsedBytesBefore;
-        var (dups, folderBytes) = Finish(c, disc, dir, manifest, Space(stored), occupiedBefore, key);
+        var (dups, folderBytes) = Finish(c, disc, dir, manifest, Space(stored, manifest), occupiedBefore, key);
         Console.WriteLine($"{disc.Label} session {session.Number}: {disc.FileCount - session.FileCountBefore:N0} files, " +
                           $"{SizeText.Bytes(sessionFiles)} bytes staged in {dir}" +
                           (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
@@ -267,8 +267,12 @@ public sealed class StageCommand : ICommand
         return manifest;
     }
 
-    /// <summary>Space the stored files of a session take on the disc (sectors and file system entries included).</summary>
-    static long Space(List<ManifestLine> stored) => stored.Sum(m => DiscSpace.OnDisc(m.Size));
+    /// <summary>
+    /// Space a session takes on the disc: its stored files (sectors and file system entries included) and the manifest
+    /// it writes (for an appended session that lists the files of every session).
+    /// </summary>
+    static long Space(List<ManifestLine> stored, List<ManifestLine> manifest) =>
+        stored.Sum(m => DiscSpace.OnDisc(m.Size)) + DiscSpace.OnDisc(FileCrypto.StoredSize(JsonStore.LinesToBytes(manifest).Length));
 
     /// <summary>
     /// Writes manifest + disc.json, links duplicates, saves, and writes the catalog backup (--with-catalog). The disc
