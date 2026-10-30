@@ -14,6 +14,8 @@
   everything but `disc.json`: file names, manifest and `_catalog` backup (see Key rules).
   Then `stage --append <label>`: a burned disc that is not full gets another session (see Key rules).
   `scan` prints every file as soon as it is hashed (progress by bytes, speed, time left), with a status line rewritten in place while large files are hashed.
+- **In progress:** encrypted catalog + master key + agent, then encrypted-only discs and compression. The agreed
+  design and its phases are in `ENCRYPTION.md`.
 
 ## Build / run
 ```
