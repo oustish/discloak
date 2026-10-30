@@ -34,13 +34,13 @@ public sealed class MasterKey : IDisposable
         if (KeyIdBytes.Length != KeyIdSize) throw new ArgumentException("A key id has 8 bytes.");
     }
 
-    /// <summary>A new random master key for a new catalog.</summary>
-    public static MasterKey CreateNew()
+    /// <summary>A new random master key: for a new catalog, or (with its catalog id) the next key of a rotation.</summary>
+    public static MasterKey CreateNew(string? catalogId = null)
     {
         var bytes = RandomNumberGenerator.GetBytes(Size);
         try
         {
-            return new MasterKey(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
+            return new MasterKey(catalogId ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(16)),
                                  Convert.ToHexString(RandomNumberGenerator.GetBytes(KeyIdSize)), bytes);
         }
         finally { CryptographicOperations.ZeroMemory(bytes); }
@@ -66,4 +66,79 @@ public sealed class MasterKey : IDisposable
     }
 
     public void Dispose() => CryptographicOperations.ZeroMemory(key);
+}
+
+/// <summary>
+/// Every master key a catalog has had, oldest first; the last one is current and encrypts everything new. A key
+/// rotation ('password change --rotate-key') adds one; keys are never removed, so every disc stays readable. What
+/// was encrypted is found by the key id in its header (FileCrypto) or record (DiscRecord.KeyId).
+/// </summary>
+public sealed class KeyRing : IDisposable
+{
+    const int EntrySize = MasterKey.KeyIdSize + MasterKey.Size;
+    readonly List<MasterKey> keys;
+
+    public KeyRing(IEnumerable<MasterKey> keys)
+    {
+        this.keys = keys.ToList();
+        if (this.keys.Count == 0) throw new ArgumentException("A key ring holds at least one key.");
+        if (this.keys.Select(k => k.CatalogId).Distinct().Count() != 1) throw new ArgumentException("All keys of a ring belong to one catalog.");
+    }
+
+    /// <summary>A ring of a single key (the key is owned by the ring from now on).</summary>
+    public static KeyRing Of(MasterKey key) => new([key]);
+
+    public MasterKey Current => keys[^1];
+    public IReadOnlyList<MasterKey> All => keys;
+    public string CatalogId => Current.CatalogId;
+    public string KeyId => Current.KeyId;
+
+    public MasterKey? Find(string? keyId) =>
+        keyId == null ? null : keys.FirstOrDefault(k => k.KeyId.Equals(keyId, StringComparison.OrdinalIgnoreCase));
+
+    public MasterKey? Find(ReadOnlySpan<byte> keyId)
+    {
+        foreach (var k in keys) if (keyId.SequenceEqual(k.KeyIdBytes)) return k;
+        return null;
+    }
+
+    public bool Contains(string? keyId) => Find(keyId) != null;
+
+    /// <summary>The key with this id (null = the current one); a key this catalog does not have is an error.</summary>
+    public MasterKey For(string? keyId) => keyId == null ? Current
+        : Find(keyId) ?? throw new UserException($"This catalog has no key with the id {keyId} (its keys: {string.Join(", ", keys.Select(k => k.KeyId))}).");
+
+    /// <summary>Adds the next key; it becomes the current one.</summary>
+    public void Add(MasterKey key)
+    {
+        if (key.CatalogId != CatalogId) throw new ArgumentException("The new key belongs to another catalog.");
+        keys.Add(key);
+    }
+
+    /// <summary>key id (8) + key (32) for each key, oldest first: what an envelope of bdxl-key-2 encrypts.</summary>
+    public byte[] Serialize()
+    {
+        var bytes = GC.AllocateArray<byte>(EntrySize * keys.Count, pinned: true);
+        for (int i = 0; i < keys.Count; i++)
+        {
+            keys[i].KeyIdBytes.CopyTo(bytes, i * EntrySize);
+            keys[i].Bytes.CopyTo(bytes.AsSpan(i * EntrySize + MasterKey.KeyIdSize));
+        }
+        return bytes;
+    }
+
+    public static KeyRing Deserialize(string catalogId, ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length == 0 || bytes.Length % EntrySize != 0) throw new InvalidDataException("damaged key ring");
+        var list = new List<MasterKey>();
+        for (int i = 0; i < bytes.Length; i += EntrySize)
+            list.Add(new MasterKey(catalogId, Convert.ToHexString(bytes.Slice(i, MasterKey.KeyIdSize)),
+                                   bytes.Slice(i + MasterKey.KeyIdSize, MasterKey.Size)));
+        return new KeyRing(list);
+    }
+
+    public void Dispose()
+    {
+        foreach (var k in keys) k.Dispose();
+    }
 }

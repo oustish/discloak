@@ -65,7 +65,7 @@ public static class Program
         finally
         {
             Interrupt.End();
-            cat.Key?.Dispose();
+            cat.Keys?.Dispose();
         }
     }
 
@@ -73,7 +73,7 @@ public static class Program
     static Catalog OpenCatalog(string dir, string command, Options opt)
     {
         CatalogSetup.RecoverInterruptedMigration(dir);
-        MasterKey key;
+        KeyRing key;
         switch (Catalog.Detect(dir))
         {
             case CatalogKind.None:

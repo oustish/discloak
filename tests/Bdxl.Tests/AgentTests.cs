@@ -32,7 +32,7 @@ public class AgentTests : IDisposable
     }
 
     AgentResponse? Put(MasterKey key, int idleMinutes = 30, int maxMinutes = 480, bool onLock = true, bool onSleep = true) =>
-        client.Put(key, @"C:\cat-" + key.CatalogId[..4], TimeSpan.FromMinutes(idleMinutes), TimeSpan.FromMinutes(maxMinutes), onLock, onSleep);
+        client.Put(KeyRing.Of(key), @"C:\cat-" + key.CatalogId[..4], TimeSpan.FromMinutes(idleMinutes), TimeSpan.FromMinutes(maxMinutes), onLock, onSleep);
 
     [Fact]
     public void A_key_handed_over_comes_back_until_it_is_locked()
@@ -43,7 +43,7 @@ public class AgentTests : IDisposable
         Assert.True(Put(other)!.Ok);
 
         using (var back = client.TryGetKey(key.CatalogId, key.KeyId))
-            Assert.Equal(key.Bytes.ToArray(), back!.Bytes.ToArray());
+            Assert.Equal(key.Bytes.ToArray(), back!.Current.Bytes.ToArray());
         Assert.Null(client.TryGetKey(key.CatalogId, "0000000000000000"));   // another key id: not this key
         Assert.Equal(2, client.Status()!.Entries!.Count);
 
@@ -119,7 +119,7 @@ public class AgentTests : IDisposable
     public void Commands_take_the_key_from_the_agent_instead_of_the_password()
     {
         string dir = TestKeys.Init(tmp.File("cat"));
-        using (var key = TestKeys.Key(dir)) Put(key);
+        using (var keys = TestKeys.Key(dir)) client.Put(keys, dir, TimeSpan.FromMinutes(30), TimeSpan.FromHours(8), true, true);
 
         Environment.SetEnvironmentVariable("BDXL_AGENT", "on");
         Environment.SetEnvironmentVariable("BDXL_AGENT_PIPE", pipe);

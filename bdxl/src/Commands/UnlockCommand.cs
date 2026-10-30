@@ -60,7 +60,7 @@ public sealed class UnlockCommand : ICommand
     }
 
     static AgentResponse? Put(AgentClient client, Ctx c, TimeSpan idle, TimeSpan max) =>
-        client.Put(c.Key, c.Cat.Dir, idle, max, c.Settings.LockOnSessionLock, c.Settings.LockOnSleep);
+        client.Put(c.Keys, c.Cat.Dir, idle, max, c.Settings.LockOnSessionLock, c.Settings.LockOnSleep);
 
     static void WaitUntilGone(AgentClient client)
     {

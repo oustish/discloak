@@ -87,7 +87,7 @@ public sealed class CatalogCommand : ICommand
     /// <summary>The user vouches for the current contents: every file must still decrypt and parse; then the hash list is written anew.</summary>
     static int Accept(Ctx c)
     {
-        var cat = Catalog.Load(c.Cat.Dir, "catalog-accept", c.Key, ignoreIntegrity: true);
+        var cat = Catalog.Load(c.Cat.Dir, "catalog-accept", c.Keys, ignoreIntegrity: true);
         var unreadable = cat.Integrity.Problems.FirstOrDefault(p => p.StartsWith("Cannot be read", StringComparison.Ordinal));
         if (unreadable != null) throw new UserException(unreadable + " - it cannot be accepted; roll back or restore a backup.");
         if (cat.Integrity.State == IntegrityState.Ok) { Console.WriteLine("The catalog is already consistent; nothing to accept."); return 0; }
@@ -108,7 +108,7 @@ public sealed class CatalogCommand : ICommand
         Console.WriteLine($"Older catalog versions (newest first; the last {c.Settings.HistoryKeep} are kept):");
         foreach (string id in versions)
         {
-            var problems = Catalog.VerifySnapshot(c.Cat.Dir, id, c.Key);
+            var problems = Catalog.VerifySnapshot(c.Cat.Dir, id, c.Keys);
             Console.WriteLine($"  {id}   {(problems.Count == 0 ? "hash OK" : "PROBLEM: " + problems[0])}");
         }
         Console.WriteLine("\nThe name shows when it was saved and which command was about to change the catalog.");
@@ -119,15 +119,15 @@ public sealed class CatalogCommand : ICommand
     {
         if (c.Args.Count != 2) throw new UserException("Usage: catalog rollback <id>   (ids: catalog history)");
         string id = c.Args[1];
-        var problems = Catalog.VerifySnapshot(c.Cat.Dir, id, c.Key);
+        var problems = Catalog.VerifySnapshot(c.Cat.Dir, id, c.Keys);
         if (problems.Any(p => p.StartsWith("No such version", StringComparison.Ordinal) || p.StartsWith("written with another key", StringComparison.Ordinal)))
             throw new UserException($"Version {id}: {problems[0]}.");
         if (problems.Count > 0 && !c.Opt.Has("force"))
             throw new UserException($"Version {id} cannot be trusted: {problems[0]}. Use --force to restore it anyway.");
         if (!Ui.Confirm(c.Opt, $"Replace the current catalog with version {id}? (the current one is saved to history first)")) { Console.WriteLine("Cancelled."); return 1; }
 
-        Catalog.RestoreSnapshot(c.Cat.Dir, id, "catalog-rollback", Math.Max(1, c.Settings.HistoryKeep), c.Key);
-        var after = Catalog.Load(c.Cat.Dir, "catalog-rollback", c.Key);
+        Catalog.RestoreSnapshot(c.Cat.Dir, id, "catalog-rollback", Math.Max(1, c.Settings.HistoryKeep), c.Keys);
+        var after = Catalog.Load(c.Cat.Dir, "catalog-rollback", c.Keys);
         Console.WriteLine($"Restored version {id}: {after.Files.Count:N0} files, {after.Discs.Count:N0} discs (integrity: {after.Integrity.State}).");
         return after.Integrity.State == IntegrityState.Broken ? 4 : 0;
     }
@@ -303,7 +303,7 @@ public sealed class CatalogCommand : ICommand
         if (kind == CatalogKind.Plain)
             throw new UserException($"{target} holds a catalog that is not encrypted; let bdxl encrypt it first (any command), or move it away.");
         bool existing = kind == CatalogKind.Encrypted;
-        MasterKey key;
+        KeyRing key;
         if (existing)
         {
             var current = KeyFile.ReadFrom(target)!;

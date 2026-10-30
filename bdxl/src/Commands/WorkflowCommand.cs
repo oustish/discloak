@@ -62,6 +62,7 @@ public sealed class WorkflowCommand : ICommand
                  bdxl catalog backup verify F:\safe\catalog-... --repair
                  bdxl catalog export F:\plain   /   catalog import F:\plain     read or fix the catalog as plain JSON
                  bdxl password change                                  new password (--recovery if it was lost)
+                 bdxl password change --rotate-key                     it may have leaked: a new key for everything new
                  bdxl init --key-from G:\ --catalog D:\new-catalog      catalog lost: start again with an encrypted disc's key
 
             8. Discs you already have

@@ -14,7 +14,7 @@ public sealed class AgentServer : IDisposable
 {
     sealed class Entry
     {
-        public required MasterKey Key;
+        public required KeyRing Key;
         public string? CatalogDir;
         public TimeSpan Idle, Max;
         public DateTime UnlockedUtc, LastUsedUtc;
@@ -99,7 +99,9 @@ public sealed class AgentServer : IDisposable
             {
                 var request = AgentProtocol.Read<AgentRequest>(pipe);
                 if (request == null) return;
-                AgentProtocol.Write(pipe, Handle(request));
+                var response = Handle(request);
+                try { AgentProtocol.Write(pipe, response); }
+                finally { if (response.Key != null) CryptographicOperations.ZeroMemory(response.Key); }
             }
             catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidDataException or JsonException)
             {
@@ -124,26 +126,30 @@ public sealed class AgentServer : IDisposable
                     if (r.CatalogId != null && entries.TryGetValue(r.CatalogId, out var e) && (r.KeyId == null || e.Key.KeyId == r.KeyId))
                     {
                         e.LastUsedUtc = now;
-                        response.Key = e.Key.Bytes.ToArray();
+                        response.Key = e.Key.Serialize();   // zeroed once it is sent
                         response.KeyId = e.Key.KeyId;
                     }
                     response.Ok = true;
                     return response;
 
                 case "put":
-                    if (r.CatalogId == null || r.KeyId == null || r.Key is not { Length: MasterKey.Size })
-                        return Fail(response, "put needs a catalog id, key id and key");
+                    if (r.CatalogId == null || r.KeyId == null || r.Key is not { Length: > 0 })
+                        return Fail(response, "put needs a catalog id, key id and key ring");
+                    KeyRing ring;
+                    try { ring = KeyRing.Deserialize(r.CatalogId, r.Key); }
+                    catch (InvalidDataException) { return Fail(response, "damaged key ring"); }
+                    finally { CryptographicOperations.ZeroMemory(r.Key); }
+                    if (ring.KeyId != r.KeyId) { ring.Dispose(); return Fail(response, "the key ring's current key is not the one named"); }
                     if (entries.Remove(r.CatalogId, out var old)) old.Key.Dispose();
                     entries[r.CatalogId] = new Entry
                     {
-                        Key = new MasterKey(r.CatalogId, r.KeyId, r.Key),
+                        Key = ring,
                         CatalogDir = r.CatalogDir,
                         Idle = TimeSpan.FromSeconds(Math.Max(60, r.IdleSeconds ?? 1800)),
                         Max = TimeSpan.FromSeconds(Math.Max(60, r.MaxSeconds ?? 8 * 3600)),
                         UnlockedUtc = now, LastUsedUtc = now,
                         LockOnSessionLock = r.LockOnSessionLock ?? true, LockOnSleep = r.LockOnSleep ?? true
                     };
-                    CryptographicOperations.ZeroMemory(r.Key);
                     hadKeys = true;
                     log($"unlocked {r.CatalogId} ({r.CatalogDir})");
                     response.Ok = true;

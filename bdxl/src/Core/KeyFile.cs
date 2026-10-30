@@ -1,6 +1,9 @@
 namespace Bdxl;
 
-/// <summary>One wrapped copy of the master key: by the password (Argon2id) or by the recovery key (HKDF).</summary>
+/// <summary>
+/// One wrapped copy of the catalog's keys: by the password (Argon2id) or by the recovery key (HKDF). A ring envelope
+/// (bdxl-key-2) holds every master key so far (KeyRing.Serialize); an envelope of bdxl-key-1 holds a single key.
+/// </summary>
 public sealed class KeyEnvelope
 {
     public const string PasswordKind = "password";
@@ -13,26 +16,32 @@ public sealed class KeyEnvelope
     public int? Parallelism { get; set; }
     public byte[] Salt { get; set; } = [];
     public byte[] Nonce { get; set; } = [];
-    public byte[] Wrapped { get; set; } = [];       // AES-256-GCM ciphertext of the master key + tag
+    public byte[] Wrapped { get; set; } = [];       // AES-256-GCM ciphertext of the key(s) + tag
     public DateTime CreatedUtc { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Ring { get; set; }                  // holds a key ring (else one key: bdxl-key-1)
+    public string? KeyId { get; set; }              // ring: the current key's id when it was sealed (else the file's KeyId)
 
     [JsonIgnore] public KdfParams Params => new(MemoryKiB ?? 0, Passes ?? 0);
 }
 
 /// <summary>
-/// bdxl.key: the catalog id, the key id and the envelopes of the master key (see ENCRYPTION.md). Plain JSON, safe
-/// to store openly: without the password or the recovery key it gives nothing away. Lives next to the catalog
-/// (never in its history), in every catalog backup and on every disc.
+/// bdxl.key: the catalog id, the current key id and the envelopes of the catalog's keys (see ENCRYPTION.md). Plain
+/// JSON, safe to store openly: without the password or the recovery key it gives nothing away. Lives next to the
+/// catalog (never in its history), in every catalog backup and on every disc. Written as bdxl-key-2 (key rings);
+/// bdxl-key-1 files (one key) are read as rings of one.
 /// </summary>
 public sealed class KeyFile
 {
     public const string FileName = "bdxl.key";
-    public const string CurrentFormat = "bdxl-key-1";
+    public const string Format1 = "bdxl-key-1";
+    public const string CurrentFormat = "bdxl-key-2";
     const int TagSize = 16;
 
     public string Format { get; set; } = CurrentFormat;
     public string CatalogId { get; set; } = "";
-    public string KeyId { get; set; } = "";
+    public string KeyId { get; set; } = "";          // the current key's id
     public DateTime CreatedUtc { get; set; }
     public List<KeyEnvelope> Envelopes { get; set; } = new();
 
@@ -49,7 +58,7 @@ public sealed class KeyFile
         KeyFile? k;
         try { k = JsonStore.ReadObject<KeyFile>(path); }
         catch (JsonException ex) { throw new InvalidDataException($"{FileName} cannot be read: {ex.Message}"); }
-        if (k == null || k.Format != CurrentFormat || k.CatalogId.Length != 32 || k.KeyId.Length != MasterKey.KeyIdSize * 2)
+        if (k == null || k.Format is not (Format1 or CurrentFormat) || k.CatalogId.Length != 32 || k.KeyId.Length != MasterKey.KeyIdSize * 2)
             throw new InvalidDataException($"{path} is not a bdxl key file this version understands");
         return k;
     }
@@ -72,16 +81,16 @@ public sealed class KeyFile
         File.Move(tmp, path, overwrite: true);
     }
 
-    /// <summary>A new key file for a new master key, protected by password.</summary>
-    public static KeyFile Create(MasterKey key, string password, KdfParams kdf)
+    /// <summary>A new key file for a new catalog's key(s), protected by password.</summary>
+    public static KeyFile Create(KeyRing keys, string password, KdfParams kdf)
     {
-        var file = new KeyFile { CatalogId = key.CatalogId, KeyId = key.KeyId, CreatedUtc = DateTime.UtcNow };
-        file.SetPassword(key, password, kdf);
+        var file = new KeyFile { CatalogId = keys.CatalogId, KeyId = keys.KeyId, CreatedUtc = DateTime.UtcNow };
+        file.SetPassword(keys, password, kdf);
         return file;
     }
 
-    /// <summary>The master key, or null if the password is wrong.</summary>
-    public MasterKey? TryUnlock(string password)
+    /// <summary>The catalog's keys, or null if the password is wrong.</summary>
+    public KeyRing? TryUnlock(string password)
     {
         var e = Password ?? throw new InvalidDataException($"{FileName} has no password envelope");
         if (e.Kdf != "argon2id" || e.Parallelism is not (null or 1) || e.Salt.Length != Kdf.SaltSize)
@@ -91,8 +100,8 @@ public sealed class KeyFile
         finally { CryptographicOperations.ZeroMemory(wrapping); }
     }
 
-    /// <summary>The master key, or null if the recovery key is not this catalog's.</summary>
-    public MasterKey? TryUnlockWithRecoveryKey(ReadOnlySpan<byte> recoveryKey)
+    /// <summary>The catalog's keys, or null if the recovery key is not this catalog's.</summary>
+    public KeyRing? TryUnlockWithRecoveryKey(ReadOnlySpan<byte> recoveryKey)
     {
         var e = Recovery ?? throw new UserException("This catalog has no recovery key.");
         var wrapping = RecoveryWrappingKey(recoveryKey, e.Salt);
@@ -100,8 +109,8 @@ public sealed class KeyFile
         finally { CryptographicOperations.ZeroMemory(wrapping); }
     }
 
-    /// <summary>Replaces the password envelope (password change); the master key stays the same.</summary>
-    public void SetPassword(MasterKey key, string password, KdfParams kdf)
+    /// <summary>Replaces the password envelope with one of the whole ring (password change, key rotation).</summary>
+    public void SetPassword(KeyRing keys, string password, KdfParams kdf)
     {
         var salt = RandomNumberGenerator.GetBytes(Kdf.SaltSize);
         var wrapping = Bdxl.Kdf.Derive(password, salt, kdf);
@@ -110,13 +119,13 @@ public sealed class KeyFile
             Kind = KeyEnvelope.PasswordKind, Kdf = "argon2id", MemoryKiB = kdf.MemoryKiB, Passes = kdf.Passes, Parallelism = 1,
             Salt = salt, CreatedUtc = DateTime.UtcNow
         };
-        try { Seal(e, key, wrapping); }
+        try { Seal(e, keys, wrapping); }
         finally { CryptographicOperations.ZeroMemory(wrapping); }
-        Replace(e);
+        Replace(e, keys);
     }
 
     /// <summary>Adds (or replaces) the recovery envelope; returns the recovery key as text, to be shown once.</summary>
-    public string SetRecoveryKey(MasterKey key)
+    public string SetRecoveryKey(KeyRing keys)
     {
         var recovery = RecoveryKey.New();
         try
@@ -124,9 +133,9 @@ public sealed class KeyFile
             var salt = RandomNumberGenerator.GetBytes(32);
             var e = new KeyEnvelope { Kind = KeyEnvelope.RecoveryKind, Kdf = "hkdf-sha256", Salt = salt, CreatedUtc = DateTime.UtcNow };
             var wrapping = RecoveryWrappingKey(recovery, salt);
-            try { Seal(e, key, wrapping); }
+            try { Seal(e, keys, wrapping); }
             finally { CryptographicOperations.ZeroMemory(wrapping); }
-            Replace(e);
+            Replace(e, keys);
             return RecoveryKey.Format(recovery);
         }
         finally { CryptographicOperations.ZeroMemory(recovery); }
@@ -134,11 +143,13 @@ public sealed class KeyFile
 
     public bool RemoveRecoveryKey() => Envelopes.RemoveAll(e => e.Kind == KeyEnvelope.RecoveryKind) > 0;
 
-    void Replace(KeyEnvelope e)
+    void Replace(KeyEnvelope e, KeyRing keys)
     {
         Envelopes.RemoveAll(x => x.Kind == e.Kind);
         Envelopes.Add(e);
         Envelopes.Sort((a, b) => string.CompareOrdinal(a.Kind, b.Kind));   // "password" before "recovery"
+        KeyId = keys.KeyId;
+        Format = CurrentFormat;
     }
 
     static byte[] RecoveryWrappingKey(ReadOnlySpan<byte> recoveryKey, ReadOnlySpan<byte> salt)
@@ -149,39 +160,51 @@ public sealed class KeyFile
         return result;
     }
 
-    byte[] Aad(string kind) => Encoding.ASCII.GetBytes($"{CurrentFormat}|{CatalogId}|{KeyId}|{kind}");
+    /// <summary>bdxl-key-1|catalog|key id|kind for a single key; bdxl-key-2|catalog|current key id|kind for a ring.</summary>
+    byte[] Aad(KeyEnvelope e) =>
+        Encoding.ASCII.GetBytes($"{(e.Ring ? CurrentFormat : Format1)}|{CatalogId}|{e.KeyId ?? KeyId}|{e.Kind}");
 
-    void Seal(KeyEnvelope e, MasterKey key, byte[] wrapping)
+    void Seal(KeyEnvelope e, KeyRing keys, byte[] wrapping)
     {
+        e.Ring = true;
+        e.KeyId = keys.KeyId;
         e.Nonce = RandomNumberGenerator.GetBytes(12);
-        var wrapped = new byte[MasterKey.Size + TagSize];
-        using var aes = new AesGcm(wrapping, TagSize);
-        aes.Encrypt(e.Nonce, key.Bytes, wrapped.AsSpan(0, MasterKey.Size), wrapped.AsSpan(MasterKey.Size), Aad(e.Kind));
-        e.Wrapped = wrapped;
-        var back = Unwrap(e, wrapping);   // never hand out an envelope that does not open
-        bool same = back != null && back.AsSpan().SequenceEqual(key.Bytes);
-        if (back != null) CryptographicOperations.ZeroMemory(back);
-        if (!same) throw new CryptographicException("A new key envelope did not open again.");
-    }
-
-    byte[]? Unwrap(KeyEnvelope e, byte[] wrapping)
-    {
-        if (e.Nonce.Length != 12 || e.Wrapped.Length != MasterKey.Size + TagSize) throw new InvalidDataException($"{FileName}: damaged {e.Kind} envelope");
-        var plain = GC.AllocateArray<byte>(MasterKey.Size, pinned: true);
+        var plain = keys.Serialize();
         try
         {
-            using var aes = new AesGcm(wrapping, TagSize);
-            aes.Decrypt(e.Nonce, e.Wrapped.AsSpan(0, MasterKey.Size), e.Wrapped.AsSpan(MasterKey.Size), plain, Aad(e.Kind));
-            return plain;
+            var wrapped = new byte[plain.Length + TagSize];
+            using (var aes = new AesGcm(wrapping, TagSize))
+                aes.Encrypt(e.Nonce, plain, wrapped.AsSpan(0, plain.Length), wrapped.AsSpan(plain.Length), Aad(e));
+            e.Wrapped = wrapped;
         }
-        catch (CryptographicException) { return null; }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+
+        using var back = Open(e, wrapping);   // never hand out an envelope that does not open
+        if (back == null || back.All.Count != keys.All.Count || back.KeyId != keys.KeyId ||
+            !back.All.Zip(keys.All).All(p => p.First.Bytes.SequenceEqual(p.Second.Bytes)))
+            throw new CryptographicException("A new key envelope did not open again.");
     }
 
-    MasterKey? Open(KeyEnvelope e, byte[] wrapping)
+    KeyRing? Open(KeyEnvelope e, byte[] wrapping)
     {
-        var plain = Unwrap(e, wrapping);
-        if (plain == null) return null;
-        try { return new MasterKey(CatalogId, KeyId, plain); }
+        if (e.Nonce.Length != 12 || e.Wrapped.Length <= TagSize) throw new InvalidDataException($"{FileName}: damaged {e.Kind} envelope");
+        int n = e.Wrapped.Length - TagSize;
+        if (!e.Ring && n != MasterKey.Size) throw new InvalidDataException($"{FileName}: damaged {e.Kind} envelope");
+        var plain = GC.AllocateArray<byte>(n, pinned: true);
+        try
+        {
+            try
+            {
+                using var aes = new AesGcm(wrapping, TagSize);
+                aes.Decrypt(e.Nonce, e.Wrapped.AsSpan(0, n), e.Wrapped.AsSpan(n), plain, Aad(e));
+            }
+            catch (CryptographicException) { return null; }
+
+            if (!e.Ring) return KeyRing.Of(new MasterKey(CatalogId, KeyId, plain));
+            var ring = KeyRing.Deserialize(CatalogId, plain);
+            if (ring.KeyId != (e.KeyId ?? KeyId)) { ring.Dispose(); throw new InvalidDataException($"{FileName}: the {e.Kind} envelope's current key is not the one it names"); }
+            return ring;
+        }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
 }

@@ -7,7 +7,7 @@ public sealed class AgentRequest
     public string Op { get; set; } = "";
     public string? CatalogId { get; set; }
     public string? KeyId { get; set; }
-    public byte[]? Key { get; set; }
+    public byte[]? Key { get; set; }   // the key ring (KeyRing.Serialize)
     public string? CatalogDir { get; set; }          // only shown by 'unlock --status'
     public long? IdleSeconds { get; set; }
     public long? MaxSeconds { get; set; }
@@ -20,7 +20,7 @@ public sealed class AgentResponse
     public int Protocol { get; set; } = AgentProtocol.Version;
     public bool Ok { get; set; }
     public string? Error { get; set; }
-    public byte[]? Key { get; set; }
+    public byte[]? Key { get; set; }   // the key ring (KeyRing.Serialize)
     public string? KeyId { get; set; }
     public int Pid { get; set; }
     public string? Build { get; set; }
@@ -43,7 +43,7 @@ public sealed class AgentEntryInfo
 /// </summary>
 public static class AgentProtocol
 {
-    public const int Version = 1;
+    public const int Version = 2;   // 2: Key holds the catalog's key ring (KeyRing.Serialize), KeyId its current key
     const int MaxMessage = 64 * 1024;
 
     /// <summary>Pipe name: BDXL_AGENT_PIPE (tests), otherwise one per Windows user.</summary>

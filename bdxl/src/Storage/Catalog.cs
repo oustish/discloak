@@ -43,8 +43,8 @@ public enum CatalogKind
 }
 
 /// <summary>
-/// The catalog: files, discs, blanks and settings, each stored encrypted with the master key (BDXLENC2, purpose
-/// "catalog") as &lt;name&gt;.enc in one folder, with bdxl.key next to them (see ENCRYPTION.md).
+/// The catalog: files, discs, blanks and settings, each stored encrypted with the current master key (BDXLENC2, purpose
+/// "catalog"; read with whichever key of the ring wrote it) as &lt;name&gt;.enc in one folder, with bdxl.key next to them (see ENCRYPTION.md).
 ///  - integrity: catalog.hash.json holds a SHA-256 for each stored file and an HMAC over the list; checked on every load;
 ///  - versioning: before the first change a command makes, the previous state is copied to history/ (once per command).
 /// The plaintext never touches a disk.
@@ -60,7 +60,7 @@ public sealed class Catalog
 
     public string Dir { get; private set; } = "";
     public string CommandName { get; private set; } = "";
-    public MasterKey? Key { get; private set; }   // null only for a catalog that is never saved (tests)
+    public KeyRing? Keys { get; private set; }   // null only for a catalog that is never saved (tests); saved with Keys.Current
     public List<FileRecord> Files { get; private set; } = new();
     public List<DiscRecord> Discs { get; private set; } = new();
     public List<BlankDisc> Blanks { get; private set; } = new();
@@ -70,7 +70,7 @@ public sealed class Catalog
     bool snapshotDone;
     long generation;
 
-    public static Catalog CreateEmpty(string dir, string commandName, MasterKey? key = null) => new() { Dir = dir, CommandName = commandName, Key = key };
+    public static Catalog CreateEmpty(string dir, string commandName, KeyRing? keys = null) => new() { Dir = dir, CommandName = commandName, Keys = keys };
 
     public static CatalogKind Detect(string dir)
     {
@@ -79,9 +79,9 @@ public sealed class Catalog
     }
 
     /// <summary>Loads, verifies and decrypts the catalog. A broken catalog is returned EMPTY with State = Broken (unless ignoreIntegrity).</summary>
-    public static Catalog Load(string dir, string commandName, MasterKey key, bool ignoreIntegrity = false)
+    public static Catalog Load(string dir, string commandName, KeyRing key, bool ignoreIntegrity = false)
     {
-        var cat = new Catalog { Dir = dir, CommandName = commandName, Key = key };
+        var cat = new Catalog { Dir = dir, CommandName = commandName, Keys = key };
         cat.Integrity = CheckIntegrity(dir, key, out var manifest);
         cat.generation = manifest?.Generation ?? 0;
         if (cat.Integrity.State == IntegrityState.Broken && !ignoreIntegrity) return cat;
@@ -108,7 +108,7 @@ public sealed class Catalog
         return cat;
     }
 
-    static List<T> ReadLines<T>(string dir, string name, MasterKey key)
+    static List<T> ReadLines<T>(string dir, string name, KeyRing key)
     {
         string path = Path.Combine(dir, name + Suffix);
         if (!File.Exists(path)) return new List<T>();
@@ -141,9 +141,9 @@ public sealed class Catalog
     /// Checks the stored files of a catalog (or a snapshot / backup folder) against catalog.hash.json. Damage shows
     /// without a key; with the key, the HMAC also proves the list itself was written by this catalog in one save.
     /// </summary>
-    public static IntegrityReport CheckIntegrity(string dir, MasterKey? key) => CheckIntegrity(dir, key, out _);
+    public static IntegrityReport CheckIntegrity(string dir, KeyRing? key) => CheckIntegrity(dir, key, out _);
 
-    static IntegrityReport CheckIntegrity(string dir, MasterKey? key, out IntegrityManifest? manifest)
+    static IntegrityReport CheckIntegrity(string dir, KeyRing? key, out IntegrityManifest? manifest)
     {
         manifest = null;
         var report = new IntegrityReport();
@@ -188,10 +188,11 @@ public sealed class Catalog
 
         if (key != null)
         {
-            if (!string.Equals(manifest.KeyId, key.KeyId, StringComparison.OrdinalIgnoreCase))
-                report.Problems.Add($"written with another key (key id {manifest.KeyId}, this catalog's is {key.KeyId})");
+            var signer = key.Find(manifest.KeyId);   // a version saved before a key rotation names an older key
+            if (signer == null)
+                report.Problems.Add($"written with another key (key id {manifest.KeyId}, this catalog's are {string.Join(", ", key.All.Select(k => k.KeyId))})");
             else if (manifest.Mac == null || !CryptographicOperations.FixedTimeEquals(
-                         Convert.FromHexString(manifest.Mac), Convert.FromHexString(manifest.ComputeMac(key))))
+                         Convert.FromHexString(manifest.Mac), Convert.FromHexString(manifest.ComputeMac(signer))))
                 report.Problems.Add($"{IntegrityFile} fails its HMAC check (altered, or files mixed from different saves)");
         }
 
@@ -221,7 +222,7 @@ public sealed class Catalog
     {
         if (Integrity.State == IntegrityState.Broken)
             throw new InvalidOperationException("The catalog is broken; refusing to overwrite it. Run 'catalog check'.");
-        if (Key == null) throw new InvalidOperationException("This catalog has no key and cannot be saved.");
+        if (Keys == null) throw new InvalidOperationException("This catalog has no key and cannot be saved.");
 
         if (!snapshotDone)
         {
@@ -236,7 +237,7 @@ public sealed class Catalog
         WriteEncrypted("discs.jsonl", ms => JsonStore.WriteLinesTo(ms, Discs.OrderBy(d => d.Label, StringComparer.Ordinal)));
         WriteEncrypted("blanks.jsonl", ms => JsonStore.WriteLinesTo(ms, Blanks.OrderBy(b => b.Id, StringComparer.Ordinal)));
         WriteEncrypted("settings.json", ms => ms.Write(JsonStore.ObjectToBytes(Settings)));
-        WriteIntegrity(Dir, Key, ++generation);
+        WriteIntegrity(Dir, Keys.Current, ++generation);
         Integrity = new IntegrityReport { State = IntegrityState.Ok };
     }
 
@@ -248,7 +249,7 @@ public sealed class Catalog
         plain.Position = 0;
         string path = Path.Combine(Dir, name + Suffix), tmp = path + ".tmp";
         using (var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
-            FileCrypto.Encrypt(plain, output, Key!, KeyPurpose.Catalog);
+            FileCrypto.Encrypt(plain, output, Keys!.Current, KeyPurpose.Catalog);
         File.Move(tmp, path, overwrite: true);
     }
 
@@ -285,7 +286,7 @@ public sealed class Catalog
     }
 
     /// <summary>Checks a snapshot against its own hash file (and HMAC); returns problems (empty = fine).</summary>
-    public static List<string> VerifySnapshot(string dir, string id, MasterKey key)
+    public static List<string> VerifySnapshot(string dir, string id, KeyRing key)
     {
         string snap = Path.Combine(dir, HistoryFolder, id);
         if (!Directory.Exists(snap)) return new List<string> { $"No such version: {id}" };
@@ -297,7 +298,7 @@ public sealed class Catalog
     /// Puts an older version back. The current state is snapshotted first, so a rollback can be undone. A version
     /// that failed its check (restored with --force) gets a new hash file: the user vouched for it.
     /// </summary>
-    public static void RestoreSnapshot(string dir, string id, string commandName, int keep, MasterKey key)
+    public static void RestoreSnapshot(string dir, string id, string commandName, int keep, KeyRing key)
     {
         string snap = Path.Combine(dir, HistoryFolder, id);
         bool trusted = VerifySnapshot(dir, id, key).Count == 0;
@@ -311,6 +312,6 @@ public sealed class Catalog
             else if (File.Exists(to)) File.Delete(to);   // that version did not have this file
         }
         if (trusted) File.Copy(Path.Combine(snap, IntegrityFile), Path.Combine(dir, IntegrityFile), overwrite: true);
-        else WriteIntegrity(dir, key, 0);
+        else WriteIntegrity(dir, key.Current, 0);
     }
 }

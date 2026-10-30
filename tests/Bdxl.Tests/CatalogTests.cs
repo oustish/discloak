@@ -6,7 +6,7 @@ public class CatalogTests : IDisposable
     public void Dispose() => tmp.Dispose();
 
     string Dir => tmp.File("cat");
-    MasterKey Key => TestKeys.Key(TestKeys.Init(Dir));
+    KeyRing Key => TestKeys.Key(TestKeys.Init(Dir));
 
     /// <summary>One "command": load, change, save - like Program does.</summary>
     Catalog Run(string command, Action<Catalog> change)
@@ -237,7 +237,7 @@ public class CatalogTests : IDisposable
     public void A_password_change_keeps_everything_and_the_recovery_key_replaces_a_lost_password()
     {
         Run("scan", c => c.Files.Add(File("a.txt")));
-        string keyBefore = Convert.ToHexString(TestKeys.Key(Dir).Bytes);
+        string keyBefore = Convert.ToHexString(TestKeys.Key(Dir).Current.Bytes);
 
         Environment.SetEnvironmentVariable("BDXL_TEST_NEW_PW", "Brand-New-Pass-99#");
         Environment.SetEnvironmentVariable("BDXL_TEST_WRONG_PW", "Wrong-Horse-42!!");
@@ -246,7 +246,7 @@ public class CatalogTests : IDisposable
         Assert.Equal(1, Bdxl("status"));                                                     // the old password no longer opens it
         Assert.Equal(0, Bdxl("status", "--password-env", "BDXL_TEST_NEW_PW"));
         using (var key = KeyFile.ReadFrom(Dir)!.TryUnlock("Brand-New-Pass-99#")!)
-            Assert.Equal(keyBefore, Convert.ToHexString(key.Bytes));                         // same master key
+            Assert.Equal(keyBefore, Convert.ToHexString(key.Current.Bytes));                         // same master key
 
         var output = new StringWriter();
         var stdout = Console.Out;

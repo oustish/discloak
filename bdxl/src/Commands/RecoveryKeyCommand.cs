@@ -28,7 +28,7 @@ public sealed class RecoveryKeyCommand : ICommand
                     Console.WriteLine("Cancelled.");
                     return 1;
                 }
-                string text = file.SetRecoveryKey(c.Key);
+                string text = file.SetRecoveryKey(c.Keys);
                 file.WriteTo(dir);
                 CatalogSetup.ShowRecoveryKey(text);
                 return 0;

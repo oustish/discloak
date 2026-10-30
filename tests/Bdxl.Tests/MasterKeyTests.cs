@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Bdxl.Tests;
@@ -14,15 +15,18 @@ public class MasterKeyTests
         return d;
     }
 
+    static KeyRing NewRing() => KeyRing.Of(MasterKey.CreateNew());
+    static byte[] Raw(KeyRing r) => r.Current.Bytes.ToArray();
+
     [Fact]
     public void The_password_opens_the_master_key_and_a_wrong_one_does_not()
     {
-        using var key = MasterKey.CreateNew();
+        using var key = NewRing();
         var file = KeyFile.Create(key, Pw, Fast);
 
         using var back = file.TryUnlock(Pw);
         Assert.NotNull(back);
-        Assert.Equal(key.Bytes.ToArray(), back.Bytes.ToArray());
+        Assert.Equal(Raw(key), Raw(back));
         Assert.Equal(key.KeyId, back.KeyId);
         Assert.Null(file.TryUnlock("Wrong-Horse-42!"));
     }
@@ -30,29 +34,80 @@ public class MasterKeyTests
     [Fact]
     public void A_password_change_keeps_the_master_key_and_drops_the_old_password()
     {
-        using var key = MasterKey.CreateNew();
+        using var key = NewRing();
         var file = KeyFile.Create(key, Pw, Fast);
         var oldFile = JsonSerializer.Deserialize<KeyFile>(JsonSerializer.Serialize(file))!;   // e.g. on a burned disc
 
         file.SetPassword(key, "New-Password-77?", Fast);
         Assert.Null(file.TryUnlock(Pw));
         using var back = file.TryUnlock("New-Password-77?");
-        Assert.Equal(key.Bytes.ToArray(), back!.Bytes.ToArray());
+        Assert.Equal(Raw(key), Raw(back!));
 
         using var fromOld = oldFile.TryUnlock(Pw);   // the old envelope still opens the same master key
-        Assert.Equal(key.Bytes.ToArray(), fromOld!.Bytes.ToArray());
+        Assert.Equal(Raw(key), Raw(fromOld!));
+    }
+
+    [Fact]
+    public void A_rotation_adds_a_key_and_an_old_envelope_opens_only_the_old_ones()
+    {
+        using var ring = NewRing();
+        var file = KeyFile.Create(ring, Pw, Fast);
+        var beforeRotation = JsonSerializer.Deserialize<KeyFile>(JsonSerializer.Serialize(file))!;   // on a disc staged before
+        string oldId = ring.KeyId;
+
+        ring.Add(MasterKey.CreateNew(ring.CatalogId));
+        file.SetPassword(ring, "New-Password-77?", Fast);
+        Assert.NotEqual(oldId, file.KeyId);
+
+        using var now = file.TryUnlock("New-Password-77?")!;
+        Assert.Equal([oldId, ring.KeyId], now.All.Select(k => k.KeyId));
+        Assert.Equal(Raw(ring), Raw(now));
+        using var old = beforeRotation.TryUnlock(Pw)!;
+        Assert.Equal([oldId], old.All.Select(k => k.KeyId));      // a leaked old password + old disc: only the old key
+
+        // a file of the old key opens with the new ring, one of the new key not with the old ring
+        var oldData = FileCrypto.Seal(Data(100), ring.All[0], KeyPurpose.File);
+        var newData = FileCrypto.Seal(Data(100), ring.Current, KeyPurpose.File);
+        Assert.Equal(Data(100), FileCrypto.Open(oldData, now, KeyPurpose.File));
+        Assert.Equal(Data(100), FileCrypto.Open(newData, now, KeyPurpose.File));
+        Assert.Contains("another key", Assert.Throws<InvalidDataException>(() => FileCrypto.Open(newData, old, KeyPurpose.File)).Message);
+        Assert.Throws<ArgumentException>(() => ring.Add(MasterKey.CreateNew()));   // another catalog's key never joins
+    }
+
+    [Fact]
+    public void A_key_file_of_format_1_still_opens_and_is_written_as_a_ring_afterwards()
+    {
+        using var key = MasterKey.CreateNew();
+        var salt = RandomNumberGenerator.GetBytes(Kdf.SaltSize);
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var wrapped = new byte[48];
+        using (var aes = new AesGcm(Kdf.Derive(Pw, salt, Fast), 16))
+            aes.Encrypt(nonce, key.Bytes, wrapped.AsSpan(0, 32), wrapped.AsSpan(32),
+                        Encoding.ASCII.GetBytes($"bdxl-key-1|{key.CatalogId}|{key.KeyId}|password"));
+        var file = new KeyFile
+        {
+            Format = "bdxl-key-1", CatalogId = key.CatalogId, KeyId = key.KeyId,
+            Envelopes = [new KeyEnvelope { Kind = "password", Kdf = "argon2id", MemoryKiB = Fast.MemoryKiB, Passes = Fast.Passes, Parallelism = 1, Salt = salt, Nonce = nonce, Wrapped = wrapped }]
+        };
+
+        using var ring = file.TryUnlock(Pw)!;
+        Assert.Equal(key.Bytes.ToArray(), Raw(ring));
+        file.SetPassword(ring, Pw, Fast);
+        Assert.Equal(KeyFile.CurrentFormat, file.Format);
+        Assert.True(file.Password!.Ring);
+        Assert.Equal(key.Bytes.ToArray(), Raw(file.TryUnlock(Pw)!));
     }
 
     [Fact]
     public void The_recovery_key_opens_the_master_key()
     {
-        using var key = MasterKey.CreateNew();
+        using var key = NewRing();
         var file = KeyFile.Create(key, Pw, Fast);
         string text = file.SetRecoveryKey(key);
 
         var parsed = RecoveryKey.Parse(text.ToLowerInvariant().Replace('-', ' '), out _)!;
         using var back = file.TryUnlockWithRecoveryKey(parsed);
-        Assert.Equal(key.Bytes.ToArray(), back!.Bytes.ToArray());
+        Assert.Equal(Raw(key), Raw(back!));
         Assert.Null(file.TryUnlockWithRecoveryKey(RecoveryKey.New()));
 
         Assert.True(file.RemoveRecoveryKey());
@@ -63,8 +118,8 @@ public class MasterKeyTests
     [Fact]
     public void An_envelope_does_not_open_in_another_catalogs_key_file()
     {
-        using var a = MasterKey.CreateNew();
-        using var b = MasterKey.CreateNew();
+        using var a = NewRing();
+        using var b = NewRing();
         var fa = KeyFile.Create(a, Pw, Fast);
         var fb = KeyFile.Create(b, Pw, Fast);
         fb.Envelopes = fa.Envelopes;    // same password, envelope moved over
@@ -75,7 +130,7 @@ public class MasterKeyTests
     public void The_key_file_survives_a_write_and_read()
     {
         using var tmp = new TempDir();
-        using var key = MasterKey.CreateNew();
+        using var key = NewRing();
         var file = KeyFile.Create(key, Pw, Fast);
         file.SetRecoveryKey(key);
         file.WriteTo(tmp.Path);
@@ -85,14 +140,14 @@ public class MasterKeyTests
         Assert.Equal(2, back.Envelopes.Count);
         Assert.Equal(KeyEnvelope.PasswordKind, back.Envelopes[0].Kind);
         using var opened = back.TryUnlock(Pw);
-        Assert.Equal(key.Bytes.ToArray(), opened!.Bytes.ToArray());
+        Assert.Equal(Raw(key), Raw(opened!));
         Assert.Null(KeyFile.ReadFrom(tmp.File("nothing-here")));
     }
 
     [Fact]
     public void Unreasonable_kdf_settings_in_a_key_file_are_refused()
     {
-        using var key = MasterKey.CreateNew();
+        using var key = NewRing();
         var file = KeyFile.Create(key, Pw, Fast);
         file.Password!.MemoryKiB = 64L * 1024 * 1024;   // 64 GiB: would just exhaust memory
         Assert.Throws<InvalidDataException>(() => file.TryUnlock(Pw));

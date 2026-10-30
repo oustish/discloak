@@ -13,7 +13,7 @@ password (changeable) protects everything. This file is the agreed design; `HAND
 | Recovery key | Optional, opt-in: 32 random bytes shown once, a second envelope of the master key. |
 | Unlocked state | A background **agent** holds master keys in memory (never on disk), one per catalog id, with idle timeout + max lifetime, locked on Win+L / sleep, ends at sign-out. No cache file fallback. |
 | Write-once media | Every disc carries the envelope current when it was staged. A password change does not revoke the old password (old password + old disc still opens the master key); newest password + newest disc opens everything. Accepted. |
-| Key rotation | Not now; every encrypted object carries a key id so it can be added without a format change. |
+| Key rotation | `password change --rotate-key` (added after phase 4): a new master key for everything new; older keys stay in a key ring so every disc stays readable. |
 | Compression | Per alias (`off`/`auto`/`on` + level), zstd, per chunk inside the encrypted format; sizes counted during `scan` so planning stays exact. Later phase; the format reserves the flag now. |
 | Old formats | Nothing was staged before this design, so `BDXLENC1` and the per-disc password scheme are removed, not migrated. The plaintext catalog is migrated. |
 
@@ -162,4 +162,19 @@ plaintext catalog is migrated after confirmation (same code as `init`).
 4. (done) Compression per alias: `compression set <alias>|--default off|auto|on [--level N]`, default off. The
    level is recorded on each stored copy (`BackupRef.Compression`, manifest) so `restage` reproduces the size; counted
    sizes are tied to level + zstd library version and fall back to uncompressed sizes (so no overflow guard is needed).
-5. Later, if wanted: key rotation (key ring inside the encrypted catalog, selected by key id).
+5. (done) Key rotation, see below.
+
+## Key rotation (`password change --rotate-key`)
+
+- `bdxl.key` format `bdxl-key-2`: each envelope (`"ring": true`, `keyId` = the current key when sealed) encrypts a key
+  ring: key id (8) + key (32) for every key, oldest first, the last one current. AAD `bdxl-key-2|catalog|keyId|kind`.
+  `bdxl-key-1` files (one key) are read as rings of one; any write produces `bdxl-key-2`.
+- Rotation: a new key (same catalog id) is added to the ring, a new password envelope is made, and a new recovery key
+  if there was one (the old one could not wrap the new key); `bdxl.key` is written, then the catalog is saved under the
+  new key. History versions and catalog backups keep the key they were made with; readers pick the key by id (file
+  headers, `catalog.hash.json`'s key id, `DiscRecord.KeyId`), so a stop between the steps loses nothing.
+- New discs, catalog saves and backups use the current key. `stage --append`, `restage` and `discjson` use the disc's
+  own key, so every disc stays under one key. The agent holds the ring (protocol 2) and is locked after a rotation.
+- Each disc carries the ring as of its staging, under that day's password: a leaked old password + an old disc opens
+  only the keys up to then (that disc, older discs, their `_catalog` backups); the newest password + the newest disc
+  opens everything. A burned disc cannot be re-keyed except by `restage` + burning it again.

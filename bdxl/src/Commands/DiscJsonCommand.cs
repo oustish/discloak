@@ -26,10 +26,10 @@ public sealed class DiscJsonCommand : ICommand
             .ToList();
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, new FileInfo(x.FullPath).Length, x.File)).ToList();
 
-        if (disc.Encrypted && disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
-            throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
+        if (disc.Encrypted && disc.KeyId != null && !c.Keys.Contains(disc.KeyId))
+            throw new UserException($"{disc.Label} is encrypted with a key this catalog does not have (key id {disc.KeyId}).");
 
-        if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), c.Key, c.Cat.Dir, out string why))
+        if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), c.Keys.For(disc.Encrypted ? disc.KeyId : null), c.Cat.Dir, out string why))
         {
             Console.WriteLine($"disc.json written for {disc.Label} ({manifest.Count:N0} file(s) found on the disc).");
             return 0;

@@ -34,8 +34,8 @@ public sealed class AppendTarget
         if (disc.State != "burned") throw new UserException($"{disc.Label} is {disc.State}.");
         if (!disc.Encrypted)
             throw new UserException($"{disc.Label} is not encrypted; bdxl only adds encrypted data to discs, so it cannot take another session.");
-        if (disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
-            throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
+        if (disc.KeyId != null && !c.Keys.Contains(disc.KeyId))
+            throw new UserException($"{disc.Label} is encrypted with a key this catalog does not have (key id {disc.KeyId}).");
         if (disc.PendingAppend is { } pending)
             throw new UserException($"Session {pending.Number} of {disc.Label} is staged but not burned yet. Burn it and run " +
                                     $"'burned {disc.Label}', or take it back with 'discard {disc.Label}', first.");
@@ -50,8 +50,8 @@ public sealed class AppendTarget
             if (info == null || !info.Label.Equals(disc.Label, StringComparison.OrdinalIgnoreCase))
                 throw new UserException($"The disc in {mount} is " + (info == null ? "not a bdxl disc (no readable disc.json)" : info.Label) +
                                         $", not {disc.Label}.");
-            if (info.KeyId != null && !info.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
-                throw new UserException($"The disc in {mount} is encrypted with another key (key id {info.KeyId}, this catalog's is {c.Key.KeyId}). " +
+            if (info.KeyId != null && !c.Keys.Contains(info.KeyId))
+                throw new UserException($"The disc in {mount} is encrypted with a key this catalog does not have (key id {info.KeyId}). " +
                                         DiscFiles.OtherCatalogHint(mount));
 
             long? driveFree = null;

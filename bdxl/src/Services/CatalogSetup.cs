@@ -18,7 +18,7 @@ public static class CatalogSetup
     /// The master key of the catalog in dir: from the agent if it holds it ('unlock'), otherwise from the password
     /// (environment, or typed: 3 attempts).
     /// </summary>
-    public static MasterKey Unlock(string dir, Options opt)
+    public static KeyRing Unlock(string dir, Options opt)
     {
         var file = KeyFile.ReadFrom(dir) ?? throw new UserException($"No catalog in {dir}.");
         if (AgentProtocol.Enabled && new AgentClient().TryGetKey(file.CatalogId, file.KeyId) is { } fromAgent) return fromAgent;
@@ -26,7 +26,7 @@ public static class CatalogSetup
     }
 
     /// <summary>The master key of a key file from the password (environment, or typed: 3 attempts). what names it in messages.</summary>
-    public static MasterKey UnlockWithPassword(KeyFile file, Options opt, string what)
+    public static KeyRing UnlockWithPassword(KeyFile file, Options opt, string what)
     {
         string? fromEnv = Ui.PasswordFromEnvironment(opt, out string envName);
         if (fromEnv != null)
@@ -43,7 +43,7 @@ public static class CatalogSetup
     }
 
     /// <summary>The master key from the recovery key (BDXL_RECOVERY_KEY, or typed).</summary>
-    public static MasterKey UnlockWithRecoveryKey(KeyFile file)
+    public static KeyRing UnlockWithRecoveryKey(KeyFile file)
     {
         string? text = Environment.GetEnvironmentVariable(RecoveryKeyEnv);
         if (string.IsNullOrEmpty(text))
@@ -59,18 +59,18 @@ public static class CatalogSetup
     // ---- creating -------------------------------------------------------------------------------------------------
 
     /// <summary>A new master key and its key file (password typed twice or from the environment; --recovery-key adds one).</summary>
-    static (MasterKey Key, KeyFile File, string? Recovery) NewKey(Options opt)
+    static (KeyRing Key, KeyFile File, string? Recovery) NewKey(Options opt)
     {
         string password = Ui.NewPassword(opt, "password-env");
         var kdf = Kdf.FromOptions(opt);
-        var key = MasterKey.CreateNew();
+        var key = KeyRing.Of(MasterKey.CreateNew());
         var file = KeyFile.Create(key, password, kdf);
         string? recovery = opt.Has("recovery-key") ? file.SetRecoveryKey(key) : null;
         return (key, file, recovery);
     }
 
     /// <summary>Creates a new, empty encrypted catalog in dir.</summary>
-    public static MasterKey CreateNew(string dir, Options opt)
+    public static KeyRing CreateNew(string dir, Options opt)
     {
         var (key, file, recovery) = NewKey(opt);
         Directory.CreateDirectory(dir);
@@ -86,7 +86,7 @@ public static class CatalogSetup
     /// another catalog folder): it can read every disc made with that key. The password (or --recovery) is the one
     /// that key file was written with.
     /// </summary>
-    public static MasterKey CreateFromKeyFile(string dir, string source, Options opt)
+    public static KeyRing CreateFromKeyFile(string dir, string source, Options opt)
     {
         string from = Path.GetFullPath(source);
         var file = KeyFile.ReadFrom(from) ?? throw new UserException($"No {KeyFile.FileName} in {from}.");
@@ -122,7 +122,7 @@ public static class CatalogSetup
     // ---- migration of a plaintext catalog -------------------------------------------------------------------------
 
     /// <summary>Encrypts the plaintext catalog in dir (see the class summary) and its history. Returns the new master key.</summary>
-    public static MasterKey Migrate(string dir, Options opt)
+    public static KeyRing Migrate(string dir, Options opt)
     {
         var problems = PlainProblems(dir);
         if (problems.Count > 0 && !opt.Has("force"))
@@ -186,7 +186,7 @@ public static class CatalogSetup
         Catalog.ListHistory(dir).Any(id => Catalog.CoveredFiles.Any(n => File.Exists(Path.Combine(dir, Catalog.HistoryFolder, id, n))));
 
     /// <summary>Encrypts plaintext history snapshots and deletes the plaintext left by a migration.</summary>
-    public static void FinishMigration(string dir, MasterKey key)
+    public static void FinishMigration(string dir, KeyRing key)
     {
         int converted = 0;
         foreach (string id in Catalog.ListHistory(dir))
@@ -199,8 +199,8 @@ public static class CatalogSetup
             {
                 bool damaged = PlainProblems(snap).Count > 0;
                 foreach (string name in plainNames)
-                    File.WriteAllBytes(Path.Combine(snap, name + Catalog.Suffix), FileCrypto.Seal(File.ReadAllBytes(Path.Combine(snap, name)), key, KeyPurpose.Catalog));
-                Catalog.WriteIntegrity(snap, key, 0, unverified: damaged);
+                    File.WriteAllBytes(Path.Combine(snap, name + Catalog.Suffix), FileCrypto.Seal(File.ReadAllBytes(Path.Combine(snap, name)), key.Current, KeyPurpose.Catalog));
+                Catalog.WriteIntegrity(snap, key.Current, 0, unverified: damaged);
                 converted++;
             }
             foreach (string name in plainNames) File.Delete(Path.Combine(snap, name));

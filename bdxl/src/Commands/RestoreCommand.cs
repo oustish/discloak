@@ -32,7 +32,7 @@ public sealed class RestoreCommand : ICommand
             var discInfo = File.Exists(info) ? DiscFiles.ReadInfo(mp) : null;
             string? lbl = discInfo?.Label ?? c.Opt.Get("disc");
             if (lbl == null) { Console.WriteLine($"Ignoring {mp}: no disc.json there (for a single mount you can pass --disc <label>)."); continue; }
-            if (discInfo?.KeyId != null && !discInfo.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
+            if (discInfo?.KeyId != null && !c.Keys.Contains(discInfo.KeyId))
             {
                 Console.WriteLine($"Ignoring {mp}: {lbl} is encrypted with another key. " + DiscFiles.OtherCatalogHint(mp));
                 continue;
@@ -68,7 +68,7 @@ public sealed class RestoreCommand : ICommand
         string Fetch(BackupRef copy, string src, string dst)
         {
             if (!copy.Encrypted) return Hashing.CopyAndHash(src, dst, ct: Interrupt.Token);
-            return FileCrypto.Decrypt(src, dst, c.Key, KeyPurpose.File, Interrupt.Token);
+            return FileCrypto.Decrypt(src, dst, c.Keys, KeyPurpose.File, Interrupt.Token);
         }
 
         int handled = 0;

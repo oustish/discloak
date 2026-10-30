@@ -41,18 +41,25 @@ public sealed class AgentClient
     }
 
     /// <summary>The master key of this catalog if the agent holds it (and so keeps it unlocked a while longer).</summary>
-    public MasterKey? TryGetKey(string catalogId, string keyId)
+    public KeyRing? TryGetKey(string catalogId, string keyId)
     {
         var r = Send(new AgentRequest { Op = "get", CatalogId = catalogId, KeyId = keyId });
-        if (r is not { Ok: true, Key: { Length: MasterKey.Size } bytes } || r.KeyId != keyId) return null;
-        try { return new MasterKey(catalogId, keyId, bytes); }
+        if (r is not { Ok: true, Key: { Length: > 0 } bytes } || r.KeyId != keyId) return null;   // rotated since: not the current ring
+        try
+        {
+            var ring = KeyRing.Deserialize(catalogId, bytes);
+            if (ring.KeyId == keyId) return ring;
+            ring.Dispose();
+            return null;
+        }
+        catch (InvalidDataException) { return null; }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
-    public AgentResponse? Put(MasterKey key, string catalogDir, TimeSpan idle, TimeSpan max, bool lockOnSessionLock, bool lockOnSleep) =>
+    public AgentResponse? Put(KeyRing key, string catalogDir, TimeSpan idle, TimeSpan max, bool lockOnSessionLock, bool lockOnSleep) =>
         Send(new AgentRequest
         {
-            Op = "put", CatalogId = key.CatalogId, KeyId = key.KeyId, Key = key.Bytes.ToArray(), CatalogDir = catalogDir,
+            Op = "put", CatalogId = key.CatalogId, KeyId = key.KeyId, Key = key.Serialize(), CatalogDir = catalogDir,
             IdleSeconds = (long)idle.TotalSeconds, MaxSeconds = (long)max.TotalSeconds,
             LockOnSessionLock = lockOnSessionLock, LockOnSleep = lockOnSleep
         });

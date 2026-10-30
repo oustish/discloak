@@ -165,23 +165,32 @@ public static class FileCrypto
     }
 
     /// <summary>Decrypts src into dst (which must not exist). Returns the plaintext's SHA-256; InvalidDataException on another key, damage or tampering.</summary>
-    public static string Decrypt(string srcPath, string dstPath, MasterKey key, string purpose, CancellationToken ct = default)
+    public static string Decrypt(string srcPath, string dstPath, MasterKey key, string purpose, CancellationToken ct = default) =>
+        Decrypt(srcPath, dstPath, KeyRing.Of(key), purpose, ct);
+
+    /// <summary>The same with whichever key of the ring the file was encrypted with.</summary>
+    public static string Decrypt(string srcPath, string dstPath, KeyRing keys, string purpose, CancellationToken ct = default)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
         using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
         using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
-        return Decrypt(input, output, key, purpose, ct);
+        return Decrypt(input, output, keys, purpose, ct);
     }
 
     /// <summary>Decrypts a whole BDXLENC2 stream (seekable: the last chunk is recognised by its position).</summary>
-    public static string Decrypt(Stream input, Stream output, MasterKey key, string purpose, CancellationToken ct = default)
+    public static string Decrypt(Stream input, Stream output, MasterKey key, string purpose, CancellationToken ct = default) =>
+        Decrypt(input, output, KeyRing.Of(key), purpose, ct);
+
+    /// <summary>The same with whichever key of the ring the stream was encrypted with (found by the key id in its header).</summary>
+    public static string Decrypt(Stream input, Stream output, KeyRing keys, string purpose, CancellationToken ct = default)
     {
         var header = new byte[HeaderSize];
         if (ReadFull(input, header, header.Length) != header.Length || Encoding.ASCII.GetString(header, 0, 8) != Magic)
             throw new InvalidDataException("not a bdxl-encrypted file");
         var keyId = header.AsSpan(8, MasterKey.KeyIdSize);
-        if (!keyId.SequenceEqual(key.KeyIdBytes))
-            throw new InvalidDataException($"encrypted with another key (key id {Convert.ToHexString(keyId)}, not {key.KeyId})");
+        var key = keys.Find(keyId)
+                  ?? throw new InvalidDataException($"encrypted with another key (key id {Convert.ToHexString(keyId)}; " +
+                                                    $"this catalog has {string.Join(", ", keys.All.Select(k => k.KeyId))})");
         var salt = header.AsSpan(16, 32);
         var prefix = header.AsSpan(48, 8).ToArray();
 
@@ -251,10 +260,12 @@ public static class FileCrypto
     }
 
     /// <summary>The plaintext of Seal's output. InvalidDataException on another key, damage or tampering.</summary>
-    public static byte[] Open(byte[] stored, MasterKey key, string purpose)
+    public static byte[] Open(byte[] stored, MasterKey key, string purpose) => Open(stored, KeyRing.Of(key), purpose);
+
+    public static byte[] Open(byte[] stored, KeyRing keys, string purpose)
     {
         using var output = new MemoryStream();
-        Decrypt(new MemoryStream(stored, writable: false), output, key, purpose);
+        Decrypt(new MemoryStream(stored, writable: false), output, keys, purpose);
         return output.ToArray();
     }
 

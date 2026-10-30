@@ -95,7 +95,7 @@ public sealed class StageCommand : ICommand
             }
 
             c.Cat.Blanks.Remove(bin.Blank);   // this blank disc is now spoken for
-            var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionFiles: disc.UsedBytes, occupiedBefore: 0);
+            var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionFiles: disc.UsedBytes, occupiedBefore: 0, c.Key);
             Console.WriteLine($"{label}: {disc.FileCount:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes staged in {dir}" +
                               (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
 
@@ -144,7 +144,8 @@ public sealed class StageCommand : ICommand
         string dir = Path.Combine(destDir, $"{disc.Label}.s{target.Session}");
         if (Directory.Exists(dir)) throw new UserException($"Folder already exists: {dir}");
 
-        disc.KeyId = c.Key.KeyId;   // checked by AppendTarget: the same master key as the rest of the disc
+        var key = c.Keys.For(disc.KeyId);   // the disc's own key (checked by AppendTarget), even after a key rotation
+        disc.KeyId = key.KeyId;
         var onDisc = c.Arc.CopiesOn(disc.Label);
         int hidden = onDisc.Select(x => DiscFiles.HiddenNumber(x.Copy.DiscPath)).DefaultIfEmpty(0).Max();
         long occupiedBefore = AppendTarget.Occupied(disc);
@@ -155,7 +156,7 @@ public sealed class StageCommand : ICommand
         };
         disc.PendingAppend = session;
         disc.Sessions = session.Number;
-        StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), c.Key, c.Settings);
+        StorePieces(disc, dir, bin.Pieces, _ => DiscFiles.HiddenName(++hidden), key, c.Settings);
         bool cutShort = Interrupt.Requested;
 
         if (disc.FileCount == session.FileCountBefore)
@@ -171,7 +172,7 @@ public sealed class StageCommand : ICommand
         var manifest = c.Arc.CopiesOn(disc.Label).Select(x => ManifestLine.For(x.Copy, x.File))
                             .OrderBy(m => m.Path, StringComparer.Ordinal).ToList();
         long sessionFiles = disc.UsedBytes - session.UsedBytesBefore;
-        var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionFiles, occupiedBefore);
+        var (dups, folderBytes) = Finish(c, disc, dir, manifest, sessionFiles, occupiedBefore, key);
         Console.WriteLine($"{disc.Label} session {session.Number}: {disc.FileCount - session.FileCountBefore:N0} files, " +
                           $"{SizeText.Bytes(sessionFiles)} bytes staged in {dir}" +
                           (dups > 0 ? $" ({dups} duplicate file(s) linked, not stored again)" : ""));
@@ -271,9 +272,9 @@ public sealed class StageCommand : ICommand
     /// counts as occupied by the session's files plus its reserve - or its metadata, if that came out larger.
     /// </summary>
     static (int Dups, long FolderBytes) Finish(Ctx c, DiscRecord disc, string dir, List<ManifestLine> manifest,
-                                               long sessionFiles, long occupiedBefore)
+                                               long sessionFiles, long occupiedBefore, MasterKey key)
     {
-        DiscFiles.Write(dir, disc, manifest, c.Key, c.Cat.Dir);   // the disc describes itself (manifest + disc.json [+ bdxl.key, README])
+        DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir);   // the disc describes itself (manifest + disc.json [+ bdxl.key, README])
         int dups = c.Arc.LinkDuplicates();                  // other files with identical content now point at this disc too
         long reserve = disc.Reserve ?? 0;
         disc.OccupiedBytes = occupiedBefore + sessionFiles + reserve;

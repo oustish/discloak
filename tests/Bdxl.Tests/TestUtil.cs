@@ -22,14 +22,14 @@ public static class TestKeys
     public static string Init(string dir)
     {
         if (System.IO.File.Exists(KeyFile.PathIn(dir))) return dir;
-        using var key = MasterKey.CreateNew();
+        using var key = KeyRing.Of(MasterKey.CreateNew());
         Directory.CreateDirectory(dir);
         Catalog.CreateEmpty(dir, "init", key).Save();
         KeyFile.Create(key, Password, Fast).WriteTo(dir);
         return dir;
     }
 
-    public static MasterKey Key(string dir) => KeyFile.ReadFrom(dir)!.TryUnlock(Password)!;
+    public static KeyRing Key(string dir) => KeyFile.ReadFrom(dir)!.TryUnlock(Password)!;
 
     public static Catalog Load(string dir, string command = "test") => Catalog.Load(dir, command, Key(dir));
 }

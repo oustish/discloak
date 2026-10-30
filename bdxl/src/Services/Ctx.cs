@@ -14,8 +14,10 @@ public sealed class Ctx
     public Options Opt { get; }
     public Archive Arc { get; }
     public Settings Settings => Cat.Settings;
-    /// <summary>The catalog's master key (every command that loads the catalog has it).</summary>
-    public MasterKey Key => Cat.Key ?? throw new InvalidOperationException("This command runs without the catalog's key.");
+    /// <summary>The catalog's keys (every command that loads the catalog has them).</summary>
+    public KeyRing Keys => Cat.Keys ?? throw new InvalidOperationException("This command runs without the catalog's key.");
+    /// <summary>The current master key: what everything new is encrypted with.</summary>
+    public MasterKey Key => Keys.Current;
     public List<string> Args => Opt.Args;
 
     /// <summary>Positional argument `index`, or a usage error.</summary>

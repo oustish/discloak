@@ -55,7 +55,7 @@ public sealed class VerifyCommand : ICommand
 
             if (deep && bk.Encrypted)
             {
-                if (!DeepCheck(p, bk, c.Key)) { bad++; continue; }
+                if (!DeepCheck(p, bk, c.Keys)) { bad++; continue; }
             }
             if (deep && bk.Encrypted && Interrupt.Requested) { finished--; break; }   // decrypting was cut off: not judged
 
@@ -87,7 +87,7 @@ public sealed class VerifyCommand : ICommand
         catch (OperationCanceledException) { return ""; }
     }
 
-    static bool DeepCheck(string storedPath, BackupRef bk, MasterKey key)
+    static bool DeepCheck(string storedPath, BackupRef bk, KeyRing key)
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "bdxl-" + Guid.NewGuid().ToString("N"));
         try

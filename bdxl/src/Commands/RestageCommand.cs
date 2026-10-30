@@ -44,8 +44,9 @@ public sealed class RestageCommand : ICommand
 
         var manifest = new List<ManifestLine>();
         var missing = new List<BackupRef>();
-        if (disc.Encrypted && disc.KeyId != null && !disc.KeyId.Equals(c.Key.KeyId, StringComparison.OrdinalIgnoreCase))
-            throw new UserException($"{disc.Label} is encrypted with another key (key id {disc.KeyId}, this catalog's is {c.Key.KeyId}).");
+        if (disc.Encrypted && disc.KeyId != null && !c.Keys.Contains(disc.KeyId))
+            throw new UserException($"{disc.Label} is encrypted with a key this catalog does not have (key id {disc.KeyId}).");
+        var key = c.Keys.For(disc.Encrypted ? disc.KeyId : null);   // rebuilt with the disc's own key, as it was
 
         string? writing = null;   // file being written when Ctrl+C cut it off
         try
@@ -75,7 +76,7 @@ public sealed class RestageCommand : ICommand
                         {
                             try
                             {
-                                string plain = FileCrypto.Encrypt(src, dst, c.Key, KeyPurpose.File, offset, length, Interrupt.Token, entry.Compression);   // as before: same size
+                                string plain = FileCrypto.Encrypt(src, dst, key, KeyPurpose.File, offset, length, Interrupt.Token, entry.Compression);   // as before: same size
                                 if (Hashing.SameHash(plain, entry.ContentSha256))
                                 {
                                     storedHash = Hashing.HashFile(dst, Interrupt.Token);
@@ -164,8 +165,8 @@ public sealed class RestageCommand : ICommand
         disc.Sessions = 1;               // the whole disc (all its sessions) is in one folder now
         foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
 
-        if (disc.Encrypted) disc.KeyId = c.Key.KeyId;
-        DiscFiles.Write(dir, disc, manifest, c.Key, c.Cat.Dir);
+        if (disc.Encrypted) disc.KeyId = key.KeyId;
+        DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir);
         long metadata = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length) - disc.UsedBytes;
         disc.OccupiedBytes = disc.UsedBytes + Math.Max(disc.Reserve ?? 0, metadata);
         c.Arc.LinkDuplicates();

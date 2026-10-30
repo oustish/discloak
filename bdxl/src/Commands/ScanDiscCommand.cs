@@ -123,7 +123,7 @@ public sealed class ScanDiscCommand : ICommand
         {
             var diskByPath = onDisc.ToDictionary(x => x.Path, x => x, StringComparer.Ordinal);
             var listed = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var line in DiscFiles.ReadManifest(mount, c.Key)!)
+            foreach (var line in DiscFiles.ReadManifest(mount, c.Keys)!)
             {
                 listed.Add(line.Path);
                 if (!diskByPath.TryGetValue(line.Path, out var onThisDisc)) { problems.Add($"{line.Path}: listed in the manifest but not on the disc"); continue; }
@@ -237,7 +237,7 @@ public sealed class ScanDiscCommand : ICommand
         disc.FileCount = onDisc.Count;
         disc.UsedBytes = onDisc.Sum(x => x.Size);
         if (found.Any(x => x.Encrypted)) disc.Encrypted = true;
-        if (disc.Encrypted) disc.KeyId ??= info?.KeyId ?? (found.Any(x => x.Encrypted) ? c.Key.KeyId : null);
+        if (disc.Encrypted) disc.KeyId ??= info?.KeyId ?? (File.Exists(Path.Combine(mount, DiscFiles.EncryptedManifestName)) ? FileCrypto.KeyIdOf(Path.Combine(mount, DiscFiles.EncryptedManifestName)) : null);
         string? capText = c.Opt.Get("capacity");
         if (capText != null) disc.Capacity = SizeText.Parse(capText);
         decimal? cost = c.Opt.GetMoney("cost");
@@ -269,7 +269,7 @@ public sealed class ScanDiscCommand : ICommand
         if (existing == null) c.Cat.Discs.Add(disc);
         if (c.Opt.Has("write-disc-json"))
         {
-            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), c.Key, c.Cat.Dir, out string why))
+            if (DiscFiles.TryWriteDiscJson(mount, disc, manifest, c.Opt.Has("overwrite"), c.Keys.For(disc.Encrypted ? disc.KeyId : null), c.Cat.Dir, out string why))
                 Console.WriteLine("\ndisc.json (and the manifest if it was missing) written onto the disc. If your burning software needs it, close the session/disc now.");
             else
                 Console.WriteLine($"\nCould not write disc.json: {why}. The label is recorded in the catalog only.");

@@ -91,7 +91,7 @@ public static class DiscFiles
     /// Reads a disc's manifest (an encrypted one with the catalog's master key). null = the disc has none.
     /// A disc encrypted with another catalog's key is explained, with the way to read it.
     /// </summary>
-    public static List<ManifestLine>? ReadManifest(string mount, MasterKey key)
+    public static List<ManifestLine>? ReadManifest(string mount, KeyRing key)
     {
         string plainPath = Path.Combine(mount, ManifestName), encPath = Path.Combine(mount, EncryptedManifestName);
         if (!File.Exists(encPath)) return File.Exists(plainPath) ? JsonStore.ReadLines<ManifestLine>(plainPath) : null;
@@ -147,11 +147,16 @@ public static class DiscFiles
 
         Without bdxl, all of this is standard cryptography:
 
-        1. The master key (32 bytes) from bdxl.key, envelope "kind": "password":
+        1. The master keys (32 bytes each) from bdxl.key, envelope "kind": "password":
              wrapping key = Argon2id (RFC 9106, version 0x13) of the password (UTF-8), with "salt", parallelism 1,
                             "memoryKiB" KiB of memory, "passes" iterations, 32 bytes of output
-             master key   = AES-256-GCM decryption of "wrapped" (32 bytes ciphertext + 16 bytes tag) with that key,
-                            nonce "nonce", associated data the ASCII text  bdxl-key-1|<catalogId>|<keyId>|password
+             AES-256-GCM decryption of "wrapped" (ciphertext + the last 16 bytes: tag) with that key, nonce "nonce",
+             associated data the ASCII text:
+               "ring": true    bdxl-key-2|<catalogId>|<the envelope's keyId>|password   and the plaintext is a key
+                               ring: for every key, oldest first, its 8-byte key id + the 32-byte key; the last one
+                               is the newest (a catalog gets a new key when its key is rotated; keys are never dropped)
+               otherwise       bdxl-key-1|<catalogId>|<the file's keyId>|password   and the plaintext is one key
+           Every .enc file names its key by the key id in its header (below), so take that key from the ring.
            Envelope "kind": "recovery" (if present): wrapping key = HKDF-SHA256 (RFC 5869) of the 32-byte recovery key,
            salt "salt", info "bdxl recovery key", 32 bytes; the rest as above with ...|recovery. The recovery key is
            written as Crockford base32 (34 bytes: the key + the first 2 bytes of its SHA-256), dashes ignored.
