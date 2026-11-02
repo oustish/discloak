@@ -17,7 +17,12 @@ bdxl scan D:\Photos --full     # hash everything again, even files that look unc
 - A missing file whose identical content shows up under another path is a **move**: its catalog entry moves to the
   new path with its disc copies; nothing is stored again.
 - Ctrl+C stops cleanly: what was hashed is saved, nothing is marked missing in the interrupted location, and the
-  same command continues later. The catalog is also saved every 2 minutes during long scans.
+  same command continues later. The catalog is also saved every 2 minutes during long scans. Because nothing is
+  marked missing, `purge` finds nothing to remove until a scan of that location runs to the end.
+- A file that changes while it is being read (still being written to) is skipped with
+  `it changed while it was being read`; its entry stays as it was and the next scan reads it again.
+- Sizes come from the file itself, not from the folder listing: Windows can show an old size there for hard-linked
+  files and files another program keeps open.
 
 ## Ignore rules
 

@@ -16,7 +16,14 @@ public sealed class PurgeCommand : ICommand
     public int Run(Ctx c)
     {
         var victims = c.Cat.Files.Where(f => f.MissingSinceUtc != null && f.Backups.Count == 0).ToList();
-        if (victims.Count == 0) { Console.WriteLine("Nothing to purge: every file that is gone from its source has a copy on a disc."); return 0; }
+        if (victims.Count == 0)
+        {
+            Console.WriteLine(c.Cat.Files.Any(f => f.MissingSinceUtc != null)
+                ? "Nothing to purge: every file that is gone from its source is on a disc (or staged for one)."
+                : "Nothing to purge: no file is marked as gone from its source. Only a scan that runs to the end marks " +
+                  "files as gone (one stopped with Ctrl+C marks nothing).");
+            return 0;
+        }
 
         Console.WriteLine($"{victims.Count:N0} catalog entr{(victims.Count == 1 ? "y" : "ies")} refer to files that no longer exist and were never burned:");
         foreach (var f in victims.OrderBy(x => x.RootName, StringComparer.Ordinal).ThenBy(x => x.RelPath, StringComparer.Ordinal).Take(25))

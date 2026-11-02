@@ -79,6 +79,25 @@ public class EndToEndTests : IDisposable
         Assert.Equal(one.Select(f => (f.RelPath, f.Sha256, f.Size)), four.Select(f => (f.RelPath, f.Sha256, f.Size)));
     }
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern bool CreateHardLink(string link, string target, IntPtr security);
+
+    [Fact]
+    public void A_file_whose_folder_listing_shows_an_old_size_is_hashed_with_its_real_size()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        tmp.RandomFile("other/f.bin", 1_000, seed: 1);
+        Directory.CreateDirectory(tmp.File("src"));
+        Assert.True(CreateHardLink(tmp.File("src/f.bin"), tmp.File("other/f.bin"), IntPtr.Zero));
+        using (var fs = new FileStream(tmp.File("other/f.bin"), FileMode.Append)) fs.Write(new byte[50_000]);   // through the other link
+        Assert.Equal(1_000, new DirectoryInfo(tmp.File("src")).GetFiles().Single().Length);                     // the listing is behind
+
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
+        var f = TestKeys.Load(tmp.File("cat")).Files.Single();
+        Assert.Equal(51_000, f.Size);
+        Assert.Equal(Hashing.HashFile(tmp.File("src/f.bin")), f.Sha256);
+    }
+
     [Fact]
     public void A_moved_file_keeps_its_record_and_its_copy()
     {

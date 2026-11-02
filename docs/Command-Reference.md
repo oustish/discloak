@@ -52,7 +52,8 @@ bdxl scan [<folder>] [--name <alias>] [--threads N] [--full]
 
 Unchanged files (same size + time) are not read again; missing files are marked missing; moved files are
 recognised by hash. Ignored files are catalogued but not hashed. With compression on, also counts compressed sizes.
-Ctrl+C stops cleanly (exit 130).
+A file that changes while being read is skipped (left as it was) and read again by the next scan.
+Ctrl+C stops cleanly (exit 130); nothing is marked missing in the interrupted location.
 
 ### compression
 Compression per location.

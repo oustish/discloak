@@ -32,6 +32,9 @@ public sealed class ScanCommand : ICommand
         Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
         files take long, a status line below shows how far they are (rewritten in place, not written when the output
         is redirected). The catalog is saved every 2 minutes.
+        A file that changes while it is being read (still being written to) is skipped and left as it was; the next
+        scan reads it again. Sizes are taken from the file itself, not the folder listing (which Windows can show out
+        of date for hard-linked files).
         Ctrl+C stops cleanly: the files being hashed are dropped, what was hashed is saved, nothing is marked as
         missing in that location, and the summary says what was left; running the scan again continues. A second
         Ctrl+C stops at once.
@@ -54,6 +57,7 @@ public sealed class ScanCommand : ICommand
     }
 
     static readonly TimeSpan StatusEvery = TimeSpan.FromSeconds(2);   // refresh of the status line while large files are hashed
+    const string BeingWritten = "it changed while it was being read (still being written to?) - left as it was, scan again later";
 
     /// <summary>
     /// One line at the bottom of the console, rewritten in place (the files already done stay printed above it).
@@ -288,13 +292,20 @@ public sealed class ScanCommand : ICommand
                     active[w] = 0;
                     try
                     {
+                        // the folder listing can show an old size (hard links, files another program keeps open): take
+                        // the size from the file itself, or the progress runs past 100% and the record gets a wrong size
+                        var (size, mtime) = SizeAndTime(w.FullPath);
+                        if (size != w.Size) { Interlocked.Add(ref totalBytes, size - w.Size); w.Size = size; }
                         void Progress(long read)
                         {
                             Volatile.Write(ref w.BytesRead, read);
                             if (Interrupt.Requested) throw new OperationCanceledException();   // a large file stops mid-way
+                            if (read > w.Size) throw new IOException(BeingWritten);            // growing: it would be read without end
                         }
                         if (w.Level > 0) (w.Hash, w.Stored) = FileCrypto.HashAndMeasure(w.FullPath, w.Level, Progress);
                         else w.Hash = Hashing.HashFile(w.FullPath, Progress);
+                        if (Volatile.Read(ref w.BytesRead) != w.Size || SizeAndTime(w.FullPath) != (size, mtime))
+                            throw new IOException(BeingWritten);   // the hash would be of neither the old nor the new content
                         results.Add(w);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { w.Error = ex.Message; results.Add(w); }
@@ -352,12 +363,12 @@ public sealed class ScanCommand : ICommand
                     rec.CompressedSize = w.Level > 0 ? w.Stored : null;
                     rec.CompressedWith = w.Level > 0 ? Compression.Signature(w.Level) : null;
                     string compressed = w.Level > 0 ? $", compressed to {100.0 * w.Stored / Math.Max(1, FileCrypto.StoredSize(w.Size)):F0}%" : "";
-                    Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes{compressed})");
+                    Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, Interlocked.Read(ref totalBytes), active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes{compressed})");
                 }
             }
             if (clock.Elapsed - lastStatus >= StatusEvery && !active.IsEmpty)
             {
-                string head = $"  [{Progress(done, work.Count, doneBytes, totalBytes, active.Keys, clock.Elapsed)}] ";
+                string head = $"  [{Progress(done, work.Count, doneBytes, Interlocked.Read(ref totalBytes), active.Keys, clock.Elapsed)}] ";
                 status.Show(head + ActiveFiles(active.Keys.ToList(), StatusLine.WindowWidth() - 1 - head.Length));
                 lastStatus = clock.Elapsed;
             }
@@ -440,6 +451,13 @@ public sealed class ScanCommand : ICommand
         Console.WriteLine();
         foreach (string line in report.Take(50)) Console.WriteLine(line);
         if (report.Count > 50) Console.WriteLine($"  ... and {report.Count - 50:N0} more");
+    }
+
+    /// <summary>Size and last write time as the file itself has them (not the folder listing, which can be behind).</summary>
+    static (long Size, DateTime Mtime) SizeAndTime(string path)
+    {
+        using var h = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return (RandomAccess.GetLength(h), File.GetLastWriteTimeUtc(h));
     }
 
     /// <summary>"1,234/50,000  12.4%  85.3 MB/s  ~3h 12m left" - by bytes, counting what the threads have read of their current files.</summary>
