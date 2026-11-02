@@ -71,6 +71,22 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
+    public void Of_discs_equally_full_the_one_with_the_largest_file_is_staged_first()
+    {
+        // disc 1: a, 100 bytes left; disc 2: b and the small c (too big for disc 1's gap), 50 bytes left - fuller, but
+        // only by 50 bytes
+        long room = DiscFormat.Room(950_000);
+        long Share(string name) => DiscSpace.ManifestShare(Piece.Whole(new FileRecord { RootName = "S", RelPath = name }));
+        tmp.RandomFile("src/a.bin", (int)(room - Share("a.bin") - 100), seed: 1);
+        tmp.RandomFile("src/b.bin", (int)(room - Share("b.bin") - 3000), seed: 2);
+        tmp.RandomFile("src/c.bin", (int)(3000 - Share("c.bin") - 50), seed: 3);
+        Assert.Equal(0, Bdxl("blanks", "add", "2", "--size", "1MB", "--reserve", "50KB"));
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
+        Assert.Equal("BDXL-0001", TestKeys.Load(tmp.File("cat")).Files.Single(f => f.RelPath == "a.bin").Backups.Single().Disc);
+    }
+
+    [Fact]
     public void Scanning_with_several_threads_gives_the_same_catalog_as_one_thread()
     {
         tmp.RandomFile("src/big.bin", 3_000_000, seed: 100);   // finishes last, while the others are hashed beside it

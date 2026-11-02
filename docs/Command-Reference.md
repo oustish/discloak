@@ -121,7 +121,7 @@ bdxl stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog]
 ```
 | Option | |
 |---|---|
-| `--max-discs N` | stage up to N discs (default 1) |
+| `--max-discs N` | stage up to N discs (default 1): the fullest first; of equally full ones (to 0.1%), the one with the largest file first |
 | `--min-fill 0.9` | only stage discs at least 90% full |
 | `--split` | cut files larger than every blank disc into parts |
 | `--with-catalog` | add a catalog backup with repair data (`_catalog\`) |

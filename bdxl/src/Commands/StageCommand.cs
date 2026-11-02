@@ -15,7 +15,8 @@ public sealed class StageCommand : ICommand
         an encrypted manifest (manifest.enc: where each file lies in the stream, padded to whole packs) and, readable
         without the password: packs.sha256 (the packs' hashes), disc.json (label, date, key id), bdxl.key (the master
         key, wrapped by today's password) and README.txt (the formats, to read the disc without bdxl).
-          --max-discs N    stage up to N discs (default 1)
+          --max-discs N    stage up to N discs (default 1): the fullest first; of discs equally full (to 0.1%), the one
+                           with the largest file first
           --min-fill 0.9   only stage discs that would be at least 90% full
           --split          a file larger than every blank disc is cut into parts, one per disc. 'restore' collects the
                            parts disc by disc and joins them; the file counts as backed up only when every part is on a
@@ -55,8 +56,11 @@ public sealed class StageCommand : ICommand
         }
         Archive.PrintTooBig(plan.TooBig);
 
+        // the fullest discs first (a half-empty one waits for more data); discs that are equally full to 0.1% - as
+        // nearly all are - in the order of their largest file, so the largest pending file goes first
         var chosen = plan.Bins.Where(b => b.Pieces.Count > 0 && b.Used >= minFill * b.Usable)
-            .OrderByDescending(b => (double)b.Used / b.Usable).Take(maxDiscs).ToList();
+            .OrderByDescending(b => (int)(1000.0 * b.Used / b.Usable)).ThenByDescending(b => b.Pieces.Max(p => p.Length))
+            .Take(maxDiscs).ToList();
         if (chosen.Count == 0)
         {
             if (plan.Pending.Count == 0) { Console.WriteLine("Nothing to stage: every file is backed up."); return 0; }
