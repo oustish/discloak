@@ -53,12 +53,13 @@ A burned disc that is not finalized can take more data in further *sessions* ([A
 
 `bdxl blanks` is your stock of blank discs: size, reserve, price. Staging uses one up; `discard` gives it back.
 
-<a id="disc-space"></a>**Space on a disc** is counted the way the disc's file system (UDF) uses it: every file ends on a
-2 KiB sector and has a file entry (one more sector) and an entry in its folder's list. So a file takes its encrypted
-size rounded up to 2 KiB, plus about 2.1 KB. Each file also has a line in the disc's encrypted manifest (its path and
-hashes, roughly 300-500 bytes). For large files that is nothing; for 100,000 small files it is about 330 MB, and
-`plan`, `stage` and `--append` count all of it, so a disc full of small files still burns. (`plan` shows these
-figures: a disc of small files holds fewer bytes than its size.)
+<a id="disc-space"></a>**Space on a disc**: the files are laid end to end in one stream of data, cut into **packs** of
+64 MiB ([Files and Formats](Files-and-Formats.md#a-staged--burned-disc)), so a file takes exactly its stored size
+(compressed, if set) - a small file needs no sectors or file system entries of its own. Each file also has a line in
+the disc's encrypted manifest (its path and hashes, roughly 300-500 bytes). The packs themselves cost almost nothing
+(4 KB each, for their sectors, entries and hash line); a disc's room is its usable space less one pack (the last pack
+is filled up with zeros) and one more 64 MiB for the manifest (padded the same way). `plan`, `stage` and `--append`
+count all of it.
 
 <a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's own fixed overhead
 (volume descriptors, the metadata partition), the disc's folders and its own small files (`disc.json`, `bdxl.key`,
@@ -68,8 +69,8 @@ than the reserve, `stage` warns that the folder will not fit. Raise it with `bdx
 
 ## Encryption, the password and the master key
 
-- A random **master key** encrypts the catalog and everything on discs (AES-256-GCM, one encrypted file per
-  original file, under hidden names such as `data/000/000001.enc`).
+- A random **master key** encrypts the catalog and everything on discs (AES-256-GCM). On a disc, the files are in
+  packs of equal size (`data/000/000001.pack` …), so nothing shows their names, sizes or number.
 - The **password** only unlocks the master key, which is stored wrapped in `bdxl.key` (Argon2id key derivation).
   Changing the password rewrites `bdxl.key` and nothing else.
 - The optional **recovery key** is a second way to unlock it, for a lost password.

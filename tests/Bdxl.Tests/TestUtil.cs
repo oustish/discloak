@@ -4,19 +4,29 @@ namespace Bdxl.Tests;
 
 /// <summary>
 /// Every test catalog is encrypted with one password, with the cheapest Argon2id settings allowed (fast tests).
-/// BDXL_PASSWORD is set for the whole test run; the agent is never used.
+/// BDXL_PASSWORD is set for the whole test run; the agent is never used. Discs use packs of 64 KiB (8 chunks of
+/// 8 KiB) instead of 64 MiB, so test discs of a few hundred KB still hold several packs.
 /// </summary>
 public static class TestKeys
 {
     public const string Password = "Correct-Horse-42!";
     public static readonly KdfParams Fast = new(Kdf.MinKiB, 1);
+    public const int ChunkSize = 8192, ChunksPerPack = 8;
 
     [ModuleInitializer]
     internal static void Setup()
     {
         Environment.SetEnvironmentVariable("BDXL_PASSWORD", Password);
         Environment.SetEnvironmentVariable("BDXL_AGENT", "off");
+        DiscFormat.UseGeometryForTests(ChunkSize, ChunksPerPack);
     }
+
+    /// <summary>The pack files of a staged disc folder, as relative paths in order.</summary>
+    public static List<string> Packs(string disc) =>
+        Directory.Exists(Path.Combine(disc, "data"))
+            ? Directory.GetFiles(Path.Combine(disc, "data"), "*.pack", SearchOption.AllDirectories)
+                       .Select(f => Path.GetRelativePath(disc, f).Replace('\\', '/')).Order(StringComparer.Ordinal).ToList()
+            : [];
 
     /// <summary>An empty encrypted catalog in dir (what 'init' makes), unless there is one.</summary>
     public static string Init(string dir)

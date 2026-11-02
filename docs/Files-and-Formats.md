@@ -35,19 +35,32 @@ opened. Back up the whole folder.
 
 ```
 <disc>\
-  disc.json                label, creation time, file count, size, sessions, catalog id, key id - plain JSON
+  disc.json                label, creation time, sessions, format, catalog id, key id - plain JSON, nothing about the files
   bdxl.key                 the catalog's key file as it was when the disc was staged - plain JSON
   README.txt               how to read the disc, with or without bdxl
-  manifest.jsonl.enc       list of the disc's files: real path, size, hashes, parts, compression - encrypted
-  manifest.s2.jsonl.enc …  (appended sessions) the files each session added - all manifests together list the disc
-  data\000\000001.enc      the files, one encrypted file per original, names that say nothing (1000 per folder)
-  data\000\000002.enc
-  ...
+  packs.sha256             SHA-256 of every pack (sha256sum format) - plain
+  manifest.enc             which file lies where in the data: real path, position, size, hashes, parts, compression -
+                           encrypted, padded to whole 64 MiB
+  manifest.s2.enc …        (appended sessions) the files each session added - all manifests together list the disc
+  data\000\000001.pack     the data: every file laid end to end in one stream, cut into packs of 64 MiB, each pack
+  data\000\000002.pack     encrypted on its own; all packs have the same size (the last one is filled up with zeros)
+  ...                      1000 per folder
   _catalog\                (stage --with-catalog) a catalog backup, see below
 ```
 
-Without the password only `disc.json`, `bdxl.key` and `README.txt` can be read. File names, paths, hashes and
-content are encrypted; what shows is the number of files and the size of each encrypted file.
+Without the password only `disc.json`, `packs.sha256`, `bdxl.key` and `README.txt` can be read. File names, paths,
+sizes, hashes, the number of files and the content are all encrypted. What shows is the number of packs (the amount
+of data, to 64 MiB), the dates and the number of sessions. A disc of 300 small files and a disc of one large file with
+the same amount of data look exactly alike. Even the manifest is padded to whole 64 MiB, so its size does not give away the
+number of files.
+
+A **pack** is 67,109,944 bytes: `"BDXLPAK1"` (8) | key id (8) | salt (32) | nonce prefix (8) | 64 × (1 MiB
+ciphertext + 16-byte tag). Each 1 MiB chunk is authenticated with the pack's number and its own, so a pack or chunk
+moved to another place does not decrypt. Byte X of the data is in pack X / 64 MiB + 1 - reading one file decrypts
+only the chunks it lies in, and a damaged spot costs only the files with data in those chunks.
+
+A **compressed** file (see [Compression](Guide-Compression.md)) is stored as zstd frames, one per MiB of the file: a
+standard zstd stream that `zstd -d` reads.
 
 ### `disc.json`
 
@@ -55,22 +68,33 @@ content are encrypted; what shows is the number of files and the size of each en
 {
   "label": "BDXL-0001",
   "createdUtc": "2026-10-30T08:46:15Z",
-  "fileCount": 1234,
-  "usedBytes": 96000000000,
-  "encrypted": true,
+  "format": "bdxl-pack-1",
   "sessions": 2,
   "catalogId": "849CE29D5206E512059962B7D091C5E4",
-  "keyId": "C4782A3F591D44A3"
+  "keyId": "C4782A3F591D44A3",
+  "packSize": 67108864,
+  "chunkSize": 1048576
 }
 ```
 
-`restore` and `verify` use it to recognise a disc in any drive. `keyId` names the master key the disc's files are
-encrypted with.
+`restore` and `verify` use it to recognise a disc in any drive. `keyId` names the master key the disc's packs are
+encrypted with. How many files a disc holds and how big they are is only in the catalog and in the encrypted
+manifest.
 
-### Discs burned without bdxl
+### The manifest (`manifest.enc`, `manifest.sN.enc`)
 
-Plain files in their folders. `scandisc` records them; `discjson` can add a `disc.json` (and a plain
-`manifest.jsonl`) if the disc can still be written to.
+JSON lines, encrypted like the catalog's files (`BDXLENC2`, purpose `manifest`), followed by empty lines up to a
+whole number of 64 MiB:
+
+```json
+{"source":"Photos/2024/IMG_0001.CR3","at":0,"size":25165824,"plainSize":25165824,"sha256":"…","modified":"2024-06-01T10:00:00Z"}
+{"source":"Docs/ledger.csv","at":25165824,"size":1203345,"plainSize":6400000,"sha256":"…","modified":"…","compression":3}
+```
+
+`at`/`size`: where the stored bytes lie in the disc's data and how many there are; `plainSize`/`sha256`: the original.
+A part of a split file adds `part`, `parts`, `offset` (where the part belongs), `fileSize` and `fileSha256`.
+
+bdxl reads only discs it made itself. Discs written with other tools cannot be recorded in a catalog.
 
 ## A catalog backup (`_catalog` or `catalog backup create`)
 
@@ -91,7 +115,10 @@ Checking and repairing need no password; restoring does.
 chunk: length (uint32 LE) | AES-256-GCM ciphertext | tag (16)
 ```
 
-- The file's key = HKDF-SHA256(master key, salt, `"bdxl-enc2 " + purpose`), purpose `file`, `manifest` or `catalog`.
+Used for the catalog's files and a disc's manifests (a disc's data is in packs, above).
+
+- The file's key = HKDF-SHA256(master key, salt, `"bdxl-enc2 " + purpose`), purpose `manifest` or `catalog`
+  (`pack` for a pack).
 - Each chunk holds up to 1 MiB of data, preceded (inside the encryption) by a mode byte: 0 = stored, 1 = zstd.
 - The chunk number and a last-chunk flag are authenticated: reordering, truncating or extending a file is detected.
 - Size of an uncompressed copy: 56 bytes + data + 21 bytes per MiB.

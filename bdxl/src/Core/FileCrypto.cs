@@ -31,7 +31,8 @@ public static class PasswordPolicy
 }
 
 /// <summary>
-/// Format "BDXLENC2" (see ENCRYPTION.md) - one encrypted object per file, keyed by the catalog's master key:
+/// Format "BDXLENC2" (see ENCRYPTION.md) - the catalog's files and a disc's manifest, each one encrypted object keyed
+/// by the catalog's master key (a disc's data is in packs instead, see DiscFormat):
 ///   magic "BDXLENC2"(8) | key id(8) | object salt(32) | nonce prefix(8) |
 ///   chunks: length(uint32) | AES-256-GCM ciphertext(length) | tag(16)
 /// Key of the object = HKDF(master key, object salt, "bdxl-enc2 " + purpose). Each chunk's plaintext is mode(1) + up to
@@ -95,20 +96,6 @@ public static class FileCrypto
     }
 
     /// <summary>
-    /// Encrypts src (or length bytes from offset - one part of a split file) into dst (which must not exist).
-    /// Returns the SHA-256 of the PLAINTEXT that was read. length -1 = to the end.
-    /// </summary>
-    public static string Encrypt(string srcPath, string dstPath, MasterKey key, string purpose, long offset = 0, long length = -1,
-                                 CancellationToken ct = default, int level = 0)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
-        using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
-        using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
-        input.Seek(offset, SeekOrigin.Begin);
-        return Encrypt(input, output, key, purpose, length, ct, level);
-    }
-
-    /// <summary>
     /// Encrypts length bytes (-1 = to the end) from the current position of input; level > 0 compresses each chunk
     /// with zstd at that level where that helps. Returns the SHA-256 of the data read.
     /// </summary>
@@ -162,19 +149,6 @@ public static class FileCrypto
             counter++;
         }
         return Convert.ToHexString(plainHash.GetHashAndReset());
-    }
-
-    /// <summary>Decrypts src into dst (which must not exist). Returns the plaintext's SHA-256; InvalidDataException on another key, damage or tampering.</summary>
-    public static string Decrypt(string srcPath, string dstPath, MasterKey key, string purpose, CancellationToken ct = default) =>
-        Decrypt(srcPath, dstPath, KeyRing.Of(key), purpose, ct);
-
-    /// <summary>The same with whichever key of the ring the file was encrypted with.</summary>
-    public static string Decrypt(string srcPath, string dstPath, KeyRing keys, string purpose, CancellationToken ct = default)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
-        using var input = new FileStream(srcPath, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
-        using var output = new FileStream(dstPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ChunkSize, FileOptions.SequentialScan);
-        return Decrypt(input, output, keys, purpose, ct);
     }
 
     /// <summary>Decrypts a whole BDXLENC2 stream (seekable: the last chunk is recognised by its position).</summary>
@@ -269,31 +243,6 @@ public static class FileCrypto
         return output.ToArray();
     }
 
-    /// <summary>
-    /// What 'scan' needs in one read: the SHA-256 of a file and the exact size its encrypted copy compressed at level
-    /// would have (the same chunks and the same choice per chunk as Encrypt). progress gets the bytes read so far.
-    /// </summary>
-    public static (string Sha256, long StoredSize) HashAndMeasure(string path, int level, Action<long> progress)
-    {
-        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, ChunkSize, FileOptions.SequentialScan);
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using var zstd = new ZstdSharp.Compressor(level);
-        var data = new byte[ChunkSize];
-        var block = new byte[1 + ChunkSize];
-        long stored = HeaderSize, read = 0;
-        while (true)
-        {
-            int n = ReadFull(input, data, 0, ChunkSize);
-            if (n == 0 && read > 0) break;   // the data ended on a chunk boundary (an empty file is one empty chunk, as Encrypt makes it)
-            hash.AppendData(data, 0, n);
-            stored += 4 + Encode(zstd, data, n, block) + TagSize;
-            read += n;
-            progress(read);
-            if (n < ChunkSize) break;
-        }
-        return (Convert.ToHexString(hash.GetHashAndReset()), stored);
-    }
-
     /// <summary>The key id in an encrypted file's header, or null if it is not a BDXLENC2 file.</summary>
     public static string? KeyIdOf(string path)
     {
@@ -303,20 +252,10 @@ public static class FileCrypto
         return Convert.ToHexString(header, 8, MasterKey.KeyIdSize);
     }
 
-    /// <summary>Bytes an encrypted copy of a file of this size occupies on the disc (header + 21 bytes per 1 MiB chunk).</summary>
+    /// <summary>Bytes of an uncompressed BDXLENC2 object of this plaintext size (header + 21 bytes per 1 MiB chunk).</summary>
     public static long StoredSize(long plainSize)
     {
         long chunks = Math.Max(1, (plainSize + ChunkSize - 1) / ChunkSize);
         return HeaderSize + plainSize + chunks * ChunkOverhead;
-    }
-
-    /// <summary>Largest plaintext whose encrypted copy still fits in storedSize bytes (the inverse of StoredSize).</summary>
-    public static long MaxPlainSize(long storedSize)
-    {
-        if (storedSize < StoredSize(0)) return 0;
-        long chunks = Math.Max(1, (storedSize - HeaderSize + ChunkSize + ChunkOverhead - 1) / (ChunkSize + ChunkOverhead));
-        long plain = Math.Min(storedSize - HeaderSize - chunks * ChunkOverhead, chunks * ChunkSize);
-        while (plain > 0 && StoredSize(plain) > storedSize) plain--;
-        return Math.Max(0, plain);
     }
 }

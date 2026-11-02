@@ -116,8 +116,9 @@ bdxl plan
 bdxl stage E:\Staging --with-catalog
 ```
 
-This writes `E:\Staging\BDXL-0001\`: every file encrypted under a hidden name, an encrypted manifest, `disc.json`,
-`bdxl.key`, `README.txt` and (with `--with-catalog`) `_catalog\`, a catalog backup.
+This writes `E:\Staging\BDXL-0001\`: the files in encrypted packs of 64 MiB (`data\000\000001.pack` …; nothing shows
+their names, sizes or number), an encrypted manifest, `packs.sha256`, `disc.json`, `bdxl.key`, `README.txt` and (with
+`--with-catalog`) `_catalog\`, a catalog backup.
 
 1. Burn the **contents** of `E:\Staging\BDXL-0001` to a blank disc with your burning program (UDF 2.50 file system).
 2. Write the label `BDXL-0001` on the disc.

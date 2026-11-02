@@ -3,7 +3,7 @@
 [Home](Home.md) › Large Files
 
 A file larger than every blank disc (a disk image, a long video) does not fit anywhere. `plan` reports it as too
-big. With `--split`, it is cut into parts, one per disc, each encrypted on its own.
+big. With `--split`, it is cut into parts, one per disc.
 
 ## Steps
 
@@ -20,9 +20,8 @@ big. With `--split`, it is cut into parts, one per disc, each encrypted on its o
 
 ## How it behaves
 
-- Parts are as large as the largest blank disc allows (minus its reserve, the encryption overhead and a few KB for
-  the file system and the manifest line). Parts staged by older versions were a few KB larger; they still fit (the few KB come out of the
-  reserve).
+- Parts are as large as the largest blank disc's packs can hold (its usable space less one pack and the manifest's
+  padding, see [Concepts › Space on a disc](Concepts.md#disc-space), less the part's manifest line).
 - The file counts as backed up only when **every** part is on a live disc. `plan` says how many split files still
   have parts to store.
 - Once a file has parts on discs, its remaining parts are staged even without `--split`, with the same layout.

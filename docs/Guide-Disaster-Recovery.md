@@ -114,12 +114,14 @@ With [several copies](Guide-Copies.md) nothing is lost yet: `restore` takes the 
    ```
    bdxl verify BDXL-0005 G:\
    ```
-   `CORRUPT` and `MISSING` lines name the damaged files (exit code 3).
+   `DAMAGED pack N` lines name the damaged packs, and below them the files that have data in them (exit code 3).
+   No password is needed for this; `--deep` also decrypts and checks every file.
 2. Save what can be saved first, if the files no longer exist elsewhere:
    ```
    bdxl restore D:\Rescue "*" --mount G:\
    ```
-   Only intact files are restored; the others are reported.
+   Only the parts of the packs each file needs are read, so a damaged spot costs only the files with data in it;
+   everything else is restored. Files with a copy on another mounted disc are taken from there.
 3. Mark the disc:
    ```
    bdxl lost BDXL-0005 --reason "unreadable"          (it may still turn up: 'found' undoes it)
@@ -129,12 +131,13 @@ With [several copies](Guide-Copies.md) nothing is lost yet: `restore` takes the 
    Files that exist nowhere else are listed as **DATA LOST** (exit code 2).
 4. Either stage the pending files normally (`bdxl stage …`), or **rebuild the same disc** to burn it again:
    ```
-   bdxl restage BDXL-0005 E:\Staging
+   bdxl restage BDXL-0005 E:\Staging --from G:\
    ```
-   - Data comes from the current source files (if their hash still matches) or from folders you name with
-     `--from "H:\rescued;I:\copy-of-disc"` (for example, files copied off the damaged disc).
-   - Every file is checked against the catalog. Without `--allow-partial`, nothing is staged if any file cannot be
-     rebuilt; with it, missing files are left out.
+   - The disc keeps its layout. Every pack of the damaged disc (`--from`: the disc itself, or copies of its packs)
+     whose hash still matches is copied as it is; only the damaged packs are rebuilt, from the current source
+     files (if their hash still matches) - so files that are gone from their source survive as long as their packs do.
+   - Every rebuilt file is checked against the catalog. Without `--allow-partial`, nothing is staged if any file
+     cannot be rebuilt; with it, such files are left out (and no longer count as being on the disc).
    - Burn it, then `bdxl verify BDXL-0005 G:\` and `bdxl burned BDXL-0005`.
    - Ctrl+C keeps what was rebuilt as `E:\Staging\BDXL-0005.partial`; run again with `--from E:\Staging\BDXL-0005.partial`.
 5. A lost disc that turns up: `bdxl found BDXL-0005`, then `bdxl verify BDXL-0005 G:\`.

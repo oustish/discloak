@@ -10,11 +10,12 @@ public sealed class CompressionSetting
 }
 
 /// <summary>
-/// Compression of staged copies (ENCRYPTION.md, phase 4): every 1 MiB chunk of a file is zstd-compressed inside the
-/// encryption and kept compressed only if that made it smaller. Per alias (with a default for all):
+/// Compression of staged copies: a file is stored as zstd frames, one per 1 MiB (see StoredForm), inside the disc's
+/// encrypted packs. Per alias (with a default for all):
 ///   off   never;   on   every file;   auto   every file except those whose extension says they are compressed already.
 /// 'scan' counts the stored size each file would have (FileRecord.CompressedSize, valid for CompressedWith), so the
-/// planner fills discs exactly; parts of split files are never compressed (their layout is fixed in plain bytes).
+/// planner fills discs exactly; a file whose size was not counted for today's setting is stored uncompressed, and
+/// parts of split files are never compressed (their layout is fixed in plain bytes).
 /// </summary>
 public static class Compression
 {
@@ -35,8 +36,8 @@ public static class Compression
     /// <summary>Changes with the zstd library, whose output (and so the counted sizes) may differ between versions.</summary>
     static readonly string LibraryVersion = typeof(ZstdSharp.Compressor).Assembly.GetName().Version?.ToString() ?? "?";
 
-    /// <summary>What a counted size is valid for: the level and the library.</summary>
-    public static string Signature(int level) => $"zstd{level}/{LibraryVersion}";
+    /// <summary>What a counted size is valid for: the stored form (frames of 1 MiB), the level and the library.</summary>
+    public static string Signature(int level) => $"zstd{level}-frames/{LibraryVersion}";
 
     /// <summary>The setting of an alias: its own, or the default.</summary>
     public static CompressionSetting For(Settings s, string alias) =>
@@ -56,14 +57,16 @@ public static class Compression
         };
     }
 
-    /// <summary>The stored size the planner counts for a whole file: the counted one if it is valid for today's setting, else the uncompressed size.</summary>
-    public static long PlannedStoredSize(Settings s, FileRecord f)
+    /// <summary>The level a whole file is staged with: today's setting if scan counted its size for it, else 0 (stored as it is).</summary>
+    public static int StoredLevel(Settings s, FileRecord f)
     {
         int level = LevelFor(s, f);
-        return level > 0 && f.CompressedSize is long counted && f.CompressedWith == Signature(level)
-            ? counted
-            : FileCrypto.StoredSize(f.Size);
+        return level > 0 && f.CompressedSize != null && f.CompressedWith == Signature(level) ? level : 0;
     }
+
+    /// <summary>The stored size of a whole file: the counted one if it is valid for today's setting, else its size.</summary>
+    public static long PlannedStoredSize(Settings s, FileRecord f) =>
+        StoredLevel(s, f) > 0 ? f.CompressedSize!.Value : f.Size;
 
     /// <summary>True if 'scan' has to (re)count this file's compressed size.</summary>
     public static bool NeedsCounting(Settings s, FileRecord f)

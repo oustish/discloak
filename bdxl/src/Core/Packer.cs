@@ -5,15 +5,15 @@ public static class Packer
     /// <summary>
     /// Best Fit Decreasing onto a FIXED set of blank discs of possibly different sizes: largest piece first, each into
     /// the disc that is left with the least free space. Pieces that fit nowhere are returned, never dropped.
-    /// sizeOf = bytes the piece occupies on disc (the plain size, or the encrypted size).
+    /// sizeOf = room the piece takes (its stored size and its manifest line); roomOf = room a disc has (default: its usable bytes).
     /// groupOf (optional): pieces of the same group never share a disc (copies of one content); holds (optional): the
     /// disc already holds that group (a burned disc getting another session), so no piece of the group goes there.
     /// </summary>
     public static (List<Bin> Bins, List<Piece> Unplaced) Allocate(
         IEnumerable<Piece> pieces, IReadOnlyList<BlankDisc> blanks, Func<Piece, long> sizeOf,
-        Func<Piece, string?>? groupOf = null, Func<BlankDisc, string, bool>? holds = null)
+        Func<Piece, string?>? groupOf = null, Func<BlankDisc, string, bool>? holds = null, Func<BlankDisc, long>? roomOf = null)
     {
-        var bins = blanks.OrderBy(b => b.Id, StringComparer.Ordinal).Select(b => new Bin(b)).ToList();
+        var bins = blanks.OrderBy(b => b.Id, StringComparer.Ordinal).Select(b => new Bin(b, roomOf?.Invoke(b) ?? b.Usable)).ToList();
         var byFree = new SortedSet<(long Free, int Index)>();
         for (int i = 0; i < bins.Count; i++) byFree.Add((bins[i].Free, i));
         var groups = bins.Select(_ => new HashSet<string>(StringComparer.OrdinalIgnoreCase)).ToList();

@@ -13,7 +13,7 @@ public sealed class AppendTarget
     public required long Room { get; init; }       // bytes the session's folder may take
     public string? Mount { get; init; }
     public long Reserve => Disc.Reserve ?? 0;
-    public long Free => Math.Max(0, Room - Reserve);   // bytes for files (and their manifest lines)
+    public long Free => Math.Max(0, Room - Reserve);   // bytes for the session's packs and manifest
     public int Session => Disc.Sessions + 1;
 
     /// <summary>A bin of exactly the free space, for the packer.</summary>
@@ -23,8 +23,8 @@ public sealed class AppendTarget
     public static long? FreeFor(DiscRecord d) =>
         d.Capacity is long capacity ? Math.Max(0, capacity - Occupied(d) - (d.Reserve ?? 0)) : null;
 
-    /// <summary>Space the disc's sessions take; without OccupiedBytes (imported discs) the first session is assumed to have used its whole reserve.</summary>
-    public static long Occupied(DiscRecord d) => d.OccupiedBytes > 0 ? d.OccupiedBytes : d.UsedBytes + (d.Reserve ?? 0);
+    /// <summary>Space the disc's sessions take; without OccupiedBytes the sessions are assumed to have used their packs and whole reserves.</summary>
+    public static long Occupied(DiscRecord d) => d.OccupiedBytes > 0 ? d.OccupiedBytes : d.Packs.Count * DiscFormat.PackOnDisc + d.Sessions * (d.Reserve ?? 0);
 
     public static AppendTarget Open(Ctx c, string label)
     {
@@ -32,8 +32,6 @@ public sealed class AppendTarget
         if (disc.State == "staged")
             throw new UserException($"{disc.Label} is not burned yet. To put more on it: 'discard {disc.Label}' and stage again.");
         if (disc.State != "burned") throw new UserException($"{disc.Label} is {disc.State}.");
-        if (!disc.Encrypted)
-            throw new UserException($"{disc.Label} is not encrypted; bdxl only adds encrypted data to discs, so it cannot take another session.");
         if (disc.KeyId != null && !c.Keys.Contains(disc.KeyId))
             throw new UserException($"{disc.Label} is encrypted with a key this catalog does not have (key id {disc.KeyId}).");
         if (disc.PendingAppend is { } pending)
@@ -50,6 +48,7 @@ public sealed class AppendTarget
             if (info == null || !info.Label.Equals(disc.Label, StringComparison.OrdinalIgnoreCase))
                 throw new UserException($"The disc in {mount} is " + (info == null ? "not a bdxl disc (no readable disc.json)" : info.Label) +
                                         $", not {disc.Label}.");
+            if (info.Unreadable() is { } why) throw new UserException($"The disc in {mount} cannot take a session: {why}.");
             if (info.KeyId != null && !c.Keys.Contains(info.KeyId))
                 throw new UserException($"The disc in {mount} is encrypted with a key this catalog does not have (key id {info.KeyId}). " +
                                         DiscFiles.OtherCatalogHint(mount));

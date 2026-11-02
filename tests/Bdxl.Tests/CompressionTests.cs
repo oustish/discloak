@@ -1,10 +1,8 @@
 namespace Bdxl.Tests;
 
-/// <summary>Compression inside BDXLENC2 (zstd per 1 MiB chunk) and per-location settings from scan to restore.</summary>
+/// <summary>Compression per location from scan to restore (the stored form itself: PackTests).</summary>
 public class CompressionTests : IDisposable
 {
-    const int Chunk = 1 << 20;
-    static readonly MasterKey Key = MasterKey.CreateNew();
     readonly TempDir tmp = new();
     public void Dispose() => tmp.Dispose();
 
@@ -23,46 +21,6 @@ public class CompressionTests : IDisposable
         var data = new byte[size];
         new Random(seed).NextBytes(data);
         return data;
-    }
-
-    public static IEnumerable<object[]> Contents() =>
-    [
-        ["empty", Array.Empty<byte>()],
-        ["text", Text(3 * Chunk + 777)],
-        ["exactly one chunk of text", Text(Chunk)],
-        ["random", Random(Chunk + 5000)],
-        ["random, then text", Random(Chunk).Concat(Text(Chunk + 10)).ToArray()],
-    ];
-
-    [Theory]
-    [MemberData(nameof(Contents))]
-    public void Compressed_copies_round_trip_and_scan_counts_their_size_exactly(string what, byte[] plain)
-    {
-        string src = tmp.File(what + ".bin");
-        File.WriteAllBytes(src, plain);
-        string plainHash = FileCrypto.Encrypt(src, src + ".enc", Key, KeyPurpose.File, level: 3);
-        long stored = new FileInfo(src + ".enc").Length;
-
-        var (hash, counted) = FileCrypto.HashAndMeasure(src, 3, _ => { });
-        Assert.Equal(plainHash, hash);
-        Assert.Equal(stored, counted);
-        Assert.True(stored <= FileCrypto.StoredSize(plain.Length));    // never larger than uncompressed
-        if (what is "text" or "exactly one chunk of text") Assert.True(stored < FileCrypto.StoredSize(plain.Length) / 2);
-
-        Assert.Equal(plainHash, FileCrypto.Decrypt(src + ".enc", tmp.File(what + ".out"), Key, KeyPurpose.File));
-        Assert.Equal(plain, File.ReadAllBytes(tmp.File(what + ".out")));
-    }
-
-    [Fact]
-    public void A_damaged_compressed_chunk_is_detected()
-    {
-        string src = tmp.File("t.txt");
-        File.WriteAllBytes(src, Text(100_000));
-        FileCrypto.Encrypt(src, src + ".enc", Key, KeyPurpose.File, level: 3);
-        var bytes = File.ReadAllBytes(src + ".enc");
-        bytes[FileCrypto.HeaderSize + 10] ^= 1;
-        File.WriteAllBytes(src + ".enc", bytes);
-        Assert.Throws<InvalidDataException>(() => FileCrypto.Decrypt(src + ".enc", tmp.File("out"), Key, KeyPurpose.File));
     }
 
     [Fact]
@@ -93,9 +51,9 @@ public class CompressionTests : IDisposable
         var photo = Random(60_000, seed: 2);
         File.WriteAllBytes(Directory.CreateDirectory(tmp.File("src")).FullName + "/ledger.csv", ledger);
         File.WriteAllBytes(tmp.File("src/photo.jpg"), photo);
-        Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "1MB", "--reserve", "100KB"));
+        Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "2MB", "--reserve", "100KB"));
         Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "Docs"));
-        Assert.Equal(2, Bdxl("plan"));                                              // 3 MB do not fit on 1 MB
+        Assert.Equal(2, Bdxl("plan"));                                              // 3 MB do not fit on 2 MB
 
         Assert.Equal(0, Bdxl("compression", "set", "Docs", "auto"));
         Assert.Equal(2, Bdxl("plan"));                                              // not counted yet: still counted uncompressed

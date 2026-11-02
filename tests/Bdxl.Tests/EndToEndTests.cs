@@ -35,11 +35,10 @@ public class EndToEndTests : IDisposable
         Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
 
         string disc = Disc("BDXL-0001");
-        Assert.Equal(2, Directory.GetFiles(Path.Combine(disc, "data"), "*.enc", SearchOption.AllDirectories).Length);   // a + b: the copy and skip.tmp are not stored
+        Assert.Equal(DiscFormat.PacksFor(500_000), TestKeys.Packs(disc).Count);          // a + b: the copy and skip.tmp are not stored
+        Assert.Equal(2, TestKeys.Load(tmp.File("cat")).Discs.Single().FileCount);
         Assert.True(File.Exists(Path.Combine(disc, "disc.json")));
-        Assert.True(File.Exists(Path.Combine(disc, "manifest.jsonl.enc")));             // every disc is encrypted now
-        Assert.False(File.Exists(Path.Combine(disc, "manifest.jsonl")));
-        Assert.Contains("\"encrypted\": true", File.ReadAllText(Path.Combine(disc, "disc.json")));
+        Assert.True(File.Exists(Path.Combine(disc, "manifest.enc")));
 
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", disc));
         Assert.Equal(0, Bdxl("burned", "BDXL-0001", "--date", "2026-10-01"));
@@ -52,15 +51,23 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
-    public void A_disc_of_tiny_files_fits_with_its_manifest_and_file_system()
+    public void A_disc_of_tiny_files_holds_them_all_in_one_pack_with_its_manifest()
     {
         for (int i = 0; i < 200; i++) tmp.RandomFile($"src/tiny/{i:D3}.txt", 10, seed: i);
         Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "400KB", "--reserve", "40KB"));   // ~30 KB: folders, disc.json, bdxl.key, README
         Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
         Assert.Equal(0, Bdxl("stage", tmp.File("stg")));                       // no "will not burn" warning (exit 2)
         Assert.True(DiscSpace.Folder(Disc("BDXL-0001")) <= 400_000);
-        int staged = Directory.GetFiles(Path.Combine(Disc("BDXL-0001"), "data"), "*.enc", SearchOption.AllDirectories).Length;
-        Assert.InRange(staged, 50, 199);                                       // only what fits, by space on the disc, not by bytes
+        Assert.Single(TestKeys.Packs(Disc("BDXL-0001")));                      // 2 KB of files: no sectors or file entries each
+        Assert.Equal(200, TestKeys.Load(tmp.File("cat")).Discs.Single().FileCount);
+
+        // and a disc too small for its manifest's lines takes only what fits
+        for (int i = 0; i < 2000; i++) tmp.RandomFile($"src/more/{i:D4}.txt", 10, seed: i);
+        Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "300KB", "--reserve", "40KB"));
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
+        Assert.True(DiscSpace.Folder(Disc("BDXL-0002")) <= 300_000);
+        Assert.InRange(TestKeys.Load(tmp.File("cat")).Discs.Single(d => d.Label == "BDXL-0002").FileCount, 50, 1999);
     }
 
     [Fact]
@@ -145,26 +152,98 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
-    public void A_corrupted_disc_fails_verify()
+    public void A_damaged_pack_fails_verify_names_its_files_and_costs_only_them()
     {
-        tmp.RandomFile("src/a.bin", 100_000);
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);           // largest first: a in packs 1-2,
+        var b = tmp.RandomFile("src/b.bin", 30_000, seed: 2);    // b in pack 3,
+        var c = tmp.RandomFile("src/c.bin", 60_000, seed: 3);    // c in packs 2-3
         Bdxl("blanks", "add", "1", "--size", "1MB");
         Bdxl("scan", tmp.File("src"), "--name", "S");
         Bdxl("stage", tmp.File("stg"));
+        var copies = TestKeys.Load(tmp.File("cat")).Files.ToDictionary(f => f.RelPath, f => f.Backups.Single());
+        Assert.Equal(1, DiscFormat.PackOf(copies["a.bin"].At));
 
-        string stored = Path.Combine(Disc("BDXL-0001"), "data", "000", "000001.enc");
-        byte[] bytes = File.ReadAllBytes(stored);
-        bytes[500] ^= 1;
-        File.WriteAllBytes(stored, bytes);
+        string pack1 = Path.Combine(Disc("BDXL-0001"), DiscFormat.PackPath(1));
+        byte[] bytes = File.ReadAllBytes(pack1);
+        bytes[DiscFormat.HeaderSize + 500] ^= 1;   // a.bin's first chunk
+        File.WriteAllBytes(pack1, bytes);
 
         Assert.Equal(3, Bdxl("verify", "BDXL-0001", Disc("BDXL-0001")));
+        Assert.Equal(3, Bdxl("verify", "BDXL-0001", Disc("BDXL-0001"), "--deep"));
+        Assert.Equal(3, Bdxl("restore", tmp.File("out"), "*", "--mount", Disc("BDXL-0001")));
+        Assert.False(File.Exists(tmp.File("out/S/a.bin")));                 // the damaged chunk is a.bin's
+        Assert.Equal(b, File.ReadAllBytes(tmp.File("out/S/b.bin")));        // the rest is restored
+        Assert.Equal(c, File.ReadAllBytes(tmp.File("out/S/c.bin")));
+    }
+
+    [Fact]
+    public void A_file_damaged_on_one_disc_is_restored_from_its_copy_on_another()
+    {
+        var a = tmp.RandomFile("src/a.bin", 50_000, seed: 1);
+        Bdxl("blanks", "add", "2", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Assert.Equal(0, Bdxl("copies", "set", "S", "2"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--max-discs", "2"));
+        File.WriteAllBytes(Path.Combine(Disc("BDXL-0001"), DiscFormat.PackPath(1)), new byte[DiscFormat.PackFileSize]);   // unreadable
+
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "*", "--mount", Disc("BDXL-0001") + ";" + Disc("BDXL-0002")));
+        Assert.Equal(a, File.ReadAllBytes(tmp.File("out/S/a.bin")));
+    }
+
+    [Fact]
+    public void Restage_takes_intact_packs_from_the_old_disc_and_rebuilds_only_the_damaged_one()
+    {
+        var a = tmp.RandomFile("src/a.bin", 100_000, seed: 1);   // packs 1-2
+        var b = tmp.RandomFile("src/b.bin", 60_000, seed: 2);    // packs 2-3
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));
+        Bdxl("burned", "BDXL-0001");
+        string old = Disc("BDXL-0001");
+        var hashes = TestKeys.Load(tmp.File("cat")).Discs.Single().Packs;
+        File.WriteAllBytes(Path.Combine(old, DiscFormat.PackPath(3)), new byte[10]);   // b's last pack damaged on the old disc
+        File.Delete(tmp.File("src/a.bin"));                                            // a is only in intact packs 1-2... and pack 2 holds b too
+
+        Assert.Equal(0, Bdxl("lost", "BDXL-0001"));
+        Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re"), "--from", old));
+        var after = TestKeys.Load(tmp.File("cat")).Discs.Single().Packs;
+        Assert.Equal(hashes.Take(2), after.Take(2));                                    // taken over as they were
+        Assert.NotEqual(hashes[2], after[2]);                                           // rebuilt from b.bin: a new salt
+        Assert.Equal(0, Bdxl("verify", "BDXL-0001", tmp.File("re/BDXL-0001"), "--deep"));
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "*", "--mount", tmp.File("re/BDXL-0001")));
+        Assert.Equal(a, File.ReadAllBytes(tmp.File("out/S/a.bin")));
+        Assert.Equal(b, File.ReadAllBytes(tmp.File("out/S/b.bin")));
+    }
+
+    [Fact]
+    public void Restage_without_a_source_for_a_damaged_pack_stages_nothing_unless_allowed()
+    {
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);   // packs 1-2
+        var b = tmp.RandomFile("src/b.bin", 60_000, seed: 2);    // packs 2-3
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));
+        Bdxl("burned", "BDXL-0001");
+        string old = Disc("BDXL-0001");
+        File.Delete(Path.Combine(old, DiscFormat.PackPath(1)));    // a's first pack gone ...
+        File.Delete(tmp.File("src/a.bin"));                         // ... and its source too
+
+        Assert.Equal(0, Bdxl("lost", "BDXL-0001"));
+        Assert.Equal(3, Bdxl("restage", "BDXL-0001", tmp.File("re"), "--from", old));
+        Assert.False(Directory.Exists(tmp.File("re/BDXL-0001")));
+        Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re"), "--from", old, "--allow-partial"));
+        var files = TestKeys.Load(tmp.File("cat")).Files;
+        Assert.Empty(files.Single(f => f.RelPath == "a.bin").Backups);   // no longer counts as being on the disc
+        Assert.Equal(0, Bdxl("verify", "BDXL-0001", tmp.File("re/BDXL-0001"), "--deep"));
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "b.bin", "--mount", tmp.File("re/BDXL-0001")));
+        Assert.Equal(b, File.ReadAllBytes(tmp.File("out/S/b.bin")));
     }
 
     [Fact]
     public void Encrypted_split_file_across_three_discs_restores_byte_identical()
     {
         var big = tmp.RandomFile("src/big.bin", 2_500_000, seed: 9);
-        Assert.Equal(0, Bdxl("blanks", "add", "3", "--size", "1MB", "--reserve", "50KB"));
+        Assert.Equal(0, Bdxl("blanks", "add", "3", "--size", "1200KB", "--reserve", "50KB"));
         Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "S"));
 
         Assert.Equal(2, Bdxl("plan"));                    // too big for any disc without --split
@@ -173,7 +252,7 @@ public class EndToEndTests : IDisposable
 
         var discs = new[] { "BDXL-0001", "BDXL-0002", "BDXL-0003" };
         Assert.All(discs, d => Assert.Equal(0, Bdxl("verify", d, Disc(d), "--deep")));
-        Assert.True(File.Exists(Path.Combine(Disc("BDXL-0001"), "data", "000", "000001.enc")));   // hidden name
+        Assert.All(discs, d => Assert.True(DiscSpace.Folder(Disc(d)) <= 1_200_000));
 
         // one drive: restore what is there, run again with the next disc, ...
         Assert.Equal(2, Bdxl("restore", tmp.File("out"), "big.bin", "--mount", Disc("BDXL-0002")));
@@ -198,27 +277,12 @@ public class EndToEndTests : IDisposable
         Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re")));
 
         string rebuilt = Path.Combine(tmp.File("re"), "BDXL-0001");
-        Assert.True(File.Exists(Path.Combine(rebuilt, "data", "000", "000001.enc")));
+        Assert.Equal(TestKeys.Packs(Disc("BDXL-0001")), TestKeys.Packs(rebuilt));
+        Assert.Equal(0, Bdxl("verify", "BDXL-0001", rebuilt));
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", rebuilt, "--deep"));
         Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
         Assert.Equal(0, Bdxl("restore", tmp.File("out"), "*", "--mount", rebuilt));
         Assert.Equal(File.ReadAllBytes(tmp.File("src/a.bin")), File.ReadAllBytes(tmp.File("out/S/a.bin")));
-    }
-
-    [Fact]
-    public void A_plain_disc_from_before_is_imported_verified_restored_and_rebuilt_as_it_was()
-    {
-        var photo = tmp.RandomFile("old-disc/Photos/2019/x.jpg", 30_000, seed: 5);   // burned long ago, without bdxl
-        Assert.Equal(0, Bdxl("scandisc", tmp.File("old-disc"), "--label", "OLD-2019", "--method", "hash", "--capacity", "1MB"));
-        Assert.Equal(0, Bdxl("verify", "OLD-2019", tmp.File("old-disc")));
-        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "x.jpg", "--mount", tmp.File("old-disc"), "--disc", "OLD-2019"));
-        Assert.Equal(photo, File.ReadAllBytes(tmp.File("out/Photos/2019/x.jpg")));
-
-        Assert.Equal(1, Bdxl("stage", tmp.File("stg"), "--append", "OLD-2019"));          // nothing new goes onto a plain disc
-        Assert.Equal(2, Bdxl("lost", "OLD-2019"));                                         // 2: its files are on no other disc and gone from the source
-        Assert.Equal(0, Bdxl("restage", "OLD-2019", tmp.File("re"), "--from", tmp.File("old-disc")));
-        Assert.Equal(photo, File.ReadAllBytes(tmp.File("re/OLD-2019/Photos/2019/x.jpg")));   // rebuilt the way it was
-        Assert.Equal(0, Bdxl("verify", "OLD-2019", tmp.File("re/OLD-2019")));
     }
 
     [Fact]

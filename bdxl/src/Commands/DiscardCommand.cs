@@ -21,6 +21,7 @@ public sealed class DiscardCommand : ICommand
             disc.FileCount = session.FileCountBefore;
             disc.UsedBytes = session.UsedBytesBefore;
             disc.OccupiedBytes = session.OccupiedBytesBefore;
+            disc.Packs.RemoveRange(session.PacksBefore, disc.Packs.Count - session.PacksBefore);
             disc.Sessions = session.Number - 1;
             disc.PendingAppend = null;
             c.Cat.Save();

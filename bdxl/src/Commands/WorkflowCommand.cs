@@ -36,12 +36,12 @@ public sealed class WorkflowCommand : ICommand
                  bdxl plan
                It tells you when the data does not fit on the blank discs you registered.
 
-            4. Prepare a disc folder (every file is encrypted with the catalog's key, names hidden)
+            4. Prepare a disc folder (the files go into encrypted 64 MiB packs: no names, sizes or count show)
                  bdxl stage E:\Staging --max-discs 1 --min-fill 0.9 --with-catalog
                Burn the folder E:\Staging\BDXL-0001 with your burning software (UDF 2.50 file system).
 
             5. Check the burned disc and record it
-                 bdxl verify BDXL-0001 G:\                      add --deep for encrypted discs to decrypt and compare
+                 bdxl verify BDXL-0001 G:\                      the packs' hashes; --deep also decrypts and checks every file
                  bdxl burned BDXL-0001 --date 2026-10-29
                  bdxl cost report                               cost per disc, per GB and per TB
                A disc that was not full and not finalized can take more later, as a new session:
@@ -51,11 +51,11 @@ public sealed class WorkflowCommand : ICommand
 
             6. Day-to-day
                  bdxl status        bdxl find holiday        bdxl discs
-                 bdxl restore D:\Recovered "holiday" --mount G:\       copy files back (encrypted ones are decrypted)
+                 bdxl restore D:\Recovered "holiday" --mount G:\       copy files back (decrypted, checked by hash)
 
             7. When things go wrong
                  bdxl lost BDXL-0003 --reason "left on the train"     its files become pending again
-                 bdxl restage BDXL-0003 E:\Staging --from H:\recovered   rebuild the same disc to burn again
+                 bdxl restage BDXL-0003 E:\Staging --from G:\           rebuild the same disc (intact packs taken from G:)
                  bdxl catalog check                                    is the catalog intact?
                  bdxl catalog history   /   bdxl catalog rollback <id>   older catalog versions (one per command)
                  bdxl catalog backup create F:\safe                    catalog copy with repair data
@@ -63,12 +63,10 @@ public sealed class WorkflowCommand : ICommand
                  bdxl catalog export F:\plain   /   catalog import F:\plain     read or fix the catalog as plain JSON
                  bdxl password change                                  new password (--recovery if it was lost)
                  bdxl password change --rotate-key                     it may have leaked: a new key for everything new
-                 bdxl init --key-from G:\ --catalog D:\new-catalog      catalog lost: start again with an encrypted disc's key
+                 bdxl init --key-from G:\ --catalog D:\new-catalog      catalog lost: start again with a disc's key ...
+                 bdxl scandisc G:\ --catalog D:\new-catalog            ... and read every disc back into it
 
-            8. Discs you already have
-                 bdxl scandisc G:\ --label OLD-2019-01 --method hash --cost 30 --write-disc-json
-
-            9. Housekeeping
+            8. Housekeeping
                  bdxl purge --dry-run          forget files that are gone and were never burned
                  bdxl alias rename Docs Documents
             """);

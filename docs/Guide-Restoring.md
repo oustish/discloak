@@ -2,8 +2,10 @@
 
 [Home](Home.md) › Restoring Files
 
-`restore` finds files in the catalog, tells you which discs it needs, copies them from the discs you put in,
-decrypts them and checks each one against its hash.
+`restore` finds files in the catalog, tells you which discs it needs, reads them from the discs you put in (only the
+parts of the packs each file needs), decrypts them and checks each one against its hash. A damaged spot on a disc
+costs only the files with data in it: they are taken from another mounted disc with a copy if there is one, and
+everything else is restored.
 
 ## Find what you need
 
@@ -79,6 +81,6 @@ If the catalog is gone, start a new one from the disc's own key and read the dis
 ## Checking a disc without restoring
 
 ```
-bdxl verify BDXL-0004 G:\          # stored files intact?
-bdxl verify BDXL-0004 G:\ --deep   # and they decrypt to the right content?
+bdxl verify BDXL-0004 G:\          # packs intact? (no password needed for this part)
+bdxl verify BDXL-0004 G:\ --deep   # and every file decrypts to the right content?
 ```

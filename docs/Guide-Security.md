@@ -4,7 +4,9 @@
 
 ## How it fits together
 
-- A random **master key** encrypts the catalog and every disc.
+- A random **master key** encrypts the catalog and every disc. On a disc, the files are in equal packs of 64 MiB, so
+  someone who finds it learns only how much data it holds (to 64 MiB), its label and dates - not the names, sizes or
+  number of the files.
 - `bdxl.key` holds that key wrapped by your **password** (and, optionally, by a **recovery key**). It is safe to
   keep openly; it is in the catalog folder, in every catalog backup and on every encrypted disc.
 - Changing the password only rewrites `bdxl.key`. Discs already burned keep the `bdxl.key` of their day, so

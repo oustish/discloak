@@ -14,7 +14,8 @@ password (changeable) protects everything. This file is the agreed design; `HAND
 | Unlocked state | A background **agent** holds master keys in memory (never on disk), one per catalog id, with idle timeout + max lifetime, locked on Win+L / sleep, ends at sign-out. No cache file fallback. |
 | Write-once media | Every disc carries the envelope current when it was staged. A password change does not revoke the old password (old password + old disc still opens the master key); newest password + newest disc opens everything. Accepted. |
 | Key rotation | `password change --rotate-key` (added after phase 4): a new master key for everything new; older keys stay in a key ring so every disc stays readable. |
-| Compression | Per alias (`off`/`auto`/`on` + level), zstd, per chunk inside the encrypted format; sizes counted during `scan` so planning stays exact. Later phase; the format reserves the flag now. |
+| Compression | Per alias (`off`/`auto`/`on` + level), zstd; sizes counted during `scan` so planning stays exact. On discs: zstd frames of 1 MiB inside the packs (phase 6). |
+| Disc layout | (phase 6, 2026-11-02) All data of a disc in one stream, cut into equal **64 MiB packs**, each encrypted on its own; the manifest padded to whole 64 MiB. Nothing on a disc shows file names, sizes or count. |
 | Old formats | Nothing was staged before this design, so `BDXLENC1` and the per-disc password scheme are removed, not migrated. The plaintext catalog is migrated. |
 
 ## Key structure
@@ -27,7 +28,8 @@ master key ──HKDF-SHA256(salt = object salt, info = "bdxl-enc2 " + purpose)�
 master key ──HKDF-SHA256(info = "bdxl catalog integrity")──────────────────► HMAC key of catalog.hash.json
 ```
 
-Purposes: `catalog` (catalog files, history, backups), `manifest`, `file` (staged data).
+Purposes: `catalog` (catalog files, history, backups), `manifest` (a disc's manifests), `pack` (a disc's packs, see
+below; their format is not `BDXLENC2`).
 
 ### `bdxl.key` (plain JSON, safe to store openly)
 
@@ -135,34 +137,74 @@ plaintext catalog is migrated after confirmation (same code as `init`).
   then `catalog backup restore` the newest `_catalog`, or `scandisc` each disc. (Decided while building phase 2
   instead of a catalog-less `restore --mount`: every command keeps working on a catalog, and `scandisc`,
   `verify --deep` and `restore` need nothing special.) A newer disc's `bdxl.key` holds the newer password.
-- A disc whose key id is not the catalog's is refused by `stage --append`, `restage`, `discjson`; `restore`
-  ignores its mount; `scandisc` explains how to read it (`init --key-from`).
+- A disc whose key id is not the catalog's is refused by `stage --append` and `restage`; `restore` ignores its
+  mount; `scandisc` explains how to read it (`init --key-from`).
 - `DiscRecord.KeyCheck`, `DiscPassword`, `KeyCache`, `BDXLENC1` are removed; a disc's key check is its key id.
+
+## Discs in packs (phase 6, 2026-11-02)
+
+Until then every file was its own `.enc` file on the disc, so the disc showed every file's size (exactly: the
+encrypted size is the plain size + 56 + 21 per MiB), their number, and with compression even each MiB's compressed
+size (the plain chunk-length field). That allows "confirming a file": someone with a known file (a film, a leaked
+document) checks whether a disc holds one of that size. The design now hides all of it; no disc in the old layout
+existed, so the old layout was removed, not migrated.
+
+- **One stream per disc, cut into packs.** Every stored piece (a file, compressed or not, or a part) is laid end to
+  end in the disc's data stream; the stream is cut into packs of 64 MiB of data (`data/NNN/NNNNNN.pack`, from 1).
+  A copy is (disc, `At`, `StoredSize`) - `BackupRef` lost `DiscPath`, `StoredSha256` and `Encrypted`.
+- **Pack format** (`BDXLPAK1`): magic (8) | key id (8) | salt (32) | nonce prefix (8) | 64 × [ciphertext of 1 MiB |
+  tag (16)] = 67,109,944 bytes, always (the last pack of a session is filled with zeros). Key = HKDF(master, salt,
+  "bdxl-enc2 pack"), nonce = prefix + chunk (uint32), AAD = pack number (uint32) + chunk (uint32): a pack or chunk
+  moved elsewhere fails. Fixed geometry: positions are computed, so restore decrypts only the chunks a file needs, and
+  a damaged chunk (or a sector the drive cannot read) costs only the files with data in it.
+- Each pack has its own random salt: a pack written again (`restage`) has a new key, so a nonce is never reused.
+- **Manifest** (`manifest.enc`, `manifest.sN.enc` per appended session): `BDXLENC2`, purpose `manifest`, JSON lines
+  (`source`, `at`, `size`, `plainSize`, `sha256`, `modified`, `compression`, part fields) **padded with empty lines to
+  whole 64 MiB** so its size does not give away the number of files.
+- **`packs.sha256`** (plain, sha256sum format, every pack of the disc): checks a disc without bdxl or the password.
+  The catalog keeps the same hashes (`DiscRecord.Packs`): `verify` compares them without decrypting; `verify --deep`
+  reads each pack once, hashes it, decrypts all chunks and checks every file in the same read.
+- **`disc.json`**: label, date, sessions, format `bdxl-pack-1`, pack and chunk size, catalog id, key id. File count and
+  size moved to the catalog and the manifest.
+- **Compression**: one zstd frame per 1 MiB of the file (standard: `zstd -d` reads the concatenation); deterministic,
+  so `scan` counts the exact stored size. A file without a valid count is stored uncompressed (`StoredLevel`), and
+  `stage` never writes a piece larger than planned (`TooLargeException`: the file changed).
+- **Planning**: a piece takes its stored size + its manifest line; a disc's room = (usable − one pack − one manifest
+  bucket − small files) × 64 MiB / pack-on-disc. Small files no longer cost sectors and file entries each.
+- **Restage** keeps the layout: a pack whose hash matches the catalog (or an interrupted restage's `restage.json`) is
+  copied from `--from`; any other pack is rebuilt from source files (each piece regenerated, compressed the same way,
+  and checked against its hash). Packs that hold only checked pieces are listed in `restage.json`, so an interrupted
+  restage continues with `--from <label>.partial`.
+- **Left visible**: label, dates, number of sessions, number of packs (the amount of data to 64 MiB), catalog/key id;
+  a `_catalog` backup's size grows with the catalog's file count.
+- Discs written without bdxl can no longer be recorded (`scandisc` reads only bdxl discs; `discjson` is gone).
+- Tests use packs of 8 × 8 KiB (`DiscFormat.UseGeometryForTests`); `disc.json` records the geometry and a reader
+  refuses a disc of another one.
 
 ## Compression (phase 4)
 
-- Per alias: `off`, `auto` (skip known compressed extensions such as jpg/heic/mp4/mkv/zip/7z, and per chunk keep
-  whatever does not shrink), `on`; plus a level. Global default + per alias override.
-- zstd (RFC 8878), each 1 MiB chunk compressed on its own (mode byte above): damage stays within a chunk, parts
-  start on chunk boundaries, incompressible data grows by 1 byte per chunk at most.
+- Per alias: `off`, `auto` (skip known compressed extensions such as jpg/heic/mp4/mkv/zip/7z), `on`; plus a level.
+  Global default + per alias override.
+- zstd (RFC 8878). In the catalog's own files (`BDXLENC2`): each 1 MiB chunk compressed on its own (mode byte above).
+  On discs (phase 6): one zstd frame per 1 MiB of the file, inside the packs.
 - `scan` compresses (and discards) to count the stored size of files in aliases with compression on, so the planner
-  stays exact; a changed setting needs the sizes recounted. If a library update changes sizes, `stage` defers what no
-  longer fits; the disc reserve absorbs small differences.
+  stays exact; a changed setting (or the stored form, or the zstd library) needs the sizes recounted, and until then
+  files are stored uncompressed.
 - Compression is recorded on the stored copy (`BackupRef`), not on the file, so dedup across aliases keeps working.
-- Only in encrypted copies (every staged disc since phase 3).
 
 ## Phases
 
 1. (done) Master key, `bdxl.key` (Argon2id), recovery key, `BDXLENC2`, encrypted catalog with HMAC integrity,
    migration, `init`, `password change`, `recovery-key`, `catalog export/import`, encrypted catalog backups, the agent.
-2. (done) Discs use the master key (stage, restage, restore, verify, scandisc, discjson, `_catalog`); `bdxl.key`,
+2. (done) Discs use the master key (stage, restage, restore, verify, scandisc, `_catalog`); `bdxl.key`,
    ids and README on every encrypted disc; `init --key-from`; old per-disc scheme removed.
-3. (done) Encrypted only: plain staging removed (`--encrypt` accepted and ignored); plain discs imported with
-   `scandisc` stay readable, verifiable, restorable and restageable as they were, but take no new session.
+3. (done) Encrypted only: plain staging removed (`--encrypt` accepted and ignored). Since phase 6 plain discs cannot
+   be imported at all.
 4. (done) Compression per alias: `compression set <alias>|--default off|auto|on [--level N]`, default off. The
    level is recorded on each stored copy (`BackupRef.Compression`, manifest) so `restage` reproduces the size; counted
    sizes are tied to level + zstd library version and fall back to uncompressed sizes (so no overflow guard is needed).
 5. (done) Key rotation, see below.
+6. (done) Discs in packs, see above.
 
 ## Key rotation (`password change --rotate-key`)
 
@@ -173,8 +215,8 @@ plaintext catalog is migrated after confirmation (same code as `init`).
   if there was one (the old one could not wrap the new key); `bdxl.key` is written, then the catalog is saved under the
   new key. History versions and catalog backups keep the key they were made with; readers pick the key by id (file
   headers, `catalog.hash.json`'s key id, `DiscRecord.KeyId`), so a stop between the steps loses nothing.
-- New discs, catalog saves and backups use the current key. `stage --append`, `restage` and `discjson` use the disc's
-  own key, so every disc stays under one key. The agent holds the ring (protocol 2) and is locked after a rotation.
+- New discs, catalog saves and backups use the current key. `stage --append` and `restage` use the disc's own key,
+  so every disc stays under one key. The agent holds the ring (protocol 2) and is locked after a rotation.
 - Each disc carries the ring as of its staging, under that day's password: a leaked old password + an old disc opens
   only the keys up to then (that disc, older discs, their `_catalog` backups); the newest password + the newest disc
   opens everything. A burned disc cannot be re-keyed except by `restage` + burning it again.

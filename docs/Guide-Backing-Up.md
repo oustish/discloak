@@ -37,8 +37,8 @@ The regular cycle: **scan → plan → stage → burn → verify → burned**. R
    ```
    bdxl verify BDXL-0001 G:\
    ```
-   Every file is read and compared. `--deep` also decrypts each file and compares the original content (slower,
-   proves the content can be restored).
+   Every pack is read and its hash compared with the catalog. `--deep` also decrypts every pack and checks every
+   file against its hash, in the same single read (proves the content can be restored).
 7. **Record** it:
    ```
    bdxl burned BDXL-0001                      (or --date 2026-10-29 for another day)
@@ -50,8 +50,8 @@ The regular cycle: **scan → plan → stage → burn → verify → burned**. R
 
 | Situation | What to do |
 |---|---|
-| Ctrl+C during `stage` | The file being copied is removed and the disc is finished with what was copied: a complete, smaller folder. Burn it as it is, or `bdxl discard BDXL-0001` and stage again. |
-| "changed since last scan - not staged" | The file changed after the scan. Run `bdxl scan` again; it is pending again. |
+| Ctrl+C during `stage` | The file being copied is left out and the disc is finished with what was copied: a complete, smaller folder. Burn it as it is, or `bdxl discard BDXL-0001` and stage again. |
+| "changed since last scan - not staged" | The file changed after the scan. Run `bdxl scan` again; it is pending again. The space it took in its pack stays unused on this disc. |
 | "WARNING: … folder is … more than the disc holds" | The disc's own files outgrew the reserve. `bdxl discard BDXL-0001`, `bdxl blanks reserve 500MB`, stage again. |
 | You decide not to burn a staged disc | `bdxl discard BDXL-0001`: its files are pending again and the blank disc goes back to stock. The folder is not deleted; delete it yourself. |
 | The burned disc fails `verify` | Do not run `burned`. Burn the same folder onto a new disc and verify again. If the folder is gone: `bdxl discard` and stage again. |

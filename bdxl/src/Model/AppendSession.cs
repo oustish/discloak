@@ -11,4 +11,5 @@ public class AppendSession
     public int FileCountBefore { get; set; }
     public long UsedBytesBefore { get; set; }
     public long OccupiedBytesBefore { get; set; }
+    public int PacksBefore { get; set; }
 }

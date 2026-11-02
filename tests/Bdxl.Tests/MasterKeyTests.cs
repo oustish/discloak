@@ -66,11 +66,11 @@ public class MasterKeyTests
         Assert.Equal([oldId], old.All.Select(k => k.KeyId));      // a leaked old password + old disc: only the old key
 
         // a file of the old key opens with the new ring, one of the new key not with the old ring
-        var oldData = FileCrypto.Seal(Data(100), ring.All[0], KeyPurpose.File);
-        var newData = FileCrypto.Seal(Data(100), ring.Current, KeyPurpose.File);
-        Assert.Equal(Data(100), FileCrypto.Open(oldData, now, KeyPurpose.File));
-        Assert.Equal(Data(100), FileCrypto.Open(newData, now, KeyPurpose.File));
-        Assert.Contains("another key", Assert.Throws<InvalidDataException>(() => FileCrypto.Open(newData, old, KeyPurpose.File)).Message);
+        var oldData = FileCrypto.Seal(Data(100), ring.All[0], KeyPurpose.Manifest);
+        var newData = FileCrypto.Seal(Data(100), ring.Current, KeyPurpose.Manifest);
+        Assert.Equal(Data(100), FileCrypto.Open(oldData, now, KeyPurpose.Manifest));
+        Assert.Equal(Data(100), FileCrypto.Open(newData, now, KeyPurpose.Manifest));
+        Assert.Contains("another key", Assert.Throws<InvalidDataException>(() => FileCrypto.Open(newData, old, KeyPurpose.Manifest)).Message);
         Assert.Throws<ArgumentException>(() => ring.Add(MasterKey.CreateNew()));   // another catalog's key never joins
     }
 
@@ -175,18 +175,18 @@ public class MasterKeyTests
         using var key = MasterKey.CreateNew();
         using var other = MasterKey.CreateNew();
         var data = Data((1 << 20) + 100);
-        var s = FileCrypto.Seal(data, key, KeyPurpose.File);
+        var s = FileCrypto.Seal(data, key, KeyPurpose.Manifest);
 
-        Assert.Contains("another key", Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s, other, KeyPurpose.File)).Message);
+        Assert.Contains("another key", Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s, other, KeyPurpose.Manifest)).Message);
         Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s, key, KeyPurpose.Catalog));
 
         var flipped = (byte[])s.Clone();
         flipped[100] ^= 1;
-        Assert.Throws<InvalidDataException>(() => FileCrypto.Open(flipped, key, KeyPurpose.File));
+        Assert.Throws<InvalidDataException>(() => FileCrypto.Open(flipped, key, KeyPurpose.Manifest));
 
         int firstChunk = 56 + 4 + 1 + (1 << 20) + 16;   // cut after the first chunk: the "last" flag no longer matches
-        Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s[..firstChunk], key, KeyPurpose.File));
-        Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s[..^1], key, KeyPurpose.File));
+        Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s[..firstChunk], key, KeyPurpose.Manifest));
+        Assert.Throws<InvalidDataException>(() => FileCrypto.Open(s[..^1], key, KeyPurpose.Manifest));
     }
 
     [Fact]

@@ -8,26 +8,25 @@ public sealed class RestageCommand : ICommand
     public string Usage => "restage <label> <destDir> [--from dirA;dirB] [--allow-partial]";
     public bool Interruptible => true;
     public string Details => """
-        Takes the data from the current source files (if their hash still matches) or from the --from folders, checks
-        every file against the catalog and writes the folder again. Files that are ignored now are included: the
-        disc is rebuilt the way it was. Encrypted discs: intact encrypted copies are reused, other files are
-        encrypted again with the catalog's master key (the disc must have been made with it); bdxl.key and README.txt
-        are written as the catalog has them now.
-        A disc with appended sessions is rebuilt as one folder. Afterwards the disc is 'staged' until you run
-        'burned'.
-        Without --allow-partial nothing is staged if any file cannot be rebuilt.
-        Ctrl+C stops after the file being written (that one is removed); the catalog stays unchanged and what was
-        rebuilt is kept as <destDir>/<label>.partial, to be reused with --from on the next run.
+        Writes the disc's packs again, with the same layout: every file at the same place in the data stream. A pack
+        is copied as it is from a --from folder (the old disc, a copy of it, or an interrupted restage) if its hash
+        matches; any other pack is rebuilt from the current source files (where their hash still matches) and
+        encrypted again with the disc's own key. Files that are ignored now are included: the disc is rebuilt the
+        way it was. Every rebuilt file is checked against its hash. A disc with appended sessions is rebuilt as one
+        folder with one manifest. Afterwards the disc is 'staged' until you run 'burned'.
+        Without --allow-partial nothing is staged if any file cannot be rebuilt; with it, such files are left out
+        (their place in the pack stays unused) and no longer count as being on the disc.
+        Ctrl+C stops after the pack being written; the catalog stays unchanged and what was rebuilt is kept as
+        <destDir>/<label>.partial, to be reused with --from on the next run.
         """;
 
-    /// <summary>
-    /// Rebuilds the folder for an existing disc (same label, same paths, same content) so it can be burned again.
-    /// Data comes from the current source files if their hash still matches, otherwise from --from folders.
-    /// Files that are ignored now are still included: the disc is rebuilt the way it was.
-    /// </summary>
+    /// <summary>What an interrupted restage leaves in its folder: the packs written so far that hold only checked files.</summary>
+    sealed record Progress(string Label, Dictionary<int, string> Packs);
+    const string ProgressName = "restage.json";
+
     public int Run(Ctx c)
     {
-        if (c.Args.Count != 2) throw new UserException("Usage: restage <label> <destDir> [--from dirA;dirB] [--allow-partial]");
+        if (c.Args.Count != 2) throw new UserException("Usage: " + Usage);
         var disc = c.Arc.FindDisc(c.Args[0]);
         if (disc.PendingAppend is { } session)
             throw new UserException($"Session {session.Number} of {disc.Label} is staged but not burned: burn it ('burned {disc.Label}') " +
@@ -39,120 +38,107 @@ public sealed class RestageCommand : ICommand
 
         var entries = c.Arc.CopiesOn(disc.Label);
         if (entries.Count == 0) throw new UserException($"The catalog has no files for {disc.Label}.");
-        var onSource = c.Cat.Files.Where(f => f.MissingSinceUtc == null && f.Sha256.Length > 0)
-            .ToLookup(f => f.Sha256, StringComparer.OrdinalIgnoreCase);
-
-        var manifest = new List<ManifestLine>();
-        var missing = new List<BackupRef>();
-        if (disc.Encrypted && disc.KeyId != null && !c.Keys.Contains(disc.KeyId))
+        if (disc.KeyId != null && !c.Keys.Contains(disc.KeyId))
             throw new UserException($"{disc.Label} is encrypted with a key this catalog does not have (key id {disc.KeyId}).");
-        var key = c.Keys.For(disc.Encrypted ? disc.KeyId : null);   // rebuilt with the disc's own key, as it was
+        var key = c.Keys.For(disc.KeyId);   // rebuilt with the disc's own key, as it was
+        int packs = Math.Max(disc.Packs.Count, DiscFormat.PackOf(entries[^1].Copy.End - 1));
+        var onSource = c.Cat.Files.Where(f => f.MissingSinceUtc == null && f.Sha256.Length > 0).ToLookup(f => f.Sha256, StringComparer.OrdinalIgnoreCase);
+        var reuse = fromDirs.Select(d => (Dir: d, Progress: ReadProgress(d, disc.Label))).ToList();
 
-        string? writing = null;   // file being written when Ctrl+C cut it off
+        Directory.CreateDirectory(dir);
+        var hashes = new string[packs];
+        var sources = new Dictionary<BackupRef, PieceSource?>();   // pieces being rebuilt; null = no source
+        var failed = new HashSet<BackupRef>();                     // pieces that could not be rebuilt
+        var rebuiltIn = new Dictionary<int, List<BackupRef>>();    // rebuilt pack -> the pieces in it
+        var progress = new Progress(disc.Label, new Dictionary<int, string>());
+        var buffer = new byte[DiscFormat.PackData];
+        int copied = 0, rebuilt = 0, next = 0;   // next: first entry not yet behind the current pack
+
         try
         {
-            foreach (var (file, entry) in entries)
+            for (int p = 1; p <= packs && !Interrupt.Requested; p++)
             {
-                if (Interrupt.Requested) break;
-                string dst = Path.Combine(dir, entry.DiscPath);
-                writing = dst;
-                var sourceFiles = onSource[entry.Sha256].Select(f => Path.Combine(f.Root, f.RelPath)).Where(File.Exists).ToList();
-                var fromFiles = fromDirs.Select(fd => Path.Combine(fd, entry.DiscPath)).Where(File.Exists).ToList();
-                long offset = entry.Offset, length = entry.IsPart ? entry.Length : -1;   // a part is cut from the whole source file
-                bool restored = false;
-                string? storedHash = null;
+                long start = (p - 1) * DiscFormat.PackData, end = start + DiscFormat.PackData;
+                var here = entries.Skip(next).TakeWhile(e => e.Copy.At < end).Where(e => e.Copy.End > start && e.Copy.StoredSize > 0).ToList();
 
-                if (entry.Encrypted)
+                if (TryReuse(p, out string? sha))
                 {
-                    // 1. an existing encrypted copy is taken over unchanged if it is intact
-                    foreach (var src in fromFiles)
-                    {
-                        if (TryCopy(src, dst, entry.StoredSha256)) { restored = true; storedHash = entry.StoredSha256; break; }
-                    }
-                    // 2. otherwise encrypt the source again (new salt/nonces, so the stored hash changes)
-                    if (!restored && sourceFiles.Count > 0)
-                    {
-                        foreach (var src in sourceFiles)
-                        {
-                            try
-                            {
-                                string plain = FileCrypto.Encrypt(src, dst, key, KeyPurpose.File, offset, length, Interrupt.Token, entry.Compression);   // as before: same size
-                                if (Hashing.SameHash(plain, entry.ContentSha256))
-                                {
-                                    storedHash = Hashing.HashFile(dst, Interrupt.Token);
-                                    restored = true;
-                                    break;
-                                }
-                                File.Delete(dst);
-                            }
-                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                            {
-                                Console.WriteLine($"  {src}: {ex.Message}");
-                                if (File.Exists(dst)) File.Delete(dst);
-                            }
-                        }
-                    }
+                    hashes[p - 1] = sha!;
+                    progress.Packs[p] = sha!;
+                    copied++;
+                    Console.WriteLine($"[{disc.Label}] pack {p} of {packs}: taken over");
                 }
                 else
                 {
-                    foreach (var src in sourceFiles)
+                    Array.Clear(buffer);
+                    foreach (var (file, copy) in here)
                     {
-                        if (TryCopy(src, dst, entry.ContentSha256, offset, length)) { restored = true; break; }
+                        if (failed.Contains(copy)) continue;
+                        if (!sources.TryGetValue(copy, out var source)) sources[copy] = source = PieceSource.Open(copy, onSource);
+                        if (source == null) { Fail(copy, file, "no source file with identical content"); continue; }
+                        long from = Math.Max(copy.At, start), to = Math.Min(copy.End, end);
+                        try { source.Read(from - copy.At, buffer.AsSpan((int)(from - start), (int)(to - from))); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { Fail(copy, file, ex.Message); }
                     }
-                    if (!restored)
-                        foreach (var src in fromFiles)   // --from holds disc copies: already just the part
-                        {
-                            if (TryCopy(src, dst, entry.ContentSha256)) { restored = true; break; }
-                        }
+                    using (var writer = new PackWriter(dir, p, key))
+                    {
+                        writer.Write(buffer);
+                        hashes[p - 1] = writer.Written.Single().Sha256;
+                    }
+                    rebuiltIn[p] = here.Select(e => e.Copy).ToList();   // a failed piece keeps the pack from ever being taken over
+                    rebuilt++;
+                    Console.WriteLine($"[{disc.Label}] pack {p} of {packs}: rebuilt");
                 }
 
-                if (restored)
-                {
-                    Console.WriteLine($"[{disc.Label}] {entry.DiscPath}");
-                    long storedSize = new FileInfo(dst).Length;
-                    foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label && b.DiscPath == entry.DiscPath))
-                    {
-                        b.StoredSize = storedSize;   // includes entry itself
-                        if (entry.Encrypted) b.StoredSha256 = storedHash;
-                    }
-                    manifest.Add(ManifestLine.For(entry, storedSize, file));
-                }
-                else missing.Add(entry);
+                // pieces that end in this pack are complete: check them against their hash
+                foreach (var (file, copy) in here.Where(e => e.Copy.End <= end))
+                    if (sources.Remove(copy, out var done) && done != null)
+                        using (done)
+                            if (done.Finish() is { } problem) Fail(copy, file, problem);
+                while (next < entries.Count && entries[next].Copy.End <= end) next++;
+
+                // a rebuilt pack is safe to take over later once every piece in it has been checked
+                foreach (var (pack, inIt) in rebuiltIn.Where(kv => !progress.Packs.ContainsKey(kv.Key)).ToList())
+                    if (inIt.All(cp => !sources.ContainsKey(cp) && !failed.Contains(cp)))
+                        progress.Packs[pack] = hashes[pack - 1];
+                JsonStore.WriteObject(Path.Combine(dir, ProgressName), progress);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) { }
+        finally
         {
-            if (writing != null && File.Exists(writing)) File.Delete(writing);
+            foreach (var s in sources.Values) s?.Dispose();
         }
 
         if (Interrupt.Requested)   // the catalog stays as it was; what was rebuilt can be picked up again with --from
         {
             string kept = dir + ".partial";
             for (int n = 2; Directory.Exists(kept); n++) kept = $"{dir}.partial{n}";
-            if (Directory.Exists(dir)) Directory.Move(dir, kept);
-            Console.WriteLine($"\nStopped by Ctrl+C after rebuilding {manifest.Count:N0} of {entries.Count:N0} files. The catalog is unchanged." +
-                              (manifest.Count > 0 ? $" They are kept in {kept}; to reuse them, run restage again with  --from \"{kept}\"" : ""));
+            Directory.Move(dir, kept);
+            Console.WriteLine($"\nStopped by Ctrl+C after {copied + rebuilt:N0} of {packs:N0} packs. The catalog is unchanged." +
+                              (progress.Packs.Count > 0 ? $" To reuse them, run restage again with  --from \"{kept}\"" : ""));
             return Interrupt.ExitCode;
         }
+        File.Delete(Path.Combine(dir, ProgressName));
 
-        if (missing.Count > 0)
+        if (failed.Count > 0)
         {
-            Console.WriteLine($"\n{missing.Count:N0} file(s) could not be rebuilt (no source file with identical content, none found under --from):");
-            foreach (var m in missing.Take(50)) Console.WriteLine("  " + m.DiscPath);
+            Console.WriteLine($"\n{failed.Count:N0} file(s) could not be rebuilt (no source file with identical content, no intact pack under --from):");
+            foreach (var (file, copy) in entries.Where(e => failed.Contains(e.Copy)).Take(50)) Console.WriteLine($"  {file.RootName}/{file.RelPath}");
             if (!allowPartial)
             {
-                if (Directory.Exists(dir)) Directory.Delete(dir, true);
-                Console.WriteLine("\nNothing staged and the catalog is unchanged. Add --from <folder;folder> to point at other copies, " +
+                Directory.Delete(dir, true);
+                Console.WriteLine("\nNothing staged and the catalog is unchanged. Add --from <folder;folder> to point at a copy of the disc, " +
                                   "or --allow-partial to restage without those files.");
                 return 3;
             }
-            var gonePaths = missing.Select(m => m.DiscPath).ToHashSet(StringComparer.Ordinal);
-            foreach (var f in c.Cat.Files) f.Backups.RemoveAll(b => b.Disc == disc.Label && gonePaths.Contains(b.DiscPath));
+            foreach (var f in c.Cat.Files) f.Backups.RemoveAll(b => b.Disc == disc.Label && failed.Any(x => x.At == b.At));
         }
 
-        if (manifest.Count == 0)
+        var onDisc = c.Arc.CopiesOn(disc.Label);
+        if (onDisc.Count == 0)
         {
-            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            Directory.Delete(dir, true);
             throw new UserException("No file could be rebuilt; the catalog is unchanged.");
         }
 
@@ -160,41 +146,170 @@ public sealed class RestageCommand : ICommand
         disc.BurnedUtc = null;
         disc.LostUtc = null;
         disc.RestagedUtc = DateTime.UtcNow;
-        disc.FileCount = manifest.Count;
-        disc.UsedBytes = manifest.Sum(x => x.Size);
+        disc.FileCount = onDisc.Count;
+        disc.UsedBytes = onDisc.Sum(x => x.Copy.StoredSize);
+        disc.Packs = hashes.ToList();
         disc.Sessions = 1;               // the whole disc (all its sessions) is in one folder now
+        disc.KeyId = key.KeyId;
         foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
 
-        if (disc.Encrypted) disc.KeyId = key.KeyId;
-        DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir);
-        long files = manifest.Sum(x => DiscSpace.OnDisc(x.Size))   // on the disc: whole sectors + file system entries, and the manifest
-                     + DiscSpace.OnDisc(FileCrypto.StoredSize(JsonStore.LinesToBytes(manifest).Length));
-        disc.OccupiedBytes = Math.Max(files + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
+        var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, x.File)).ToList();
+        DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session: 1);
+        disc.OccupiedBytes = Math.Max(packs * DiscFormat.PackOnDisc + DiscFiles.ManifestSpace(manifest) + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
         c.Arc.LinkDuplicates();
         c.Cat.Save();
-        Console.WriteLine($"\n{disc.Label}: {manifest.Count:N0} files, {SizeText.Bytes(disc.UsedBytes)} bytes rebuilt in {dir}");
+        Console.WriteLine($"\n{disc.Label}: {onDisc.Count:N0} files in {packs:N0} packs ({copied:N0} taken over, {rebuilt:N0} rebuilt) in {dir}");
         Console.WriteLine($"Burn it, then run:  burned {disc.Label}");
         return 0;
+
+        void Fail(BackupRef copy, FileRecord file, string why)
+        {
+            if (!failed.Add(copy)) return;
+            Console.WriteLine($"  cannot rebuild {file.RootName}/{file.RelPath}: {why}");
+            if (sources.Remove(copy, out var s)) s?.Dispose();
+            sources[copy] = null;
+        }
+
+        // pack p from a --from folder, if it is the disc's own (its hash is in the catalog) or one a restage of this
+        // disc wrote and checked (in that folder's restage.json)
+        bool TryReuse(int p, out string? sha)
+        {
+            sha = null;
+            foreach (var (from, done) in reuse)
+            {
+                string src = Path.Combine(from, DiscFormat.PackPath(p)), dst = Path.Combine(dir, DiscFormat.PackPath(p));
+                if (!File.Exists(src)) continue;
+                try
+                {
+                    string got = Hashing.CopyAndHash(src, dst, ct: Interrupt.Token);
+                    bool known = p <= disc.Packs.Count && Hashing.SameHash(got, disc.Packs[p - 1]);
+                    if (known || (done != null && done.TryGetValue(p, out string? listed) && Hashing.SameHash(got, listed)))
+                    {
+                        sha = got.ToUpperInvariant();
+                        return true;
+                    }
+                    File.Delete(dst);
+                }
+                catch (IOException ex)
+                {
+                    Console.WriteLine($"  {src}: {ex.Message}");
+                    if (File.Exists(dst)) File.Delete(dst);
+                }
+            }
+            return false;
+        }
     }
 
-    /// <summary>Copies src (or a byte range of it) to dst if the copy has the expected hash; otherwise removes dst and returns false.</summary>
-    static bool TryCopy(string src, string dst, string? expectedHash, long offset = 0, long length = -1)
+    static Dictionary<int, string>? ReadProgress(string dir, string label)
     {
         try
         {
-            string got = Hashing.CopyAndHash(src, dst, offset, length, Interrupt.Token);
-            if (expectedHash != null && Hashing.SameHash(got, expectedHash))
-            {
-                File.SetLastWriteTimeUtc(dst, File.GetLastWriteTimeUtc(src));
-                return true;
-            }
-            File.Delete(dst);   // wrong content (changed / damaged) - try the next candidate
+            var p = JsonStore.ReadObject<Progress>(Path.Combine(dir, ProgressName));
+            return p != null && p.Label.Equals(label, StringComparison.OrdinalIgnoreCase) ? p.Packs : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>
+    /// The stored form of one copy, made again from a source file with the same content (the same compression level
+    /// gives the same bytes), read forward. Finish reads what is left and checks the whole copy against its hash.
+    /// </summary>
+    sealed class PieceSource : IDisposable
+    {
+        readonly BackupRef copy;
+        readonly FileStream input;
+        readonly IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        readonly ZstdSharp.Compressor? zstd;
+        readonly byte[] block = new byte[StoredForm.Block];
+        byte[] pending = [];
+        int pendingAt;
+        long position, plainRead;   // stored bytes handed out; plaintext bytes read
+
+        PieceSource(BackupRef copy, FileStream input)
         {
-            Console.WriteLine($"  {src}: {ex.Message}");
-            if (File.Exists(dst)) File.Delete(dst);
+            this.copy = copy;
+            this.input = input;
+            if (copy.Compression > 0) zstd = new ZstdSharp.Compressor(copy.Compression);
         }
-        return false;
+
+        /// <summary>A source for the copy: the first source file with its content that is still as scanned (null = none).</summary>
+        public static PieceSource? Open(BackupRef copy, ILookup<string, FileRecord> onSource)
+        {
+            foreach (var f in onSource[copy.Sha256].OrderByDescending(f => SameAsScanned(f)))
+            {
+                try
+                {
+                    var input = new FileStream(Path.Combine(f.Root, f.RelPath), FileMode.Open, FileAccess.Read, FileShare.Read, StoredForm.Block, FileOptions.SequentialScan);
+                    input.Seek(copy.Offset, SeekOrigin.Begin);
+                    return new PieceSource(copy, input);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            return null;
+        }
+
+        static bool SameAsScanned(FileRecord f)
+        {
+            var fi = new FileInfo(Path.Combine(f.Root, f.RelPath));
+            return fi.Exists && fi.Length == f.Size && fi.LastWriteTimeUtc == f.ModifiedUtc;
+        }
+
+        /// <summary>Stored bytes from `offset` on (never before what was handed out) into target.</summary>
+        public void Read(long offset, Span<byte> target)
+        {
+            if (offset < position) throw new InvalidOperationException("a piece is read forward only");
+            Skip(offset - position);
+            while (target.Length > 0)
+            {
+                if (pendingAt == pending.Length && !NextBlock()) throw new InvalidDataException("the source file is shorter than the copy");
+                int n = Math.Min(target.Length, pending.Length - pendingAt);
+                pending.AsSpan(pendingAt, n).CopyTo(target);
+                pendingAt += n;
+                position += n;
+                target = target[n..];
+            }
+        }
+
+        void Skip(long bytes)
+        {
+            while (bytes > 0)
+            {
+                if (pendingAt == pending.Length && !NextBlock()) throw new InvalidDataException("the source file is shorter than the copy");
+                int n = (int)Math.Min(bytes, pending.Length - pendingAt);
+                pendingAt += n;
+                position += n;
+                bytes -= n;
+            }
+        }
+
+        bool NextBlock()
+        {
+            int want = (int)Math.Min(StoredForm.Block, copy.Length - plainRead);
+            if (want <= 0) return false;   // read to the end: checking it needs nothing more (not even after Ctrl+C)
+            Interrupt.Token.ThrowIfCancellationRequested();
+            int n = input.ReadAtLeast(block.AsSpan(0, want), want, throwOnEndOfStream: false);
+            if (n == 0) return false;
+            hash.AppendData(block, 0, n);
+            plainRead += n;
+            pending = zstd != null ? zstd.Wrap(block.AsSpan(0, n)).ToArray() : block.AsSpan(0, n).ToArray();
+            pendingAt = 0;
+            return true;
+        }
+
+        /// <summary>Reads the rest; null if the copy came out exactly as stored, else what is wrong.</summary>
+        public string? Finish()
+        {
+            try { Skip(copy.StoredSize - position); }
+            catch (InvalidDataException ex) { return ex.Message; }
+            if (pendingAt != pending.Length || NextBlock()) return "the source file is longer than the copy";
+            return Hashing.SameHash(Convert.ToHexString(hash.GetHashAndReset()), copy.ContentSha256) ? null : "the source file's content differs";
+        }
+
+        public void Dispose()
+        {
+            input.Dispose();
+            hash.Dispose();
+            zstd?.Dispose();
+        }
     }
 }

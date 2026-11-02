@@ -27,7 +27,7 @@ public sealed class ScanCommand : ICommand
         Files matching an ignore rule (see 'ignore') are added to the catalog and marked as ignored, but are not
         hashed and never staged.
         Compression (see 'compression'): for files that will be stored compressed, the same read also counts the exact
-        size of their compressed, encrypted copy, so 'plan' and 'stage' fill discs exactly. When the compression
+        size of their compressed copy, so 'plan' and 'stage' fill discs exactly. When the compression
         setting of a location changes, its unchanged files are read once more to count it again.
         Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
         files take long, a status line below shows how far they are (rewritten in place, not written when the output
@@ -302,7 +302,7 @@ public sealed class ScanCommand : ICommand
                             if (Interrupt.Requested) throw new OperationCanceledException();   // a large file stops mid-way
                             if (read > w.Size) throw new IOException(BeingWritten);            // growing: it would be read without end
                         }
-                        if (w.Level > 0) (w.Hash, w.Stored) = FileCrypto.HashAndMeasure(w.FullPath, w.Level, Progress);
+                        if (w.Level > 0) (w.Hash, w.Stored) = StoredForm.HashAndMeasure(w.FullPath, w.Level, Progress);
                         else w.Hash = Hashing.HashFile(w.FullPath, Progress);
                         if (Volatile.Read(ref w.BytesRead) != w.Size || SizeAndTime(w.FullPath) != (size, mtime))
                             throw new IOException(BeingWritten);   // the hash would be of neither the old nor the new content
@@ -362,7 +362,7 @@ public sealed class ScanCommand : ICommand
                     rec.Ignored = false;
                     rec.CompressedSize = w.Level > 0 ? w.Stored : null;
                     rec.CompressedWith = w.Level > 0 ? Compression.Signature(w.Level) : null;
-                    string compressed = w.Level > 0 ? $", compressed to {100.0 * w.Stored / Math.Max(1, FileCrypto.StoredSize(w.Size)):F0}%" : "";
+                    string compressed = w.Level > 0 ? $", compressed to {100.0 * w.Stored / Math.Max(1, w.Size):F0}%" : "";
                     Console.WriteLine($"  [{Progress(done, work.Count, doneBytes, Interlocked.Read(ref totalBytes), active.Keys, clock.Elapsed)}] {w.Rel} ({SizeText.Bytes(w.Size)} bytes{compressed})");
                 }
             }
@@ -441,7 +441,7 @@ public sealed class ScanCommand : ICommand
             t.Moved++;
             (old.Root, old.RootName, old.RelPath, old.Size, old.ModifiedUtc) = (found.Root, found.RootName, found.RelPath, found.Size, found.ModifiedUtc);
             old.MissingSinceUtc = null;
-            foreach (var link in found.Backups.Where(a => !old.Backups.Any(b => b.Disc == a.Disc && b.DiscPath == a.DiscPath && Hashing.SameHash(b.Sha256, a.Sha256))))
+            foreach (var link in found.Backups.Where(a => !old.Backups.Any(b => b.Disc == a.Disc && b.At == a.At && Hashing.SameHash(b.Sha256, a.Sha256))))
                 old.Backups.Add(link);   // links to copies of other files that the old record did not have yet
             replaced.Add(found);
         }

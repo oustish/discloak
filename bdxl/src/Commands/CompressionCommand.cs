@@ -91,7 +91,7 @@ public sealed class CompressionCommand : ICommand
             var live = g.Where(f => !f.Ignored && f.MissingSinceUtc == null && f.Sha256.Length > 0).ToList();
             var compressed = live.Where(f => Compression.LevelFor(c.Settings, f) > 0).ToList();
             var counted = compressed.Where(f => !Compression.NeedsCounting(c.Settings, f)).ToList();
-            long plain = counted.Sum(f => FileCrypto.StoredSize(f.Size)), packed = counted.Sum(f => f.CompressedSize ?? 0);
+            long plain = counted.Sum(f => f.Size), packed = counted.Sum(f => f.CompressedSize ?? 0);
             Console.WriteLine($"  {g.Key,-24} {setting}{(own ? "" : "  (default)")}");
             if (compressed.Count == 0) continue;
             Console.Write($"      {compressed.Count:N0} of {live.Count:N0} file(s) are compressed");

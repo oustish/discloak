@@ -46,8 +46,8 @@ public class KeyRotationTests : IDisposable
         var b = tmp.RandomFile("src/b.bin", 50_000, seed: 2);
         Assert.Equal(0, AfterRotation("scan", tmp.File("src"), "--name", "S"));
         Assert.Equal(0, AfterRotation("stage", tmp.File("stg")));
-        Assert.Equal(keys.KeyId, FileCrypto.KeyIdOf(Path.Combine(Disc(2), "data", "000", "000001.enc")));
-        Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(Disc(1), "data", "000", "000001.enc")));
+        Assert.Equal(keys.KeyId, DiscFormat.KeyIdOf(Path.Combine(Disc(2), DiscFormat.PackPath(1))));
+        Assert.Equal(oldKey, DiscFormat.KeyIdOf(Path.Combine(Disc(1), DiscFormat.PackPath(1))));
         Assert.Equal(0, AfterRotation("verify", "BDXL-0001", Disc(1), "--deep"));
         Assert.Equal(0, AfterRotation("burned", "BDXL-0002"));
         Assert.Equal(0, AfterRotation("restore", tmp.File("out"), "*", "--mount", Disc(1) + ";" + Disc(2)));
@@ -88,8 +88,8 @@ public class KeyRotationTests : IDisposable
         Assert.Equal(0, AfterRotation("scan", tmp.File("src"), "--name", "S"));
         Assert.Equal(0, AfterRotation("stage", tmp.File("stg"), "--append", "BDXL-0001"));
         string session = tmp.File("stg/BDXL-0001.s2");
-        Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(session, "data", "000", "000002.enc")));
-        Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(session, DiscFiles.EncryptedManifestFor(2))));
+        Assert.Equal(oldKey, DiscFormat.KeyIdOf(Path.Combine(session, DiscFormat.PackPath(2))));
+        Assert.Equal(oldKey, FileCrypto.KeyIdOf(Path.Combine(session, DiscFiles.ManifestFor(2))));
         Assert.Equal(oldKey, JsonStore.ReadObject<DiscInfo>(Path.Combine(session, DiscFiles.InfoName))!.KeyId);
 
         foreach (string f in Directory.GetFiles(session, "*", SearchOption.AllDirectories))   // burn the session onto the disc
@@ -103,8 +103,8 @@ public class KeyRotationTests : IDisposable
 
         Assert.Equal(0, AfterRotation("lost", "BDXL-0001"));
         Assert.Equal(0, AfterRotation("restage", "BDXL-0001", tmp.File("re")));
-        Assert.All(Directory.GetFiles(tmp.File("re/BDXL-0001/data"), "*.enc", SearchOption.AllDirectories),
-                   f => Assert.Equal(oldKey, FileCrypto.KeyIdOf(f)));
+        Assert.All(Directory.GetFiles(tmp.File("re/BDXL-0001/data"), "*.pack", SearchOption.AllDirectories),
+                   f => Assert.Equal(oldKey, DiscFormat.KeyIdOf(f)));
         Assert.Equal(0, AfterRotation("verify", "BDXL-0001", tmp.File("re/BDXL-0001"), "--deep"));
     }
 

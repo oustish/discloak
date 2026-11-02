@@ -11,7 +11,7 @@ public sealed class PlanCommand : ICommand
         Allocates all pending files to the blank discs registered with 'blanks'. Prints how full each disc would be
         and, if the data does not fit on the designated discs, which files are left over and roughly how many
         more discs are needed. Exit code 2 = not everything fits.
-        Sizes are those of the encrypted copies that 'stage' writes.
+        Sizes are those 'stage' writes (compressed where set); a disc's room is what its packs can hold.
           --split     cut files larger than every blank disc into parts (see 'stage --help')
           --append L  instead: what 'stage --append L' would put into a new session of the burned disc L
         Pending = on the source, not ignored, and no live disc holds identical content (hash-based dedup).
@@ -74,7 +74,7 @@ public sealed class PlanCommand : ICommand
         return 2;
     }
 
-    /// <summary>plan --append: what one more session of a burned disc would hold (sizes of encrypted copies).</summary>
+    /// <summary>plan --append: what one more session of a burned disc would hold (stored sizes).</summary>
     static int PlanAppend(Ctx c, string label)
     {
         var target = AppendTarget.Open(c, label);

@@ -45,11 +45,15 @@ public sealed class Archive
         return label;
     }
 
-    /// <summary>Every copy stored on a disc, one per stored path, with the file it was stored for (rather than an alias).</summary>
+    /// <summary>
+    /// Every copy stored on a disc, one per position in its data stream (in stream order), with the file it was stored
+    /// for (rather than an alias).
+    /// </summary>
     public List<(FileRecord File, BackupRef Copy)> CopiesOn(string label) =>
         cat.Files.SelectMany(f => f.Backups.Where(b => b.Disc == label).Select(b => (File: f, Copy: b)))
-           .GroupBy(x => x.Copy.DiscPath, StringComparer.Ordinal)
+           .GroupBy(x => x.Copy.At)
            .Select(g => g.OrderBy(x => x.Copy.Alias).First())
+           .OrderBy(x => x.Copy.At)
            .ToList();
 
     public string NextBlankId()
@@ -144,21 +148,12 @@ public sealed class Archive
             .Where(f => CompleteCopies(live[f.Sha256], f.Sha256) < wanted(f.Sha256))
             .ToList();
 
-        long largest = cat.Blanks.Select(b => b.Usable).DefaultIfEmpty(0).Max();
-        // every staged piece is encrypted; whole files maybe compressed too (sizes counted by scan), parts never; on the
-        // disc each takes whole sectors plus its file system entries, and a line in the disc's manifest. A part of a
-        // layout from before those were counted (as big as a whole disc's usable space) still counts as fitting: its
-        // few KB come out of the reserve.
-        Func<Piece, long> sizeOf = p =>
-        {
-            long stored = p.IsPart ? FileCrypto.StoredSize(p.Length) : Compression.PlannedStoredSize(cat.Settings, p.File);
-            long space = DiscSpace.OnDisc(stored) + DiscSpace.ManifestShare(p);
-            return p.IsPart && stored <= largest ? Math.Min(space, largest) : space;
-        };
-        // the part size leaves room for encryption, the file system and the manifest line, so a layout works whether
-        // later parts are encrypted or not
-        long PartSizeFor(FileRecord f) =>
-            FileCrypto.MaxPlainSize(largest - DiscSpace.OnDisc(0) - DiscSpace.Sector - DiscSpace.ManifestShare(new Piece(f, 1, 2, 0, 0)));
+        // the room of a disc is what its packs can hold (DiscFormat.Room); a piece takes its stored size (whole files
+        // maybe compressed, sizes counted by scan; parts never) and its line in the disc's manifest
+        Func<BlankDisc, long> roomOf = b => DiscFormat.Room(b.Usable);
+        long largest = cat.Blanks.Select(roomOf).DefaultIfEmpty(0).Max();
+        Func<Piece, long> sizeOf = p => StoredSizeOf(cat.Settings, p) + DiscSpace.ManifestShare(p);
+        long PartSizeFor(FileRecord f) => largest - DiscSpace.ManifestShare(new Piece(f, 1, 2, 0, 0));
         var pending = new List<Piece>();
         var tooBig = new List<FileRecord>();
         int furtherCopies = 0;
@@ -193,10 +188,13 @@ public sealed class Archive
 
         var tooBigSet = tooBig.ToHashSet();
         var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), into ?? cat.Blanks, sizeOf,
-                                               GroupOf, into != null ? Holds : null);
+                                               GroupOf, into != null ? Holds : null, roomOf);
         var unplaced = leftover.Concat(pending.Where(p => tooBigSet.Contains(p.File))).ToList();
         return new PlanResult(bins, unplaced, tooBig, pending, furtherCopies);
     }
+
+    /// <summary>Bytes a piece takes in a disc's data stream: a part as it is, a whole file compressed if scan counted that.</summary>
+    public static long StoredSizeOf(Settings s, Piece p) => p.IsPart ? p.Length : Compression.PlannedStoredSize(s, p.File);
 
     // ---- copies ---------------------------------------------------------------------------
 
@@ -273,8 +271,7 @@ public sealed class Archive
         text == "*" ||
         $"{f.RootName}/{f.RelPath}".Contains(text, StringComparison.OrdinalIgnoreCase) ||   // the form find/restore print
         (f.Sha256.Length > 0 && f.Sha256.StartsWith(text, StringComparison.OrdinalIgnoreCase)) ||
-        f.Backups.Any(b => b.Sha256.StartsWith(text, StringComparison.OrdinalIgnoreCase) ||
-                           (!b.Alias && b.DiscPath.Contains(text, StringComparison.OrdinalIgnoreCase)));   // its name on an older/imported disc
+        f.Backups.Any(b => b.Sha256.StartsWith(text, StringComparison.OrdinalIgnoreCase));   // an older version on a disc
 
     // ---- ignore rules ---------------------------------------------------------------------
 

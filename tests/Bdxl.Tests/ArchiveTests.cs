@@ -19,11 +19,11 @@ public class ArchiveTests
     }
 
     static BackupRef Whole(string disc, string sha, bool burned = true, bool alias = false) =>
-        new() { Disc = disc, DiscPath = "S/x", Sha256 = sha, BackedUpUtc = burned ? DateTime.UtcNow : null, Alias = alias };
+        new() { Disc = disc, At = 0, StoredSize = 1, Sha256 = sha, BackedUpUtc = burned ? DateTime.UtcNow : null, Alias = alias };
 
     static BackupRef Part(string disc, string sha, int part, int parts, long partSize, long fileSize) => new()
     {
-        Disc = disc, DiscPath = "S/big" + SplitLayout.Suffix(part, parts), Sha256 = sha, BackedUpUtc = DateTime.UtcNow,
+        Disc = disc, At = (part - 1) * partSize, Sha256 = sha, BackedUpUtc = DateTime.UtcNow,
         Part = part, Parts = parts, Offset = (part - 1) * partSize, Length = Math.Min(partSize, fileSize - (part - 1) * partSize),
         PartSha256 = "P" + part
     };
@@ -113,8 +113,8 @@ public class ArchiveTests
     [Fact]
     public void Too_big_without_split_is_reported_and_unplaced()
     {
-        AddBlanks(2, 10_000);
-        var big = AddFile("big.bin", 25_000, "AA");
+        AddBlanks(2, 400_000);
+        var big = AddFile("big.bin", 1_000_000, "AA");
 
         var plan = Arc.MakePlan(split: false);
         Assert.Equal([big], plan.TooBig);
@@ -128,48 +128,45 @@ public class ArchiveTests
         foreach (string rel in new[] { "a.txt", "zdjęcia/łódź \"nad\" morzem\\x.jpg", new string('x', 300) + "/y.bin" })
         {
             var f = AddFile(rel, 123_456_789_012, new string('A', 64));
+            f.ModifiedUtc = new DateTime(2026, 10, 30, 23, 59, 59, 999, DateTimeKind.Utc).AddTicks(9999);
             var whole = new BackupRef
             {
-                Disc = "BDXL-0001", DiscPath = "data/123/123456.enc", Sha256 = f.Sha256, Encrypted = true,
-                StoredSha256 = new string('B', 64), StoredSize = 123_456_799_999, Compression = 19
+                Disc = "BDXL-0001", At = 96_000_000_000, Sha256 = f.Sha256, StoredSize = 123_456_799_999, Length = f.Size, Compression = 19
             };
             Assert.True(JsonStore.LinesToBytes([ManifestLine.For(whole, f)]).Length <= DiscSpace.ManifestShare(Piece.Whole(f)));
             var part = new BackupRef
             {
-                Disc = "BDXL-0001", DiscPath = "data/123/123457.enc", Sha256 = f.Sha256, Encrypted = true, StoredSha256 = new string('B', 64),
-                StoredSize = 96_000_000_000, Part = 12, Parts = 13, Offset = 1_100_000_000_000, Length = 96_000_000_000, PartSha256 = new string('C', 64)
+                Disc = "BDXL-0001", At = 1_234_567_890, Sha256 = f.Sha256, StoredSize = 96_000_000_000, Part = 12, Parts = 13,
+                Offset = 1_100_000_000_000, Length = 96_000_000_000, PartSha256 = new string('C', 64)
             };
             Assert.True(JsonStore.LinesToBytes([ManifestLine.For(part, f)]).Length <= DiscSpace.ManifestShare(new Piece(f, 12, 13, 0, 0)));
         }
     }
 
     [Fact]
-    public void Small_files_are_planned_with_their_sectors_and_file_system_entries()
+    public void Small_files_take_only_their_bytes_and_a_manifest_line()
     {
-        AddBlanks(3, 1_000_000);
-        for (int i = 0; i < 400; i++) AddFile($"small/{i:D3}.txt", 10, $"{i:X4}");   // 400 × ~80 bytes encrypted: one disc by bytes
+        AddBlanks(1, 1_000_000);
+        for (int i = 0; i < 2000; i++) AddFile($"small/{i:D4}.txt", 10, $"{i:X4}");   // in packs: no sectors or file entries of their own
 
         var plan = Arc.MakePlan();
-        Assert.Empty(plan.Unplaced);
-        long onDisc = DiscSpace.OnDisc(FileCrypto.StoredSize(10));
-        Assert.Equal(DiscSpace.Sector * 2 + DiscSpace.FolderEntry, onDisc);                 // ... but on the disc they take 2 sectors each
-        long each = onDisc + DiscSpace.ManifestShare(Piece.Whole(cat.Files[0]));           // and a line in the disc's manifest
-        Assert.Equal(1_000_000 / each, plan.Bins[0].Pieces.Count);
-        Assert.Equal(400, plan.Bins.Sum(b => b.Pieces.Count));
-        Assert.All(plan.Bins, b => Assert.True(b.Used <= b.Usable));
+        long each = 10 + DiscSpace.ManifestShare(Piece.Whole(cat.Files[0]));
+        Assert.Equal(DiscFormat.Room(1_000_000), plan.Bins[0].Usable);
+        Assert.Equal(Math.Min(2000, DiscFormat.Room(1_000_000) / each), plan.Bins[0].Pieces.Count);
+        Assert.True(plan.Bins[0].Used <= plan.Bins[0].Usable);
     }
 
     [Fact]
-    public void A_part_of_a_layout_made_before_the_file_system_was_counted_still_fits()
+    public void A_disc_s_room_is_what_its_packs_can_hold()
     {
-        AddBlanks(1, 10_000);
-        long oldPart = FileCrypto.MaxPlainSize(10_000);   // parts used to fill a disc's usable space exactly
-        var big = AddFile("big.bin", 2 * oldPart, "AA");
-        big.Backups.Add(Part("D1", "AA", 1, 2, oldPart, 2 * oldPart));
-
+        AddBlanks(1, 2_000_000);
+        AddFile("a.bin", DiscFormat.Room(2_000_000) - DiscSpace.ManifestShare(Piece.Whole(new FileRecord { RootName = "S", RelPath = "a.bin" })), "AA");
         var plan = Arc.MakePlan();
-        Assert.Empty(plan.Unplaced);
-        Assert.Equal(2, Assert.Single(plan.Bins[0].Pieces).Part);
+        Assert.Empty(plan.Unplaced);                       // exactly full
+        Assert.Equal(0, plan.Bins[0].Free);
+
+        cat.Files[0].Size++;
+        Assert.Single(Arc.MakePlan().Unplaced);            // one byte more does not fit
     }
 
     [Fact]
@@ -190,13 +187,13 @@ public class ArchiveTests
     }
 
     [Fact]
-    public void Split_cuts_into_parts_that_fit_even_encrypted()
+    public void Split_cuts_into_parts_that_fill_a_disc_s_packs()
     {
-        // room for the encryption, the part's sectors and file system entries, and its manifest line on the disc
-        var big = AddFile("big.bin", 25_000, "AA");
-        long partSize = FileCrypto.MaxPlainSize(10_000 - DiscSpace.OnDisc(0) - DiscSpace.Sector - DiscSpace.ManifestShare(new Piece(big, 1, 2, 0, 0)));
-        int parts = (int)((25_000 + partSize - 1) / partSize);
-        AddBlanks(parts, 10_000);
+        // a part fills the room of the largest disc, less its manifest line
+        var big = AddFile("big.bin", 2_500_000, "AA");
+        long partSize = DiscFormat.Room(1_000_000) - DiscSpace.ManifestShare(new Piece(big, 1, 2, 0, 0));
+        int parts = (int)((2_500_000 + partSize - 1) / partSize);
+        AddBlanks(parts, 1_000_000);
 
         var plan = Arc.MakePlan(split: true);
         Assert.Empty(plan.TooBig);
@@ -204,7 +201,7 @@ public class ArchiveTests
         Assert.Equal(parts, plan.Pending.Count);
         Assert.All(plan.Bins, b => Assert.True(b.Used <= b.Usable));
         Assert.All(plan.Pending, p => Assert.True(p.Length <= partSize));
-        Assert.Equal(25_000, plan.Pending.Sum(p => p.Length));
+        Assert.Equal(2_500_000, plan.Pending.Sum(p => p.Length));
         Assert.All(plan.Bins, b => Assert.Single(b.Pieces));   // one part per disc
     }
 
@@ -254,18 +251,16 @@ public class ArchiveTests
     // ---- search / labels ------------------------------------------------------------------
 
     [Fact]
-    public void Matches_path_hash_prefix_and_real_disc_path_but_not_an_alias_disc_path()
+    public void Matches_path_and_the_hash_of_any_version()
     {
         var f = AddFile("photos/2020/a.jpg", 1, "ABCDEF");
-        f.Backups.Add(new BackupRef { Disc = "D1", DiscPath = "Old/name.jpg", Sha256 = "ABCDEF" });
-        var dup = AddFile("b.jpg", 1, "ABCDEF");
-        dup.Backups.Add(new BackupRef { Disc = "D1", DiscPath = "Old/name.jpg", Sha256 = "ABCDEF", Alias = true });
+        f.Backups.Add(new BackupRef { Disc = "D1", At = 0, Sha256 = "123456" });   // an older version on a disc
 
         Assert.True(Archive.Matches(f, "S/photos/2020"));
         Assert.True(Archive.Matches(f, "abcd"));
-        Assert.True(Archive.Matches(f, "Old/name"));
-        Assert.False(Archive.Matches(dup, "Old/name"));
-        Assert.True(Archive.Matches(dup, "*"));
+        Assert.True(Archive.Matches(f, "1234"));
+        Assert.False(Archive.Matches(f, "D1"));
+        Assert.True(Archive.Matches(f, "*"));
     }
 
     [Fact]

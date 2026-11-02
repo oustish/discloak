@@ -9,7 +9,7 @@
 | 0 | done |
 | 1 | error (wrong arguments, wrong password, refused, nothing to do where something was expected) |
 | 2 | partial: not everything fits (`plan`, `stage`), more discs needed (`restore`), data lost (`lost`), fewer copies than wanted (`copies list`) |
-| 3 | problems found: corrupt or missing files (`verify`, `restore`), an unrecoverable backup file |
+| 3 | problems found: damaged or missing packs, files that do not come back intact (`verify`, `restore`), files `restage` cannot rebuild, an unrecoverable backup file |
 | 4 | the catalog failed its integrity check (only `catalog …` commands run), or its [mirror](Guide-Mirror.md) is not connected or not in step (only read-only commands run) |
 | 130 | stopped with Ctrl+C (after cleaning up; see the command's message) |
 
@@ -36,9 +36,11 @@
 | `Folder already exists: …` | A staging folder of that label is still there. Delete or move it. |
 | `… is not burned yet. To put more on it: 'discard …' and stage again.` | `--append` works only on burned discs. |
 | `Session N of … is staged but not burned yet.` | Burn it and run `burned`, or `discard` it. |
-| `… is not encrypted; bdxl only adds encrypted data to discs` | A plain disc from before bdxl cannot take a session. |
 | `… encrypted with another key` / `This disc belongs to another catalog.` | The disc was made by another catalog (or another key). Use that catalog, or `init --key-from <disc>` into a new folder. |
 | `Ignoring G:\: no disc.json there` | The disc has no `disc.json`: add `--disc <label>` (one mount at a time). |
+| `… is not a bdxl disc (no disc.json)` (`scandisc`) | Only discs made by bdxl can be read into a catalog. |
+| `DAMAGED  pack N …` (`verify`) | That pack does not match its hash (or does not decrypt). The files listed below it are the ones affected; restore them from another copy, and/or rebuild the disc with `restage … --from <the disc>` (the intact packs are reused). |
+| `DAMAGED  … on BDXL-…: pack N, chunk C is damaged` (`restore`) | That file has data in a damaged spot. Mount another disc with a copy (`find` lists them); everything else is restored. |
 | `A different folder is already catalogued as 'X'. Use --name <alias>.` | Each alias belongs to one folder; choose another name. |
 | `This folder is already catalogued as 'X'.` | Rescan without `--name`, or rename with `bdxl alias rename`. |
 | `The agent did not start (see …agent.log)` | Look at the log. Commands keep working with the password; `BDXL_AGENT=off` skips the agent. |
@@ -47,9 +49,15 @@
 ## FAQ
 
 **Can a disc be read without bdxl?**
-Yes. Its `README.txt` describes `bdxl.key` and the file format with standard algorithms (Argon2id, HKDF-SHA256,
-AES-256-GCM, zstd), enough to write a decryptor. You need the password valid when the disc was staged (or the
-recovery key of that time).
+Yes. Its `README.txt` describes `bdxl.key`, the packs and the manifest with standard algorithms (Argon2id,
+HKDF-SHA256, AES-256-GCM, zstd), enough to write a decryptor. You need the password valid when the disc was staged
+(or the recovery key of that time). Checking it needs nothing at all: `packs.sha256` works with any `sha256sum`.
+
+**What does someone who finds a disc learn?**
+Its label and dates, how many sessions it has, and how much data it holds (to 64 MiB: the number of packs). Not the
+names, sizes or number of the files: they are in equal, encrypted packs, and even the manifest is padded to whole
+64 MiB. A `_catalog` backup on the disc (`--with-catalog`) is encrypted too, but its size grows with the number of
+files in the whole catalog.
 
 **What if I lose `bdxl.key`?**
 It is in every catalog backup and on every encrypted disc. Restore a backup, or `init --key-from <disc>`.
@@ -72,9 +80,9 @@ take roughly 15 s and 7 GB (estimated). Commands that never look at the file lis
 Their location's compression setting changed (or `--full` was given); their compressed size is counted again.
 
 **How big should the reserve be?**
-Enough for the file system's fixed overhead (a few tens of MB on a 100 GB disc; the space each file takes in
-sectors and entries, and its manifest line, is counted by the plan itself), the disc's folders and small files (a few
-hundred KB) and, with `--with-catalog`, the catalog backup (~1.25× the catalog's `.enc` files; those take roughly 100-150 bytes per
+Enough for the file system's fixed overhead (a few tens of MB on a 100 GB disc; the packs, the manifest and the
+padding of both are counted by the plan itself), the disc's folders and small files (a few hundred KB) and, with
+`--with-catalog`, the catalog backup (~1.25× the catalog's `.enc` files; those take roughly 100-150 bytes per
 catalogued file). `stage` warns when it does not fit.
 
 **Which file system should I burn with?**
@@ -82,6 +90,7 @@ UDF 2.50 (the usual choice for BD-R). bdxl's file names are short and plain ASCI
 
 **Can I use DVDs, other discs, or folders on hard disks?**
 Yes. Register blanks with their size; `verify`, `restore` and `scandisc` work on any folder laid out like a disc.
+Discs written without bdxl cannot be brought into a catalog.
 
 **Can two computers share one catalog?**
 Not at the same time. Keep the catalog on one machine (or move it between machines, never using two copies in

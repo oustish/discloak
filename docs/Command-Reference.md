@@ -128,8 +128,10 @@ bdxl stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog]
 | `--append <label>` | a new session for a burned, not finalized disc ([Appending](Guide-Appending.md)) |
 | `--mount <path>` | with `--append`: the disc is in the drive |
 
-Folder: `<destDir>\<label>\` (`<label>.s2` … for sessions) holding `data\NNN\NNNNNN.enc`, `manifest.jsonl.enc`
-(a session: `manifest.sN.jsonl.enc`, only its own files), `disc.json`, `bdxl.key`, `README.txt`, optional `_catalog\`. Ctrl+C finishes the disc with what was copied.
+Folder: `<destDir>\<label>\` (`<label>.s2` … for sessions) holding the packs `data\NNN\NNNNNN.pack` (64 MiB each; a
+session's packs continue the disc's numbering), `manifest.enc` (a session: `manifest.sN.enc`, only its own files),
+`packs.sha256`, `disc.json`, `bdxl.key`, `README.txt`, optional `_catalog\`. See [Files and Formats](Files-and-Formats.md#a-staged--burned-disc).
+Ctrl+C finishes the disc with what was copied. A file that changed since `scan` is left out; its space in the pack stays unused.
 
 ### burned
 Mark a staged disc, or its staged session, as burned.
@@ -142,7 +144,9 @@ Re-read a disc and compare it with the catalog.
 ```
 bdxl verify <label> <mountedDiscPath> [--deep]
 ```
-`--deep` also decrypts each file and compares the content. Exit code 3: corrupt or missing files.
+Compares every pack's SHA-256 with the catalog (no password needed for that). `--deep` also decrypts every pack and
+checks every file against its hash, in the same single read. A damaged pack is named with the files that have data in
+it. Exit code 3: damaged or missing packs, or files that do not come back intact.
 
 ### discard
 Forget a staged disc (or a staged session) that was never burned. Its files are pending again; its blank disc goes
@@ -156,25 +160,19 @@ bdxl discard <label>
 ## Existing discs
 
 ### scandisc
-Record a disc that is already burned.
+Record a disc made by bdxl in the catalog, from its own manifests: how a lost catalog is rebuilt from the discs, or a
+catalog brought up to date after a rollback. Discs written with other tools cannot be recorded.
 ```
-bdxl scandisc <mountPath> [--label L] [--method auto|manifest|hash|quick] [--date D] [--capacity S] [--cost P]
-              [--update] [--dry-run] [--write-disc-json] [--overwrite]
+bdxl scandisc <mountPath> [--date D] [--capacity S] [--cost P] [--update] [--dry-run]
 ```
 | Option | |
 |---|---|
-| `--label L` | its label (otherwise from `disc.json`, then the volume label) |
-| `--method` | `manifest` (trust the disc's manifest), `hash` (read everything), `quick` (path+size+time), `auto` (default) |
-| `--date`, `--capacity`, `--cost` | facts about the disc |
+| `--date` | when it was burned (default: the date in `disc.json`) |
+| `--capacity`, `--cost` | facts about the disc (`--capacity` lets `stage --append` add to it) |
 | `--update` | merge into a disc already in the catalog |
 | `--dry-run` | show, change nothing |
-| `--write-disc-json` | write `disc.json` (+ manifest) onto the disc if it can still be written (`--overwrite` replaces one) |
 
-### discjson
-Write `disc.json` (and a manifest, `bdxl.key`, `README.txt` if missing) onto a disc that can still be written to.
-```
-bdxl discjson <label> <mountPath> [--overwrite]
-```
+The copies count as *unverified* until `verify` has checked the disc's packs.
 
 ---
 
@@ -193,7 +191,7 @@ bdxl find <text|hashPrefix|*>
 ```
 
 ### discs
-Every disc: state, encryption, sessions, cost, notes, free space.
+Every disc: state, files, packs, sessions, cost, notes, free space.
 ```
 bdxl discs
 ```
@@ -225,10 +223,11 @@ bdxl restage <label> <destDir> [--from dirA;dirB] [--allow-partial]
 ```
 | Option | |
 |---|---|
-| `--from` | folders holding copies of the disc's stored files (e.g. copied off the damaged disc, or a `.partial` folder) |
+| `--from` | folders holding the disc's packs: the damaged disc itself, a copy of it, or a `.partial` folder |
 | `--allow-partial` | stage even if some files cannot be rebuilt (they are dropped from the disc's record) |
 
-The disc becomes *staged* until `burned`. Ctrl+C keeps `<label>.partial` for `--from`.
+Same layout as before: a pack whose hash matches is copied as it is; any other is rebuilt from the source files and
+encrypted again. The disc becomes *staged* until `burned`. Ctrl+C keeps `<label>.partial` for `--from`.
 
 ### restore
 Copy files back from mounted discs.
@@ -243,7 +242,8 @@ bdxl restore <destDir> <text|hashPrefix|*> --mount F:\;G:\ [--disc label] [--sou
 | `--flat` | no alias/path folders |
 | `--overwrite` | replace existing files |
 
-Exit code 2: more discs needed (listed); 3: failures.
+Only the parts of the packs a file needs are read. A file in a damaged spot is taken from another mounted disc with a
+copy, if there is one; the rest is restored anyway. Exit code 2: more discs needed (listed); 3: failures.
 
 ---
 

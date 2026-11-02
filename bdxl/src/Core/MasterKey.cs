@@ -5,7 +5,7 @@ public static class KeyPurpose
 {
     public const string Catalog = "catalog";     // catalog files, their history and backups
     public const string Manifest = "manifest";   // a disc's manifest
-    public const string File = "file";           // staged data
+    public const string Pack = "pack";           // a pack of a disc's data stream
 }
 
 /// <summary>

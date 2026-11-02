@@ -6,8 +6,9 @@ full as possible, writes ready-to-burn disc folders, and remembers which file is
 and restore anything years later.
 
 Everything is encrypted. One password protects the catalog and every disc. The password can be changed, there is
-an optional recovery key, and the master key can be rotated. Each disc can also be read on its own, without the
-catalog, with nothing but the password.
+an optional recovery key, and the master key can be rotated. A disc shows nothing about its files - not their names,
+sizes or number: they are laid into equal, encrypted 64 MiB packs. Each disc can also be read on its own, without
+the catalog, with nothing but the password.
 
 ## Pages
 
@@ -25,7 +26,7 @@ catalog, with nothing but the password.
 - [Several Copies](Guide-Copies.md): two or more copies of important locations, on different discs
 - [Catalog Mirror](Guide-Mirror.md): a second, always current copy of the catalog on another drive
 - [Maintenance](Guide-Maintenance.md): rescans, moved files, ignore rules, aliases, purge, settings, costs
-- [Discs You Already Have](Guide-Existing-Discs.md): bring discs burned without bdxl (or by another catalog) in
+- [Reading a Disc Back](Guide-Existing-Discs.md): record a bdxl disc the catalog does not know (rebuilding a lost catalog, after a rollback)
 - [Disaster Recovery](Guide-Disaster-Recovery.md): lost or damaged catalog, lost or damaged disc, forgotten password
 
 **Reference**
@@ -44,7 +45,7 @@ bdxl scan D:\Photos --name Photos                   # index (hash) a folder
 bdxl plan                                           # what would go where (changes nothing)
 bdxl stage E:\Staging --with-catalog                # write the next disc folder: E:\Staging\BDXL-0001
    ... burn E:\Staging\BDXL-0001 with your burning program (UDF 2.50) ...
-bdxl verify BDXL-0001 G:\                           # read the burned disc back and compare
+bdxl verify BDXL-0001 G:\                           # read the burned disc back and compare (--deep: decrypt too)
 bdxl burned BDXL-0001                               # record it as burned
 bdxl restore D:\Recovered "holiday" --mount G:\     # later: get files back
 ```

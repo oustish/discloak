@@ -3,16 +3,16 @@
 [Home](Home.md) › Appending to a Disc
 
 A burned disc that was **not finalized** and is not full can take more data later, as a new *session*. bdxl stages
-only the files that fit, with a manifest of **their own** (`manifest.s2.jsonl.enc`, `.s3` …: only the new files),
-`disc.json` and (optionally) `_catalog`. Burned as the next session, `disc.json` and `_catalog` replace the old ones;
-the earlier manifests stay, and bdxl reads all of them in session order. (Discs appended by older versions of bdxl,
-whose later manifest repeated the whole list, read the same way.)
+only the files that fit, in packs that continue the disc's numbering, with a manifest of **their own**
+(`manifest.s2.enc`, `.s3` …: only the new files), `packs.sha256`, `disc.json` and (optionally) `_catalog`. Burned as
+the next session, `packs.sha256`, `disc.json` and `_catalog` replace the old ones (`packs.sha256` lists every pack of
+the disc); the earlier packs and manifests stay, and bdxl reads all the manifests in session order.
 
 Requirements:
 - the disc was burned without finalizing (closing) it;
 - your burning program can add a session that **continues the existing file system** ("multisession",
   "import previous session"). Otherwise the earlier files disappear from view;
-- the disc is encrypted with this catalog's key (every disc bdxl stages is; plain discs from before cannot take one).
+- the disc is encrypted with a key of this catalog (the session uses the disc's own key, even after a key rotation).
 
 ## Steps
 
@@ -40,7 +40,8 @@ Requirements:
 
 ## Notes
 
-- A newer version of a file that is already on the disc gets a new hidden name; both versions stay restorable.
+- A newer version of a file that is already on the disc is stored again in the new packs; both versions stay restorable.
+- Each session costs up to one pack (its last pack is filled up) and one 64 MiB manifest, besides the reserve.
 - Only one unburned session at a time. To take a staged session back: `bdxl discard BDXL-0003` (the burned part of
   the disc stays recorded).
 - While a session is staged but not burned, `lost`, `destroyed` and `restage` of that disc are refused.

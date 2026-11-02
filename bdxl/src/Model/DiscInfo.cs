@@ -1,16 +1,19 @@
 namespace Bdxl;
 
 /// <summary>
-/// disc.json on a disc: lets the disc identify itself. Always readable (also on encrypted discs, where it says so),
-/// so 'restore' can recognise a disc before anything is decrypted. Holds no file names. Sessions is only written
-/// for a disc that 'stage --append' added to; CatalogId/KeyId only for an encrypted disc (whose bdxl.key they name).
+/// disc.json on a disc: lets the disc identify itself before anything is decrypted ('restore', 'verify', 'scandisc').
+/// Holds nothing about the files - not even how many there are: that is in the encrypted manifest. Format, PackSize and
+/// ChunkSize describe the packs; CatalogId and KeyId name the key in the disc's bdxl.key.
 /// </summary>
-public record DiscInfo(string Label, DateTime CreatedUtc, int FileCount, long UsedBytes,
-                       [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Encrypted = false,
-                       [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int Sessions = 0,
-                       string? CatalogId = null, string? KeyId = null)
+public record DiscInfo(string Label, DateTime CreatedUtc, string Format, int Sessions, string? CatalogId, string? KeyId,
+                       long PackSize, int ChunkSize)
 {
-    public static DiscInfo For(DiscRecord d, string? catalogId = null) =>
-        new(d.Label, d.CreatedUtc, d.FileCount, d.UsedBytes, d.Encrypted, d.Sessions > 1 ? d.Sessions : 0,
-            d.Encrypted ? catalogId : null, d.Encrypted ? d.KeyId : null);
+    public static DiscInfo For(DiscRecord d, string catalogId) =>
+        new(d.Label, d.CreatedUtc, DiscFormat.Name, d.Sessions, catalogId, d.KeyId, DiscFormat.PackData, DiscFormat.ChunkSize);
+
+    /// <summary>Why this program cannot read the disc's packs, or null if it can.</summary>
+    public string? Unreadable() =>
+        Format != DiscFormat.Name ? $"it is not a disc this version of bdxl reads (format '{Format}', expected '{DiscFormat.Name}')"
+        : PackSize != DiscFormat.PackData || ChunkSize != DiscFormat.ChunkSize ? $"its packs are {PackSize:N0} bytes in chunks of {ChunkSize:N0}; this bdxl reads {DiscFormat.PackData:N0} in chunks of {DiscFormat.ChunkSize:N0}"
+        : null;
 }

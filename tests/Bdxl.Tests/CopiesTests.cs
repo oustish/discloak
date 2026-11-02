@@ -21,7 +21,7 @@ public class CopiesTests : IDisposable
     }
 
     static BackupRef On(string disc, string sha, bool burned = true) =>
-        new() { Disc = disc, DiscPath = "data/000/000001.enc", Sha256 = sha, BackedUpUtc = burned ? DateTime.UtcNow : null };
+        new() { Disc = disc, At = 0, StoredSize = 1000, Sha256 = sha, BackedUpUtc = burned ? DateTime.UtcNow : null };
 
     [Fact]
     public void A_location_that_wants_two_copies_gets_them_on_two_different_discs()
@@ -106,8 +106,8 @@ public class CopiesTests : IDisposable
     public void A_split_file_gets_each_part_on_as_many_discs_and_its_copies_apart()
     {
         cat.Settings.Copies = 2;
-        AddBlanks(6, 10_000);
-        AddFile("video", "big.mkv", 15_000, "AA");
+        AddBlanks(6, 400_000);
+        AddFile("video", "big.mkv", 600_000, "AA");
 
         var plan = Arc.MakePlan(split: true);
         Assert.Empty(plan.Unplaced);

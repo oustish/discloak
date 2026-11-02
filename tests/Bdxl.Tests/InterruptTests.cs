@@ -70,8 +70,8 @@ public class InterruptTests : IDisposable
         Assert.Equal(Interrupt.ExitCode, Interrupted("verify", "BDXL-0001", disc));
         Assert.Equal(Interrupt.ExitCode, Interrupted("restore", tmp.File("out"), "*", "--mount", disc));
         Assert.False(File.Exists(tmp.File("out/S/a.bin")));
-        Assert.Equal(Interrupt.ExitCode, Interrupted("scandisc", disc, "--label", "OTHER", "--method", "hash"));
-        Assert.DoesNotContain(Cat.Discs, d => d.Label == "OTHER");
+        Assert.Equal(Interrupt.ExitCode, Interrupted("scandisc", disc, "--update"));
+        Assert.DoesNotContain(Cat.Files.SelectMany(f => f.Backups), b => b.Unverified);   // nothing recorded
 
         Bdxl("lost", "BDXL-0001");
         Assert.Equal(Interrupt.ExitCode, Interrupted("restage", "BDXL-0001", tmp.File("re")));
@@ -81,5 +81,51 @@ public class InterruptTests : IDisposable
         Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re")));   // nothing left half-done
         Assert.Equal(0, Bdxl("restore", tmp.File("out"), "*", "--mount", disc));
         Assert.Equal(a, File.ReadAllBytes(tmp.File("out/S/a.bin")));
+    }
+
+    /// <summary>Console output that presses Ctrl+C when a line with `when` is written, and keeps everything written.</summary>
+    sealed class CtrlCWhen(string when) : StringWriter
+    {
+        public override void WriteLine(string? value)
+        {
+            base.WriteLine(value);
+            if (value?.Contains(when) == true) Interrupt.Request();
+        }
+    }
+
+    [Fact]
+    public void An_interrupted_restage_continues_with_the_packs_that_hold_only_checked_files()
+    {
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);   // packs 1-2
+        tmp.RandomFile("src/b.bin", 60_000, seed: 2);    // packs 2-3
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));
+        Bdxl("burned", "BDXL-0001");
+        Bdxl("lost", "BDXL-0001");
+
+        var console = Console.Out;
+        var first = new CtrlCWhen("pack 2 of 3: rebuilt");
+        try
+        {
+            Console.SetOut(first);
+            Assert.Equal(Interrupt.ExitCode, Bdxl("restage", "BDXL-0001", tmp.File("re")));
+        }
+        finally { Console.SetOut(console); }
+        string partial = tmp.File("re/BDXL-0001.partial");
+        Assert.True(File.Exists(Path.Combine(partial, "restage.json")));
+        Assert.Equal("lost", Cat.Discs.Single().State);
+
+        // pack 1 holds only a (checked when it ended in pack 2); pack 2 also holds the start of b, which was not checked yet
+        var second = new StringWriter();
+        try
+        {
+            Console.SetOut(second);
+            Assert.Equal(0, Bdxl("restage", "BDXL-0001", tmp.File("re"), "--from", partial));
+        }
+        finally { Console.SetOut(console); }
+        Assert.Contains("pack 1 of 3: taken over", second.ToString());
+        Assert.Contains("pack 2 of 3: rebuilt", second.ToString());
+        Assert.Equal(0, Bdxl("verify", "BDXL-0001", tmp.File("re/BDXL-0001"), "--deep"));
     }
 }

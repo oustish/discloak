@@ -2,15 +2,16 @@
 
 [Home](Home.md) › Compression
 
-Files can be compressed (zstd) inside their encryption. It is set **per location** (alias), with a default for
-all. It is off unless you turn it on.
+Files can be compressed (zstd) before they go into a disc's encrypted packs. It is set **per location** (alias),
+with a default for all. It is off unless you turn it on.
 
 ## How it works
 
-- Every 1 MiB piece of a file is compressed on its own and kept compressed **only if that made it smaller**, so
-  incompressible data grows by at most one byte per MiB.
+- Every 1 MiB piece of a file becomes one zstd frame: together a standard zstd stream (`zstd -d` reads it).
+  Incompressible data grows by about 30 bytes per MiB - `auto` does not even try the usual compressed formats.
 - `scan` also counts the **exact** size each file will have on the disc, in the same read as hashing, so `plan`
-  and `stage` still fill discs exactly.
+  and `stage` still fill discs exactly. A file whose size was not counted for today's setting is stored
+  uncompressed.
 - The setting only affects new copies. Copies already on discs stay as they are, and restoring never needs any
   setting.
 

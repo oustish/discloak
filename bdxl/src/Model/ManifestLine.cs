@@ -1,36 +1,21 @@
 namespace Bdxl;
 
 /// <summary>
-/// One line of manifest.jsonl on a disc. For encrypted files Sha256/Size describe the stored file. A part of a split
-/// file also says which part it is, where it belongs in the whole file, and the whole file's size and hash.
-/// Source is the file's catalog path (alias/relative path) when the disc stores it under another name: a hidden name
-/// (encrypted discs, whose manifest is itself stored encrypted as manifest.jsonl.enc), or, on a plain disc imported
-/// with scandisc, any name other than alias/path.
+/// One line of a disc's encrypted manifest: a stored copy. Source = the file's catalog path (alias/relative path);
+/// At/Size = where its stored form lies in the disc's data stream; PlainSize/Sha256 = what it holds (the whole file, or
+/// one part of it); Compression = zstd level (null: stored as it is); Modified = the file's time when it was staged.
+/// A part also says which one it is, where it belongs in the whole file, and the whole file's size and hash.
 /// </summary>
-public record ManifestLine(string Path, long Size, string Sha256, bool Encrypted = false, string? PlainSha256 = null,
-                           int? Part = null, int? Parts = null, long? Offset = null, long? Length = null,
-                           long? FileSize = null, string? FileSha256 = null, string? Source = null, int? Compression = null)
+public record ManifestLine(string Source, long At, long Size, long PlainSize, string Sha256, DateTime? Modified = null,
+                           int? Compression = null, int? Part = null, int? Parts = null, long? Offset = null,
+                           long? FileSize = null, string? FileSha256 = null)
 {
-    public static ManifestLine For(BackupRef b, long storedSize, FileRecord f) =>
-        new(b.DiscPath, storedSize, b.Encrypted ? b.StoredSha256 ?? "" : b.ContentSha256, b.Encrypted,
-            b.Encrypted ? b.ContentSha256 : null,
-            b.IsPart ? b.Part : null, b.IsPart ? b.Parts : null, b.IsPart ? b.Offset : null, b.IsPart ? b.Length : null,
-            b.IsPart ? f.Size : null, b.IsPart ? b.Sha256 : null,
-            b.Encrypted || b.DiscPath != NaturalName(b, f) ? $"{f.RootName}/{f.RelPath}" : null,
-            b.Compression > 0 ? b.Compression : null);
+    public bool IsPart => Part is > 0 && Parts is > 0 && Offset != null && FileSize != null && FileSha256 != null;
 
-    /// <summary>The same, with the stored size from the catalog.</summary>
     public static ManifestLine For(BackupRef b, FileRecord f) =>
-        For(b, b.StoredSize ?? EstimatedStoredSize(b, f), f);
-
-    /// <summary>The name a copy gets on a disc unless it is hidden or renamed: alias/path (+ part suffix).</summary>
-    static string NaturalName(BackupRef b, FileRecord f) =>
-        $"{f.RootName}/{f.RelPath}" + (b.IsPart ? SplitLayout.Suffix(b.Part, b.Parts) : "");
-
-    // copies recorded before StoredSize existed; right unless the copy holds an older version of the file
-    static long EstimatedStoredSize(BackupRef b, FileRecord f)
-    {
-        long plain = b.IsPart ? b.Length : f.Size;
-        return b.Encrypted ? FileCrypto.StoredSize(plain) : plain;
-    }
+        new($"{f.RootName}/{f.RelPath}", b.At, b.StoredSize, b.Length, b.ContentSha256,
+            Hashing.SameHash(b.Sha256, f.Sha256) ? f.ModifiedUtc : null,
+            b.Compression > 0 ? b.Compression : null,
+            b.IsPart ? b.Part : null, b.IsPart ? b.Parts : null, b.IsPart ? b.Offset : null,
+            b.IsPart ? f.Size : null, b.IsPart ? b.Sha256 : null);
 }

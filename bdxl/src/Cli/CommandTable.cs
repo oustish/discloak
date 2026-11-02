@@ -13,7 +13,7 @@ public static class CommandTable
         // making discs
         new StageCommand(), new BurnedCommand(), new VerifyCommand(), new DiscardCommand(),
         // existing discs
-        new ScanDiscCommand(), new DiscJsonCommand(),
+        new ScanDiscCommand(),
         // looking things up
         new StatusCommand(), new FindCommand(), new DiscsCommand(), new CostCommand(),
         // recovery

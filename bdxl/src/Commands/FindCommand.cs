@@ -33,10 +33,10 @@ public sealed class FindCommand : ICommand
                 var d = c.Cat.Discs.FirstOrDefault(x => x.Label == b.Disc);
                 string when = b.BackedUpUtc is { } t ? t.ToString("yyyy-MM-dd") : "not burned yet";
                 string ver = Hashing.SameHash(b.Sha256, f.Sha256) ? "current version" : "OLDER version";
-                string via = b.Alias ? $" - same content stored as {b.DiscPath}" : "";
-                string enc = (b.IsPart ? $" [part {b.Part}/{b.Parts}]" : "") + (b.Encrypted ? " [encrypted]" : "");
-                string unv = b.Unverified ? " [taken from manifest/catalog, not re-hashed - run 'verify']" : "";
-                Console.WriteLine($"    {b.Disc} ({d?.State ?? "?"}, {when}) {ver}{via}{enc}{unv}");
+                string via = b.Alias ? " - the copy stored for an identical file" : "";
+                string part = b.IsPart ? $" [part {b.Part}/{b.Parts}]" : "";
+                string unv = b.Unverified ? " [read from the disc's manifest, not checked yet - run 'verify']" : "";
+                Console.WriteLine($"    {b.Disc} ({d?.State ?? "?"}, {when}) {ver}{via}{part}{unv}");
             }
         }
         Console.WriteLine($"\n{hits.Count} match(es).");

@@ -35,7 +35,8 @@ discs. Two copies of one file never go on the same disc.
 - **Split files:** every part is stored as many times as wanted, each time on a different disc.
 - **Lost or destroyed discs** stop counting: `lost` / `destroyed` say how many files now have fewer copies than
   wanted, and the next `plan` / `stage` makes them again (as long as the files are still on their source).
-- **Restoring** takes each file from whichever of its discs is mounted; you need only one copy.
+- **Restoring** takes each file from whichever of its discs is mounted; you need only one copy. If a file comes back
+  damaged from one mounted disc, `restore` takes it from another mounted disc that has a copy.
 - **Lowering the number** removes nothing from discs; the extra copies simply stay.
 - The number of copies goes with the location when it is renamed (`alias rename`).
 
