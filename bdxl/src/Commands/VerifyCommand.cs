@@ -5,7 +5,7 @@ public sealed class VerifyCommand : ICommand
     public string Name => "verify";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Re-read a disc and compare it with the catalog";
-    public string Usage => "verify <label> <mountedDiscPath> [--deep]";
+    public string Usage => "verify <label> <mountedDiscPath> [--deep] [--no-cache]";
     public bool Interruptible => true;
     public string Details => """
         Reads every pack of the disc and compares its SHA-256 with the catalog - nothing is decrypted, so no password
@@ -22,6 +22,11 @@ public sealed class VerifyCommand : ICommand
         A damaged pack is named with the files that have data in it; those files can be restored from another copy,
         or the disc rebuilt with 'restage' (which reuses the intact packs).
         Copies recorded by 'scandisc' are marked 'unverified' until this has checked their packs.
+          --no-cache   read every byte from the disc itself. Without it, Windows may hand over what it still keeps in
+                       memory from an earlier read of the disc since it was inserted (ejecting the disc empties
+                       that): still the disc's data, but not proof that it reads back now - which matters when a
+                       disc stays in the drive for days. With it, the 100 GB read also do not push out what
+                       Windows keeps in memory for other programs.
         Ctrl+C stops after the pack being read and reports what was checked so far.
         """;
 
@@ -29,7 +34,7 @@ public sealed class VerifyCommand : ICommand
     {
         var disc = c.Arc.FindDisc(c.Arg(0, Usage));
         string mount = Path.GetFullPath(c.Arg(1, Usage));
-        bool deep = c.Opt.Has("deep");
+        bool deep = c.Opt.Has("deep"), noCache = c.Opt.Has("no-cache");
         if (!Directory.Exists(mount)) throw new UserException($"Not a folder: {mount}");
         if (DiscFiles.ReadInfo(mount) is { } info)
         {
@@ -48,7 +53,8 @@ public sealed class VerifyCommand : ICommand
         Console.WriteLine(deep
             ? "  --deep: every pack is hashed and decrypted, and every file is checked against its hash"
             : "  every pack's SHA-256 is compared with the catalog; nothing is decrypted (--deep also checks every file)");
-        var (fileProblems, recorded) = CheckDiscFiles(c, disc, mount, deep, copies);
+        if (noCache) Console.WriteLine("  --no-cache: every byte is read from the disc itself, none from what Windows keeps in memory");
+        var (fileProblems, recorded) = CheckDiscFiles(c, disc, mount, deep, noCache, copies);
 
         // progress: the packs are read in order, all of the same size
         var meter = new ProgressMeter(discBytes);
@@ -86,7 +92,12 @@ public sealed class VerifyCommand : ICommand
                 reading = InPack(copies, p, ref first);
                 string path = Path.Combine(mount, DiscFormat.PackPath(p));
                 if (!File.Exists(path)) { Judge(p, null, $"pack {p} is missing"); continue; }
-                try { Judge(p, Hashing.HashFile(path, Interrupt.Token), null); }
+                try
+                {
+                    string sha;
+                    using (var input = DiscRead.Open(path, noCache)) sha = Hashing.Hash(input, Interrupt.Token);
+                    Judge(p, sha, null);
+                }
                 catch (OperationCanceledException) { break; }
                 catch (IOException ex) { Judge(p, null, $"pack {p} cannot be read ({ex.Message})"); }
             }
@@ -94,7 +105,7 @@ public sealed class VerifyCommand : ICommand
         else
         {
             // every pack read once, in order: hashed and decrypted; the files are checked as their packs come by
-            using var reader = new PackReader(mount, c.Keys, wholePacks: true) { PackRead = Judge };
+            using var reader = new PackReader(mount, c.Keys, wholePacks: true, noCache) { PackRead = Judge };
             int done = 0;
             Console.WriteLine();
             try
@@ -166,8 +177,10 @@ public sealed class VerifyCommand : ICommand
     /// and the catalog backup in _catalog. Returns how many have a problem, and whether the manifests' hashes were
     /// recorded (--deep, for a disc staged before the catalog kept them). They are small: this takes seconds.
     /// </summary>
-    static (int Problems, bool Recorded) CheckDiscFiles(Ctx c, DiscRecord disc, string mount, bool deep, List<(FileRecord File, BackupRef Copy)> copies)
+    static (int Problems, bool Recorded) CheckDiscFiles(Ctx c, DiscRecord disc, string mount, bool deep, bool noCache,
+                                                        List<(FileRecord File, BackupRef Copy)> copies)
     {
+        byte[]? Read(string path) => File.Exists(path) ? DiscRead.AllBytes(path, noCache) : null;   // null: missing
         int problems = 0;
         void Report(string name, string? problem, string ok = "")
         {
@@ -180,7 +193,7 @@ public sealed class VerifyCommand : ICommand
         // disc.json: which disc this is, and its key
         try
         {
-            var info = JsonStore.ReadObject<DiscInfo>(Path.Combine(mount, DiscFiles.InfoName));
+            var info = Read(Path.Combine(mount, DiscFiles.InfoName)) is { } json ? JsonStore.ParseObject<DiscInfo>(json, DiscFiles.InfoName) : null;
             int burned = disc.PendingAppend is { } pending ? pending.Number - 1 : disc.Sessions;   // a staged session is not on the disc yet
             Report(DiscFiles.InfoName,
                 info == null ? "is missing"
@@ -195,10 +208,10 @@ public sealed class VerifyCommand : ICommand
         // packs.sha256: the pack hashes the catalog has
         try
         {
-            if (!File.Exists(Path.Combine(mount, DiscFiles.PackListName))) Report(DiscFiles.PackListName, "is missing");
+            if (Read(Path.Combine(mount, DiscFiles.PackListName)) is not { } text) Report(DiscFiles.PackListName, "is missing");
             else
             {
-                var list = DiscFiles.ReadPackList(mount);
+                var list = DiscFiles.ParsePackList(Encoding.UTF8.GetString(text));
                 int differ = disc.Packs.Where((sha, i) => !(list.TryGetValue(i + 1, out string? got) && Hashing.SameHash(got, sha))).Count();
                 int extra = list.Keys.Count(p => p > disc.Packs.Count);
                 Report(DiscFiles.PackListName,
@@ -233,7 +246,7 @@ public sealed class VerifyCommand : ICommand
             }
             try
             {
-                byte[] bytes = File.ReadAllBytes(path);
+                byte[] bytes = DiscRead.AllBytes(path, noCache);
                 hashes[s] = Convert.ToHexString(SHA256.HashData(bytes));
                 if (expected != null && !Hashing.SameHash(hashes[s], expected))
                 {
@@ -278,7 +291,8 @@ public sealed class VerifyCommand : ICommand
         // bdxl.key: this catalog's master key, wrapped by the password
         try
         {
-            var keyFile = KeyFile.ReadFrom(mount);
+            string keyPath = KeyFile.PathIn(mount);
+            var keyFile = Read(keyPath) is { } bytes ? KeyFile.Parse(bytes, keyPath) : null;
             Report(KeyFile.FileName,
                 keyFile == null ? "is missing"
                 : !OurCatalog(keyFile.CatalogId) ? "belongs to another catalog"
@@ -288,7 +302,7 @@ public sealed class VerifyCommand : ICommand
         catch (Exception ex) when (ex is IOException or InvalidDataException) { Report(KeyFile.FileName, ex.Message); }
 
         string readme = Path.Combine(mount, DiscFiles.ReadmeName);
-        try { Report(DiscFiles.ReadmeName, !File.Exists(readme) ? "is missing" : File.ReadAllBytes(readme).Length == 0 ? "is empty" : null); }
+        try { Report(DiscFiles.ReadmeName, Read(readme) is not { } bytes ? "is missing" : bytes.Length == 0 ? "is empty" : null); }
         catch (IOException ex) { Report(DiscFiles.ReadmeName, $"cannot be read ({ex.Message})"); }
 
         // _catalog: every file against its repair data (no password needed)
@@ -304,7 +318,7 @@ public sealed class VerifyCommand : ICommand
                 {
                     try
                     {
-                        var status = CatalogCommand.Load(backup, name).Status;
+                        var status = CatalogCommand.Load(backup, name, noCache).Status;
                         if (status == RsStatus.Ok) intact++;
                         else if (status == RsStatus.Repaired) repairable++;
                         else lost++;

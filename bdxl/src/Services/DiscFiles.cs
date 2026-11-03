@@ -117,10 +117,15 @@ public static class DiscFiles
     /// <summary>packs.sha256 of a disc: pack number -> SHA-256 (empty if it has none).</summary>
     public static Dictionary<int, string> ReadPackList(string mount)
     {
-        var result = new Dictionary<int, string>();
         string path = Path.Combine(mount, PackListName);
-        if (!File.Exists(path)) return result;
-        foreach (string line in File.ReadLines(path))
+        return File.Exists(path) ? ParsePackList(File.ReadAllText(path)) : new Dictionary<int, string>();
+    }
+
+    /// <summary>The text of packs.sha256: pack number -> SHA-256.</summary>
+    public static Dictionary<int, string> ParsePackList(string text)
+    {
+        var result = new Dictionary<int, string>();
+        foreach (string line in text.Split('\n'))
             if (PackListLine.Match(line.Trim()) is { Success: true } m)
                 result[int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture)] = m.Groups[1].Value.ToUpperInvariant();
         return result;

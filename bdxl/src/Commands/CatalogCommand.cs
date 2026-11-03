@@ -326,26 +326,29 @@ public sealed class CatalogCommand : ICommand
         return names;
     }
 
-    internal static (RsStatus Status, byte[] Data, byte[]? Parity, int BadData, int BadParity) Load(string dir, string name)
+    /// <summary>A backed-up file checked against its repair data (noCache: read from the disc itself, see UncachedFile).</summary>
+    internal static (RsStatus Status, byte[] Data, byte[]? Parity, int BadData, int BadParity) Load(string dir, string name, bool noCache = false)
     {
         RepairMeta? meta;
-        try { meta = JsonStore.ReadObject<RepairMeta>(Path.Combine(dir, name + ".repair.json")); }
+        string metaPath = Path.Combine(dir, name + ".repair.json");
+        try { meta = File.Exists(metaPath) ? JsonStore.ParseObject<RepairMeta>(DiscRead.AllBytes(metaPath, noCache), name + ".repair.json") : null; }
         catch (Exception ex) when (ex is IOException or JsonException) { throw new UserException($"Unreadable repair file for {name} ({ex.Message})."); }
         if (meta == null) throw new UserException($"Unreadable repair file for {name}.");
-        int block = Math.Max(DiscSpace.Sector, meta.BlockSize);
-        return Rs.Check(meta, ReadBlocks(Path.Combine(dir, name), block), ReadBlocks(Path.Combine(dir, name + ".par"), block));
+        int block = Math.Max(UncachedFile.Alignment, meta.BlockSize);   // the repair blocks: whole multiples of 4 KiB
+        return Rs.Check(meta, ReadBlocks(Path.Combine(dir, name), block, noCache), ReadBlocks(Path.Combine(dir, name + ".par"), block, noCache));
     }
 
     /// <summary>
     /// A file read block by block: a block that cannot be read (a bad spot on a disc) is left as zeros, so its hash
     /// marks it damaged and the repair data rebuilds it. null if the file is missing or cannot be opened.
     /// </summary>
-    static byte[]? ReadBlocks(string path, int block)
+    static byte[]? ReadBlocks(string path, int block, bool noCache)
     {
         if (!File.Exists(path)) return null;
         try
         {
-            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.RandomAccess);
+            using Stream input = noCache ? new UncachedFile(path, block)
+                                         : new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.RandomAccess);
             var data = new byte[input.Length];
             for (int at = 0; at < data.Length; at += block)
             {

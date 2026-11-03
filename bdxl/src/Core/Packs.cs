@@ -140,7 +140,7 @@ public sealed class PackReader : IDisposable
 {
     readonly string mount;
     readonly KeyRing keys;
-    readonly bool wholePacks;
+    readonly bool wholePacks, noCache;
     int cachedPack, cachedChunk = -1;
     readonly byte[] cached = new byte[DiscFormat.ChunkSize];
     int headerPack;
@@ -152,11 +152,13 @@ public sealed class PackReader : IDisposable
     byte[]? loadedPlain;
     string?[]? loadedProblems;
 
-    public PackReader(string mount, KeyRing keys, bool wholePacks = false)
+    /// <summary>noCache (wholePacks only): the packs are read from the disc itself, not the Windows file cache (UncachedFile).</summary>
+    public PackReader(string mount, KeyRing keys, bool wholePacks = false, bool noCache = false)
     {
         this.mount = mount;
         this.keys = keys;
         this.wholePacks = wholePacks;
+        this.noCache = noCache;
     }
 
     /// <summary>wholePacks: called for every pack as it is read: (pack, SHA-256 of the file or null, problem or null).</summary>
@@ -256,7 +258,7 @@ public sealed class PackReader : IDisposable
         try
         {
             if (!File.Exists(path)) throw new InvalidDataException($"pack {pack} is missing ({DiscFormat.PackPath(pack)})");
-            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan);
+            using var input = DiscRead.Open(path, noCache);
             if (input.Length != DiscFormat.PackFileSize) throw new InvalidDataException($"pack {pack} has the wrong size ({input.Length:N0} bytes)");
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var header = new byte[DiscFormat.HeaderSize];

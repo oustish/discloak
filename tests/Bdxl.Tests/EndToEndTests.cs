@@ -234,6 +234,8 @@ public class EndToEndTests : IDisposable
         Assert.Contains("S/a.bin (100,000 bytes) DAMAGED: pack 1, chunk 0 is damaged", deep);
         Assert.Contains("Damaged pack(s): 1", deep);
         Assert.Contains("DAMAGED  pack 1 differs from the catalog", Verify());
+        Assert.Contains("DAMAGED  pack 1 differs from the catalog", Verify("--no-cache"));                 // read past the cache
+        Assert.Contains("S/a.bin (100,000 bytes) DAMAGED: pack 1, chunk 0 is damaged", Verify("--deep", "--no-cache"));
     }
 
     [Fact]
@@ -253,17 +255,24 @@ public class EndToEndTests : IDisposable
             Assert.Contains(ok, text);
         Assert.Contains("the disc's other files OK", text);
         Assert.Contains("OK       the manifests list the 2 file(s) the catalog has on this disc", Run("verify", "BDXL-0001", disc, "--deep").Text);
+        (code, text) = Run("verify", "BDXL-0001", disc, "--deep", "--no-cache");
+        Assert.Equal(0, code);
+        Assert.Contains("--no-cache: every byte is read from the disc itself", text);
+        Assert.Contains("OK       _catalog (", text);
 
-        // each damage is found (by a plain verify: no decrypting), then the file is put back as it was
+        // each damage is found (by a plain verify: no decrypting; also reading past the cache), then the file is put back
         void Damaged(string file, Action<string> damage, string expected)
         {
             string path = Path.Combine(disc, file);
             byte[] before = File.ReadAllBytes(path);
             damage(path);
-            var (code, text) = Run("verify", "BDXL-0001", disc);
-            Assert.Equal(3, code);
-            Assert.Contains(expected, text);
-            Assert.Contains("1 of the disc's other files with a problem", text);
+            foreach (string[] more in new[] { Array.Empty<string>(), ["--no-cache"] })
+            {
+                var (code, text) = Run(["verify", "BDXL-0001", disc, .. more]);
+                Assert.Equal(3, code);
+                Assert.Contains(expected, text);
+                Assert.Contains("1 of the disc's other files with a problem", text);
+            }
             File.WriteAllBytes(path, before);
         }
         void Flip(string path)

@@ -145,11 +145,16 @@ bdxl burned <label> [--date yyyy-MM-dd]
 ### verify
 Re-read a disc and compare it with the catalog.
 ```
-bdxl verify <label> <mountedDiscPath> [--deep]
+bdxl verify <label> <mountedDiscPath> [--deep] [--no-cache]
 ```
 Compares every pack's SHA-256 with the catalog (no password needed for that). `--deep` also decrypts every pack and
 checks every file against its hash, in the same single read. A damaged pack is named with the files that have data in
 it. Exit code 3: damaged or missing packs, or files that do not come back intact.
+
+| Option | |
+|---|---|
+| `--deep` | also decrypt every pack and check every file against its hash |
+| `--no-cache` | read every byte from the disc itself. Without it, Windows may hand over what it still keeps in memory from an earlier read of this disc (since it was inserted; ejecting the disc empties that): the disc's own data, but not proof that it reads back now. Use it to re-check a disc that has stayed in the drive. It also keeps the 100 GB read from pushing other programs' data out of memory. |
 
 Before the packs, the disc's other files are checked, a line each:
 

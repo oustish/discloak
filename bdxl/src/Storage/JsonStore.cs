@@ -46,6 +46,7 @@ public static class JsonStore
     /// <summary>One object from UTF-8 JSON; name is only used in error messages.</summary>
     public static T? ParseObject<T>(ReadOnlySpan<byte> utf8, string name)
     {
+        if (utf8.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) utf8 = utf8[3..];   // a byte order mark (File.ReadAllText drops it too)
         try { return JsonSerializer.Deserialize<T>(utf8, Compact); }
         catch (JsonException ex) { throw new JsonException($"{name}: {ex.Message}"); }
     }

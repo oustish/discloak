@@ -91,6 +91,11 @@ catalogued file). `stage` warns when it does not fit.
 **Which file system should I burn with?**
 UDF 2.50 (the usual choice for BD-R). bdxl's file names are short and plain ASCII, so any burning program works.
 
+**Why did `verify` run far faster than the drive can read?**
+Windows keeps what it read from a disc in spare memory until the disc is ejected, so a second `verify` gets part of
+the disc from memory. That is still the disc's data (read from it earlier), but not proof that it reads back now.
+Eject and insert the disc again, or run `verify … --no-cache`, which reads every byte from the disc itself.
+
 **Can I use DVDs, other discs, or folders on hard disks?**
 Yes. Register blanks with their size; `verify`, `restore` and `scandisc` work on any folder laid out like a disc.
 Discs written without bdxl cannot be brought into a catalog.

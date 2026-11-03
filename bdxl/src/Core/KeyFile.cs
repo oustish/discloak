@@ -54,9 +54,14 @@ public sealed class KeyFile
     public static KeyFile? ReadFrom(string dir)
     {
         string path = PathIn(dir);
-        if (!File.Exists(path)) return null;
+        return File.Exists(path) ? Parse(File.ReadAllBytes(path), path) : null;
+    }
+
+    /// <summary>A bdxl.key from its bytes (read by the caller from path). Throws InvalidDataException if it is not one.</summary>
+    public static KeyFile Parse(byte[] utf8, string path)
+    {
         KeyFile? k;
-        try { k = JsonStore.ReadObject<KeyFile>(path); }
+        try { k = JsonStore.ParseObject<KeyFile>(utf8, FileName); }
         catch (JsonException ex) { throw new InvalidDataException($"{FileName} cannot be read: {ex.Message}"); }
         if (k == null || k.Format is not (Format1 or CurrentFormat) || k.CatalogId.Length != 32 || k.KeyId.Length != MasterKey.KeyIdSize * 2)
             throw new InvalidDataException($"{path} is not a bdxl key file this version understands");
