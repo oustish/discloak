@@ -353,6 +353,54 @@ public class CatalogTests : IDisposable
         JsonStore.WriteLines(tmp.File("plain/files.jsonl"), files);
         Assert.Equal(0, Bdxl("catalog", "import", tmp.File("plain")));
         Assert.Equal(2, TestKeys.Load(Dir).Files.Count);
+        Assert.False(Directory.Exists(tmp.File("plain")));                // wiped once imported
+    }
+
+    [Fact]
+    public void Import_wipes_the_export_only_once_it_is_saved_and_refuses_a_folder_it_should_not_wipe()
+    {
+        Run("scan", c => c.Files.Add(File("a.txt")));
+        string Export(string name)
+        {
+            Assert.Equal(0, Bdxl("catalog", "export", tmp.File(name)));
+            var files = JsonStore.ReadLines<FileRecord>(tmp.File(name + "/files.jsonl"));
+            files.Add(File(name + ".txt"));
+            JsonStore.WriteLines(tmp.File(name + "/files.jsonl"), files);
+            return tmp.File(name);
+        }
+        int Count() => TestKeys.Load(Dir).Files.Count;
+
+        string withBackup = Export("one");
+        System.IO.File.WriteAllText(Path.Combine(withBackup, "files.jsonl.bak"), "an editor's copy");   // wiped as well
+        Assert.Equal(0, Bdxl("catalog", "import", withBackup));
+        Assert.Equal(2, Count());
+        Assert.False(Directory.Exists(withBackup));
+
+        string kept = Export("two");
+        Assert.Equal(0, Bdxl("catalog", "import", kept, "--keep"));
+        Assert.Equal(3, Count());
+        Assert.True(System.IO.File.Exists(Path.Combine(kept, "files.jsonl")));
+
+        // refused before anything is imported: nothing changes, nothing is wiped
+        string nested = Export("three");
+        Directory.CreateDirectory(Path.Combine(nested, "sub"));
+        Assert.Equal(1, Bdxl("catalog", "import", nested));
+        string catalogLike = Export("four");
+        System.IO.File.WriteAllText(Path.Combine(catalogLike, KeyFile.FileName), "{}");
+        Assert.Equal(1, Bdxl("catalog", "import", catalogLike));
+        string broken = Export("five");
+        System.IO.File.WriteAllText(Path.Combine(broken, "discs.jsonl"), "{ not json");
+        Assert.Equal(1, Bdxl("catalog", "import", broken));                   // the import fails: the folder stays
+        Assert.Equal(3, Count());
+        Assert.All(new[] { nested, catalogLike, broken }, d => Assert.True(System.IO.File.Exists(Path.Combine(d, "files.jsonl"))));
+
+        // a file another program holds open: imported, the rest wiped, that one listed (exit 2)
+        string busy = Export("six");
+        System.IO.File.WriteAllText(Path.Combine(busy, "files.jsonl.swp"), "an editor's copy, still open");
+        using (new FileStream(Path.Combine(busy, "files.jsonl.swp"), FileMode.Open, FileAccess.Read, FileShare.None))
+            Assert.Equal(2, Bdxl("catalog", "import", busy));
+        Assert.Equal(4, Count());
+        Assert.Equal(["files.jsonl.swp"], Directory.GetFiles(busy).Select(Path.GetFileName));
     }
 
     [Fact]

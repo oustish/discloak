@@ -127,10 +127,16 @@ The catalog is encrypted, so it cannot be edited by hand. To read or fix it:
 ```
 bdxl catalog export D:\catalog-plain        # an empty folder; the files there are NOT encrypted
    ... read / edit files.jsonl, discs.jsonl, blanks.jsonl, settings.json ...
-bdxl catalog import D:\catalog-plain        # replaces the catalog (the previous version is kept in history)
+bdxl catalog import D:\catalog-plain        # replaces the catalog (the previous version is kept in history),
+                                            # then wipes D:\catalog-plain (--keep leaves it)
 ```
 
-Delete the plain folder afterwards.
+The import wipes the plain folder once the new catalog is saved: every file in it (also an editor's backup copy
+there) is overwritten with random bytes and deleted, and the folder removed. What that cannot reach: an SSD may keep
+the old blocks until it reclaims them, and shadow copies, synced folders (OneDrive), NAS snapshots and editors' own
+backups elsewhere keep copies of their own - Windows 11 Notepad, for one, keeps the tabs it had open. So export onto
+an encrypted drive (BitLocker) if you can, and edit with an editor that keeps nothing (or close the file's tab
+first).
 
 ## Updating bdxl
 

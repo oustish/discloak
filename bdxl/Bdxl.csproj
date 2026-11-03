@@ -9,7 +9,7 @@
     <RootNamespace>Bdxl</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- major.minor.patch, raised by hand in the commit that makes the change: see CONTRIBUTING.md -->
-    <Version>0.6.0</Version>
+    <Version>0.7.0</Version>
     <!-- BdxlBuildInfo below appends the short commit, uncommitted changes and the build time instead of the full commit -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>

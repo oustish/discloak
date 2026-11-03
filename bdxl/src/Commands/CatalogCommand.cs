@@ -1,7 +1,7 @@
 namespace Bdxl;
 
 /// <summary>
-/// catalog check | accept | history | rollback &lt;id&gt; | export &lt;dir&gt; | import &lt;dir&gt; |
+/// catalog check | accept | history | rollback &lt;id&gt; | export &lt;dir&gt; | import &lt;dir&gt; [--keep] |
 /// backup create &lt;dir&gt; | backup verify &lt;dir&gt; [--repair] | backup restore &lt;dir&gt; [--force]
 /// Integrity and versions of the catalog itself, plaintext export/import, and catalog backups with Reed-Solomon repair data.
 /// </summary>
@@ -10,7 +10,7 @@ public sealed class CatalogCommand : ICommand
     public string Name => "catalog";
     public string Group => CommandGroup.Catalog;
     public string Summary => "Integrity check, older versions, export/import, backups with repair data, the mirror";
-    public string Usage => "catalog check | accept | history | rollback <id> | export <dir> | import <dir> | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force] | mirror status | mirror sync | mirror restore [--recovery]";
+    public string Usage => "catalog check | accept | history | rollback <id> | export <dir> | import <dir> [--keep] | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force] | mirror status | mirror sync | mirror restore [--recovery]";
     public string Details => """
         The catalog is stored encrypted. catalog.hash.json holds a hash of every stored file and an HMAC over that
         list, checked every time the catalog is loaded; if a file is damaged, altered or mixed in from another save,
@@ -20,7 +20,14 @@ public sealed class CatalogCommand : ICommand
           catalog history            older versions (one copy is kept before each command that changes the catalog)
           catalog rollback <id>      go back to one of them (the current state is saved first; --force for a damaged one)
           catalog export <dir>       write the catalog as plain JSON into an empty folder (to read or edit it - it is NOT encrypted)
-          catalog import <dir>       replace the catalog with plain JSON from such a folder (the current state is kept in history)
+          catalog import <dir>       replace the catalog with plain JSON from such a folder (the current state is kept in
+                                     history), then wipe the folder: every file in it overwritten with random bytes and
+                                     deleted, and the folder removed - only once the import is saved; --keep leaves it.
+                                     A folder with subfolders or links, or one that looks like a catalog, is refused.
+                                     The wipe reaches the files themselves; an SSD may keep the old blocks until it
+                                     reclaims them, and shadow copies, synced folders, NAS snapshots and editors' own
+                                     backups (Windows 11 Notepad keeps its open tabs) keep copies of their own - best
+                                     export onto an encrypted drive (BitLocker).
           catalog backup create <dir>            copy of the encrypted catalog + bdxl.key + Reed-Solomon repair data (--parity-percent 25)
           catalog backup verify <dir> [--repair] check / fix a backup (no password needed)
           catalog backup restore <dir> [--force] put a backup back (password, or --recovery for the recovery key, when restoring
@@ -237,16 +244,33 @@ public sealed class CatalogCommand : ICommand
         JsonStore.WriteLines(Path.Combine(dir, "blanks.jsonl"), c.Cat.Blanks);
         JsonStore.WriteObject(Path.Combine(dir, "settings.json"), c.Settings);
         Console.WriteLine($"Exported {c.Cat.Files.Count:N0} files, {c.Cat.Discs.Count:N0} discs, {c.Cat.Blanks.Count:N0} blank discs as plain JSON to {dir}.");
-        Console.WriteLine("These files are NOT encrypted: they show every path and hash. Delete them when you are done, or bring");
-        Console.WriteLine($"edits back with:  catalog import \"{dir}\"");
+        Console.WriteLine("These files are NOT encrypted: they show every path and hash. Bring edits back with");
+        Console.WriteLine($"  catalog import \"{dir}\"     (which then wipes the folder; --keep leaves it)");
         return 0;
     }
 
+    /// <summary>
+    /// Replaces the catalog with a plain export, then (unless --keep) wipes the export: it shows every path and hash.
+    /// Whether the folder can be wiped is decided before anything is imported, and it is wiped only once the import
+    /// is saved.
+    /// </summary>
     static int Import(Ctx c, string dirArg)
     {
         string dir = Path.GetFullPath(dirArg);
         if (!Catalog.CoveredFiles.Any(n => File.Exists(Path.Combine(dir, n))))
             throw new UserException($"{dir} has none of {string.Join(", ", Catalog.CoveredFiles)}.");
+        bool wipe = !c.Opt.Has("keep");
+        string[] toWipe = [];
+        if (wipe)
+        {
+            string? why = SecureDelete.Unsafe(dir)
+                ?? (Path.TrimEndingDirectorySeparator(dir).Equals(Path.TrimEndingDirectorySeparator(c.Cat.Dir), StringComparison.OrdinalIgnoreCase)
+                    ? "it is the catalog's own folder" : null)
+                ?? (Directory.EnumerateFiles(dir).Select(Path.GetFileName).FirstOrDefault(n => n == KeyFile.FileName || n!.EndsWith(".enc", StringComparison.OrdinalIgnoreCase)) is { } odd
+                    ? $"it holds {odd}, so it looks like a catalog, not an export" : null);
+            if (why != null) throw new UserException($"The folder would be wiped after the import, but {why}. Nothing was imported; add --keep to import without wiping.");
+            toWipe = Directory.GetFiles(dir).Select(p => Path.GetFileName(p)!).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
         var files = JsonStore.ReadLines<FileRecord>(Path.Combine(dir, "files.jsonl"));
         var discs = JsonStore.ReadLines<DiscRecord>(Path.Combine(dir, "discs.jsonl"));
         var blanks = JsonStore.ReadLines<BlankDisc>(Path.Combine(dir, "blanks.jsonl"));
@@ -255,12 +279,28 @@ public sealed class CatalogCommand : ICommand
         Console.WriteLine($"{dir}: {files.Count:N0} files, {discs.Count:N0} discs, {blanks.Count:N0} blank discs.");
         Console.WriteLine($"The catalog now has {c.Cat.Files.Count:N0} files, {c.Cat.Discs.Count:N0} discs, {c.Cat.Blanks.Count:N0} blank discs" +
                           (c.Cat.Integrity.State == IntegrityState.Broken ? " (it is broken)." : "."));
+        if (wipe)
+            Console.WriteLine($"Then {dir} is wiped: {string.Join(", ", toWipe)} overwritten and deleted, and the folder removed (--keep leaves it).");
         if (!Ui.Confirm(c.Opt, "Replace the catalog with the imported files? (the current one is kept in history)")) { Console.WriteLine("Cancelled."); return 1; }
         c.Cat.ReplaceContents(files, discs, blanks, settings);
         c.Cat.TrustCurrentContents();
         c.Cat.Save();
-        Console.WriteLine($"Imported. The plain JSON in {dir} is still there - delete it when you no longer need it.");
-        return 0;
+        if (!wipe)
+        {
+            Console.WriteLine($"Imported. The plain JSON in {dir} is still there - delete it when you no longer need it.");
+            return 0;
+        }
+
+        var failed = SecureDelete.Folder(dir);
+        if (failed.Count == 0)
+        {
+            Console.WriteLine($"Imported, and {dir} wiped ({toWipe.Length:N0} file(s) overwritten with random bytes and deleted, the folder removed).");
+            return 0;
+        }
+        Console.WriteLine($"Imported, but not everything in {dir} could be wiped (is a file open in another program?):");
+        foreach (string f in failed) Console.WriteLine("  " + f);
+        Console.WriteLine("Close it and delete what is left yourself; the rest was overwritten and deleted.");
+        return 2;
     }
 
     // ---- backup (copy of the encrypted catalog + bdxl.key + repair data) ---------------------

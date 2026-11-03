@@ -111,6 +111,11 @@ Commands print to the console only. The agent logs to `%LOCALAPPDATA%\bdxl\agent
 `bdxl version`: the version, the commit it was built from and when. Include its output when reporting a problem. A
 disc's `disc.json` names the build that wrote it (`createdBy`), and `bdxl discs` shows it for every disc.
 
+**`The folder would be wiped after the import, but …`** (`catalog import`)
+`catalog import` wipes the plain folder afterwards, and refuses a folder that holds more than an export (subfolders,
+links, `bdxl.key` or `.enc` files) before importing anything. Import from the folder `catalog export` made, or add
+`--keep`.
+
 **`… is compressed with 'xyz', which this bdxl does not know`**
 That copy was made by a newer bdxl with another compression codec. Restore it with that version (or a newer one).
 

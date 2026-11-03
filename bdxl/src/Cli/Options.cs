@@ -7,7 +7,7 @@ public sealed class Options
     static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase)
     {
         "help", "flat", "overwrite", "repair", "force", "allow-partial", "with-catalog", "update",
-        "dry-run", "write-disc-json", "encrypt", "deep", "no-cache", "yes", "full", "all", "split", "recovery", "recovery-key", "status", "rotate-key", "version"
+        "dry-run", "write-disc-json", "encrypt", "deep", "no-cache", "yes", "full", "all", "split", "recovery", "recovery-key", "status", "rotate-key", "version", "keep"
     };
 
     readonly Dictionary<string, string> values = new(StringComparer.OrdinalIgnoreCase);

@@ -19,8 +19,9 @@ public sealed class DiscsCommand : ICommand
     {
         if (c.Cat.Discs.Count == 0) { Console.WriteLine("No discs yet."); return 0; }
         string currency = c.Settings.Currency;
+        int labelWidth = c.Cat.Discs.Max(d => d.Label.Length);   // labels of other prefixes (or imported discs) line up too
         foreach (var d in c.Cat.Discs.OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase))
-            Console.WriteLine($"{d.Label}  {d.State,-9}  {d.FileCount,9:N0} files  {d.UsedBytes,18:N0} bytes  created {d.CreatedUtc:yyyy-MM-dd}" +
+            Console.WriteLine($"{d.Label.PadRight(labelWidth)}  {d.State,-9}  {d.FileCount,9:N0} files  {d.UsedBytes,18:N0} bytes  created {d.CreatedUtc:yyyy-MM-dd}" +
                               (d.BurnedUtc is { } burnedAt ? $"  burned {burnedAt:yyyy-MM-dd}" : "") +
                               (d.LostUtc is { } lostAt ? $"  {d.State} {lostAt:yyyy-MM-dd}" : "") +
                               (d.RestagedUtc is { } restagedAt ? $"  restaged {restagedAt:yyyy-MM-dd}" : "") +

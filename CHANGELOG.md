@@ -3,6 +3,14 @@
 What changed in each version of bdxl. Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions)
 for what raises which part. `bdxl version` shows the version of an exe.
 
+## 0.7.0 - 2026-11-03
+
+- `catalog import` wipes the plain export once the import is saved: every file in the folder overwritten with random
+  bytes and deleted, and the folder removed. `--keep` leaves it. A folder with subfolders or links, or one that looks
+  like a catalog, is refused before anything is imported.
+- Fixed: `cost report` lines up its columns for labels longer than 12 characters (and amounts of any size); `discs`
+  lines up labels of different lengths.
+
 ## 0.6.0 - 2026-11-03
 
 The first numbered version. What bdxl does at this point:

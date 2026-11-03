@@ -377,6 +377,28 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
+    public void Cost_and_discs_line_up_labels_of_any_length()
+    {
+        tmp.RandomFile("src/a.bin", 30_000, seed: 1);
+        Bdxl("blanks", "add", "2", "--size", "1MB", "--cost", "45");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));                                        // BDXL-0001
+        Bdxl("settings", "set", "label-prefix", "BDXL-ARCHIVE-");
+        tmp.RandomFile("src/b.bin", 20_000, seed: 2);
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));                                        // BDXL-ARCHIVE-0002
+
+        var cost = Run("cost", "report").Text.Split('\n').Select(l => l.TrimEnd('\r')).SkipWhile(l => !l.StartsWith("Disc")).Take(3).ToList();
+        Assert.Equal(["Disc", "BDXL-0001", "BDXL-ARCHIVE-0002"], cost.Select(l => l.Split(' ')[0]));
+        Assert.All(cost, l => Assert.Equal(cost[0].IndexOf("State"), l.IndexOf(l == cost[0] ? "State" : "staged")));
+        Assert.All(cost, l => Assert.Equal(cost[0].Length, l.Length));       // the amounts end in one column
+
+        var discs = Run("discs").Text.Split('\n').Where(l => l.StartsWith("BDXL")).ToList();
+        Assert.Equal(2, discs.Count);
+        Assert.Equal(discs[0].IndexOf("staged"), discs[1].IndexOf("staged"));
+    }
+
+    [Fact]
     public void A_file_damaged_on_one_disc_is_restored_from_its_copy_on_another()
     {
         var a = tmp.RandomFile("src/a.bin", 50_000, seed: 1);

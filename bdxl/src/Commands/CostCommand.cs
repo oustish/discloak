@@ -56,10 +56,14 @@ public sealed class CostCommand : ICommand
             return 0;
         }
 
-        Console.WriteLine($"{"Disc",-12} {"State",-9} {"Data (bytes)",18} {"Cost",14} {"per GB",12} {"per TB",12}");
-        foreach (var d in priced)
-            Console.WriteLine($"{d.Label,-12} {d.State,-9} {d.UsedBytes,18:N0} {SizeText.Money(d.Cost!.Value, cur),14} " +
-                              $"{PerUnit(d.Cost.Value, d.UsedBytes, GB, cur),12} {PerUnit(d.Cost.Value, d.UsedBytes, TB, cur),12}");
+        var rows = priced.Select(d => new[]
+        {
+            d.Label, d.State, SizeText.Bytes(d.UsedBytes), SizeText.Money(d.Cost!.Value, cur),
+            PerUnit(d.Cost.Value, d.UsedBytes, GB, cur), PerUnit(d.Cost.Value, d.UsedBytes, TB, cur)
+        }).ToList();
+        if (rows.Count > 0)
+            foreach (string line in TextTable.Lines(["Disc", "State", "Data (bytes)", "Cost", "per GB", "per TB"], rows, leftAligned: 2))
+                Console.WriteLine(line);
 
         if (priced.Count > 0)
         {

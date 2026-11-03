@@ -305,7 +305,7 @@ bdxl catalog accept
 bdxl catalog history
 bdxl catalog rollback <id> [--force]
 bdxl catalog export <dir>
-bdxl catalog import <dir>
+bdxl catalog import <dir> [--keep]
 bdxl catalog backup create <dir> [--parity-percent 25]
 bdxl catalog backup verify <dir> [--repair]
 bdxl catalog backup restore <dir> [--force] [--recovery]
@@ -318,7 +318,7 @@ bdxl catalog mirror status | sync | restore [--recovery]
 | `history` | older versions, newest first, each checked |
 | `rollback <id>` | go back to a version (current one saved first); `--force` for a damaged version |
 | `export <dir>` | write plain JSON into an empty folder (**not encrypted**) |
-| `import <dir>` | replace the catalog with plain JSON from such a folder |
+| `import <dir>` | replace the catalog with plain JSON from such a folder, then wipe the folder (every file in it overwritten with random bytes and deleted, the folder removed) once the import is saved; `--keep` leaves it. A folder with subfolders or links, or one that looks like a catalog, is refused before anything is imported. Exit 2: imported, but a file could not be wiped (open in another program) |
 | `backup create <dir>` | encrypted catalog + `bdxl.key` + Reed-Solomon repair data into `<dir>\catalog-<date>` |
 | `backup verify <dir>` | check (and `--repair`) a backup, no password needed |
 | `backup restore <dir>` | into an empty folder: with the backup's key (password or `--recovery`); into the same catalog: `--force`, current password stays; another catalog: refused |
