@@ -1,7 +1,24 @@
 # Changelog
 
-What changed in each version of bdxl. Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions)
-for what raises which part. `bdxl version` shows the version of an exe.
+What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entries for older versions keep the old
+name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
+`discloak version` shows the version of an exe.
+
+## 0.8.0 - 2026-11-04
+
+**bdxl is now Discloak.** The command and the exe are `discloak` (`discloak.exe`); everything else follows:
+
+- Environment variables: `DISCLOAK_PASSWORD`, `DISCLOAK_NEW_PASSWORD`, `DISCLOAK_RECOVERY_KEY`, `DISCLOAK_AGENT`,
+  `DISCLOAK_AGENT_PIPE`. The old `BDXL_*` names are not read any more.
+- The agent lives in `%LOCALAPPDATA%\discloak`; an agent started by bdxl is not found by Discloak (`bdxl lock`, then
+  `discloak unlock`). `%LOCALAPPDATA%\bdxl` can be deleted.
+- New discs are labelled `DISC-0001`, ... by default (a catalog that set its own prefix keeps it).
+- New files get new format names: `discloak.key` (key file, format `discloak-key-2`), `discloak-pack-1` (`disc.json`),
+  `DCLKPAK1` (packs) and `DCLKENC2` (catalog files, manifests). **Everything bdxl wrote is read as it is**, under its
+  old names (`bdxl.key`, `bdxl-key-2`, `bdxl-pack-1`, `BDXLPAK1`, `BDXLENC2`) - burned discs forever. A catalog's
+  `bdxl.key` becomes `discloak.key` on its next save; a disc with a session appended now holds both key files.
+- Once Discloak has saved a catalog, or staged a disc, bdxl (0.7.1 and before) cannot read it any more.
+- Before 1.0.0 a breaking change like this one raises the minor version (CONTRIBUTING.md).
 
 ## 0.7.1 - 2026-11-03
 

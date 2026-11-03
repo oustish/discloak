@@ -4,7 +4,7 @@
 
 ## Catalog
 
-The catalog is the folder (`--catalog`, default `.\catalog`) where bdxl keeps everything it knows:
+The catalog is the folder (`--catalog`, default `.\catalog`) where discloak keeps everything it knows:
 
 - every file of every scanned location (path, size, time, SHA-256 hash);
 - every disc and which file copies it holds;
@@ -22,7 +22,7 @@ default), so any change can be undone with `catalog rollback`.
 
 A *location* is a folder you scanned. Its *alias* is the name it has in the catalog (`scan --name`, default
 the folder name), e.g. `Photos`. A file is identified as `alias/relative path`, e.g. `Photos/2024/IMG_0001.jpg`;
-restored files go to `<destination>\<alias>\<path>`. `bdxl alias` lists them; `alias rename` renames one.
+restored files go to `<destination>\<alias>\<path>`. `discloak alias` lists them; `alias rename` renames one.
 
 ## Pending files and deduplication
 
@@ -34,11 +34,11 @@ lost or destroyed) hold a complete copy of its content than its location wants: 
 - a file whose content is already on a disc is not stored again, even under another name;
 - a changed file is pending again; the older version stays recorded on its disc.
 
-`bdxl status` and `bdxl plan` show what is pending.
+`discloak status` and `discloak plan` show what is pending.
 
 ## Discs, labels and states
 
-Each staged disc gets a label `<prefix><counter>`, e.g. `BDXL-0007`. The counter only ever goes up. States:
+Each staged disc gets a label `<prefix><counter>`, e.g. `DISC-0007`. The counter only ever goes up. States:
 
 | State | Meaning |
 |---|---|
@@ -51,7 +51,7 @@ A burned disc that is not finalized can take more data in further *sessions* ([A
 
 ## Blank discs and reserve
 
-`bdxl blanks` is your stock of blank discs: size, reserve, price. Staging uses one up; `discard` gives it back.
+`discloak blanks` is your stock of blank discs: size, reserve, price. Staging uses one up; `discard` gives it back.
 
 <a id="disc-space"></a>**Space on a disc**: the files are laid end to end in one stream of data, cut into **packs** of
 64 MiB ([Files and Formats](Files-and-Formats.md#a-staged--burned-disc)), so a file takes exactly its stored size
@@ -62,26 +62,26 @@ is filled up with zeros) and one more 64 MiB for the manifest (padded the same w
 count all of it.
 
 <a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's own fixed overhead
-(volume descriptors, the metadata partition), the disc's folders and its own small files (`disc.json`, `bdxl.key`,
+(volume descriptors, the metadata partition), the disc's folders and its own small files (`disc.json`, `discloak.key`,
 `README.txt`; the manifest is counted with the files) and, with `--with-catalog`, the catalog backup: the catalog's
 `.enc` files (compressed, roughly 100-150 bytes per catalogued file) plus 25% repair data. If those come out larger
-than the reserve, `stage` warns that the folder will not fit. Raise it with `bdxl blanks reserve 500MB`.
+than the reserve, `stage` warns that the folder will not fit. Raise it with `discloak blanks reserve 500MB`.
 
 ## Encryption, the password and the master key
 
 - A random **master key** encrypts the catalog and everything on discs (AES-256-GCM). On a disc, the files are in
   packs of equal size (`data/000/000001.pack` …), so nothing shows their names, sizes or number.
-- The **password** only unlocks the master key, which is stored wrapped in `bdxl.key` (Argon2id key derivation).
-  Changing the password rewrites `bdxl.key` and nothing else.
+- The **password** only unlocks the master key, which is stored wrapped in `discloak.key` (Argon2id key derivation).
+  Changing the password rewrites `discloak.key` and nothing else.
 - The optional **recovery key** is a second way to unlock it, for a lost password.
-- Every encrypted disc carries the `bdxl.key` of its day. A disc can be read with the catalog, or on its own
-  with the password it was staged with. Its `README.txt` describes the formats so it could even be read without bdxl.
+- Every encrypted disc carries the `discloak.key` of its day. A disc can be read with the catalog, or on its own
+  with the password it was staged with. Its `README.txt` describes the formats so it could even be read without discloak.
 - **Key rotation** starts a new master key for everything new and keeps the old ones in a *key ring*, so older discs
   stay readable ([Security](Guide-Security.md#rotating-the-master-key)).
 
 ## The agent
 
-`bdxl unlock` hands the master key to a small background program, the *agent*, so commands do not ask for the
+`discloak unlock` hands the master key to a small background program, the *agent*, so commands do not ask for the
 password every time. It keeps keys in memory only, for your Windows user only, and locks them after a while of
 not being used, at a maximum time, on Win+L and on sleep.
 

@@ -1,6 +1,6 @@
-# bdxl
+# discloak
 
-bdxl plans, stages and keeps track of backups on BDXL discs (100/128 GB Blu-ray, but any optical or other
+discloak plans, stages and keeps track of backups on BDXL discs (100/128 GB Blu-ray, but any optical or other
 write-once medium works). It indexes your folders, works out which files still need a copy, fills discs as
 full as possible, writes ready-to-burn disc folders, and remembers which file is on which disc, so you can find
 and restore anything years later.
@@ -26,7 +26,7 @@ the catalog, with nothing but the password.
 - [Several Copies](Guide-Copies.md): two or more copies of important locations, on different discs
 - [Catalog Mirror](Guide-Mirror.md): a second, always current copy of the catalog on another drive
 - [Maintenance](Guide-Maintenance.md): rescans, moved files, ignore rules, aliases, purge, settings, costs
-- [Reading a Disc Back](Guide-Existing-Discs.md): record a bdxl disc the catalog does not know (rebuilding a lost catalog, after a rollback)
+- [Reading a Disc Back](Guide-Existing-Discs.md): record a discloak disc the catalog does not know (rebuilding a lost catalog, after a rollback)
 - [Disaster Recovery](Guide-Disaster-Recovery.md): lost or damaged catalog, lost or damaged disc, forgotten password
 
 **Reference**
@@ -34,20 +34,20 @@ the catalog, with nothing but the password.
 - [Files and Formats](Files-and-Formats.md): what is in the catalog folder and on a disc
 - [Troubleshooting and FAQ](Troubleshooting.md): exit codes, common messages, questions
 
-Design background: [`bdxl/ENCRYPTION.md`](../bdxl/ENCRYPTION.md). Developer notes: [`bdxl/HANDOFF.md`](../bdxl/HANDOFF.md).
+Design background: [`discloak/ENCRYPTION.md`](../discloak/ENCRYPTION.md). Developer notes: [`discloak/HANDOFF.md`](../discloak/HANDOFF.md).
 License: [PolyForm Shield 1.0.0](../LICENSE.md) - free to use for any purpose, not to build a competing product on
 ([what that means](../LICENSING.md)).
 
 ## In one minute
 
 ```
-bdxl init --recovery-key                            # once: a new encrypted catalog in .\catalog
-bdxl blanks add 10 --size 96882130944 --reserve 300MB --cost 45
-bdxl scan D:\Photos --name Photos                   # index (hash) a folder
-bdxl plan                                           # what would go where (changes nothing)
-bdxl stage E:\Staging --with-catalog                # write the next disc folder: E:\Staging\BDXL-0001
-   ... burn E:\Staging\BDXL-0001 with your burning program (UDF 2.50) ...
-bdxl verify BDXL-0001 G:\                           # read the burned disc back and compare (--deep: decrypt too)
-bdxl burned BDXL-0001                               # record it as burned
-bdxl restore D:\Recovered "holiday" --mount G:\     # later: get files back
+discloak init --recovery-key                            # once: a new encrypted catalog in .\catalog
+discloak blanks add 10 --size 96882130944 --reserve 300MB --cost 45
+discloak scan D:\Photos --name Photos                   # index (hash) a folder
+discloak plan                                           # what would go where (changes nothing)
+discloak stage E:\Staging --with-catalog                # write the next disc folder: E:\Staging\DISC-0001
+   ... burn E:\Staging\DISC-0001 with your burning program (UDF 2.50) ...
+discloak verify DISC-0001 G:\                           # read the burned disc back and compare (--deep: decrypt too)
+discloak burned DISC-0001                               # record it as burned
+discloak restore D:\Recovered "holiday" --mount G:\     # later: get files back
 ```

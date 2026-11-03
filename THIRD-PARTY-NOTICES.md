@@ -1,7 +1,7 @@
 # Third-party notices
 
-`bdxl.exe` contains the components below, each under its own license. Their notices go with every copy of bdxl.
-(The .NET runtime that bdxl runs on is installed separately and is not part of `bdxl.exe`.)
+`discloak.exe` contains the components below, each under its own license. Their notices go with every copy of discloak.
+(The .NET runtime that discloak runs on is installed separately and is not part of `discloak.exe`.)
 
 | Component | Version | License |
 |---|---|---|

@@ -1,0 +1,11 @@
+{
+  "label": "BDXL-0001",
+  "createdUtc": "2026-11-03T23:29:40.0243122Z",
+  "format": "bdxl-pack-1",
+  "sessions": 1,
+  "catalogId": "C8418648C4F961B4FB1C49B580014DF1",
+  "keyId": "A46E7285B8C71E20",
+  "packSize": 65536,
+  "chunkSize": 8192,
+  "createdBy": "bdxl 0.7.1+eab32e3-dirty.20261103T2329Z"
+}

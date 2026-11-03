@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/Discloak.Tests/Discloak.Tests.csproj" />
+  </Folder>
+  <Project Path="discloak/Discloak.csproj" />
+</Solution>
