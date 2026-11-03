@@ -16,6 +16,7 @@ public sealed class RestageCommand : ICommand
         folder with one manifest. Afterwards the disc is 'staged' until you run 'burned'.
         Without --allow-partial nothing is staged if any file cannot be rebuilt; with it, such files are left out
         (their place in the pack stays unused) and no longer count as being on the disc.
+        Every pack is printed when it is written, with the progress, speed and time left.
         Ctrl+C stops after the pack being written; the catalog stays unchanged and what was rebuilt is kept as
         <destDir>/<label>.partial, to be reused with --from on the next run.
         """;
@@ -46,6 +47,13 @@ public sealed class RestageCommand : ICommand
         var reuse = fromDirs.Select(d => (Dir: d, Progress: ReadProgress(d, disc.Label))).ToList();
 
         Directory.CreateDirectory(dir);
+        Console.WriteLine($"Restaging {disc.Label} into {dir}: {packs:N0} pack(s), {SizeText.Bytes((long)packs * DiscFormat.PackFileSize)} bytes");
+        var meter = new ProgressMeter((long)packs * DiscFormat.PackFileSize);
+        void PackDone(int p, string what)   // "[BDXL-0001] pack 2 of 3: rebuilt      66.7%   12.3 MB/s  ~5s left"
+        {
+            meter.Done += DiscFormat.PackFileSize;
+            meter.WriteLine($"[{disc.Label}] pack {p} of {packs}: {what,-10}  {meter.Rate()}");
+        }
         var hashes = new string[packs];
         var sources = new Dictionary<BackupRef, PieceSource?>();   // pieces being rebuilt; null = no source
         var failed = new HashSet<BackupRef>();                     // pieces that could not be rebuilt
@@ -66,7 +74,7 @@ public sealed class RestageCommand : ICommand
                     hashes[p - 1] = sha!;
                     progress.Packs[p] = sha!;
                     copied++;
-                    Console.WriteLine($"[{disc.Label}] pack {p} of {packs}: taken over");
+                    PackDone(p, "taken over");
                 }
                 else
                 {
@@ -87,7 +95,7 @@ public sealed class RestageCommand : ICommand
                     }
                     rebuiltIn[p] = here.Select(e => e.Copy).ToList();   // a failed piece keeps the pack from ever being taken over
                     rebuilt++;
-                    Console.WriteLine($"[{disc.Label}] pack {p} of {packs}: rebuilt");
+                    PackDone(p, "rebuilt");
                 }
 
                 // pieces that end in this pack are complete: check them against their hash
@@ -154,7 +162,7 @@ public sealed class RestageCommand : ICommand
         foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
 
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, x.File)).ToList();
-        DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session: 1);
+        disc.Manifests = [DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session: 1)];
         disc.OccupiedBytes = Math.Max(packs * DiscFormat.PackOnDisc + DiscFiles.ManifestSpace(manifest) + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
         c.Arc.LinkDuplicates();
         c.Cat.Save();

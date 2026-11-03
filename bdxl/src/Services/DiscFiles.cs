@@ -17,14 +17,15 @@ public static class DiscFiles
     public const string ManifestName = "manifest.enc";
     public const string PackListName = "packs.sha256";
     public const string ReadmeName = "README.txt";
+    public const string CatalogBackupName = "_catalog";
     static readonly Regex SessionManifest = new(@"^manifest\.s(\d+)\.enc$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     static readonly Regex PackListLine = new(@"^([0-9a-fA-F]{64}) [ *]data/\d{3}/(\d{6})\.pack$", RegexOptions.CultureInvariant);
 
     /// <summary>The manifest name of a session: manifest.enc for the first, manifest.sN.enc for an appended one.</summary>
     public static string ManifestFor(int session) => session <= 1 ? ManifestName : $"manifest.s{session}.enc";
 
-    /// <summary>A disc's manifests, in session order (full paths).</summary>
-    public static List<string> Manifests(string mount)
+    /// <summary>A disc's manifests, in session order: session number and full path.</summary>
+    public static List<(int Session, string Path)> Manifests(string mount)
     {
         var list = new List<(int Session, string Path)>();
         if (!Directory.Exists(mount)) return [];
@@ -34,20 +35,23 @@ public static class DiscFiles
             if (name.Equals(ManifestName, StringComparison.OrdinalIgnoreCase)) list.Add((1, path));
             else if (SessionManifest.Match(name) is { Success: true } m) list.Add((int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), path));
         }
-        return list.OrderBy(x => x.Session).Select(x => x.Path).ToList();
+        return list.OrderBy(x => x.Session).ToList();
     }
 
     /// <summary>
     /// Writes a staged session's metadata into its folder: its manifest (lines = its own copies), packs.sha256 (every
-    /// pack of the disc, so the last session's copy is complete), disc.json, bdxl.key and README.txt.
+    /// pack of the disc, so the last session's copy is complete), disc.json, bdxl.key and README.txt. Returns the
+    /// SHA-256 of the manifest file (for the catalog: 'verify' checks it without the password).
     /// </summary>
-    public static void Write(string dir, DiscRecord disc, IEnumerable<ManifestLine> lines, MasterKey key, string catalogDir, int session)
+    public static string Write(string dir, DiscRecord disc, IEnumerable<ManifestLine> lines, MasterKey key, string catalogDir, int session)
     {
-        File.WriteAllBytes(Path.Combine(dir, ManifestFor(session)), SealManifest(lines, key));
+        byte[] manifest = SealManifest(lines, key);
+        File.WriteAllBytes(Path.Combine(dir, ManifestFor(session)), manifest);
         File.WriteAllLines(Path.Combine(dir, PackListName), disc.Packs.Select((sha, i) => $"{sha.ToLowerInvariant()} *{DiscFormat.PackPath(i + 1)}"));
         File.Copy(KeyFile.PathIn(catalogDir), KeyFile.PathIn(dir), overwrite: true);
         File.WriteAllText(Path.Combine(dir, ReadmeName), Readme);
         JsonStore.WriteObject(Path.Combine(dir, InfoName), DiscInfo.For(disc, key.CatalogId));
+        return Convert.ToHexString(SHA256.HashData(manifest));
     }
 
     /// <summary>The manifest's JSON lines padded with empty lines to whole packs of data, encrypted.</summary>
@@ -65,28 +69,47 @@ public static class DiscFiles
 
     /// <summary>
     /// Reads a disc's manifests (every session's, in session order) with the catalog's keys. null = the disc has none.
-    /// A disc encrypted with another catalog's key is explained, with the way to read it.
+    /// A disc encrypted with another catalog's key is explained, with the way to read it. hashes (if given) gets the
+    /// SHA-256 of each session's manifest file.
     /// </summary>
-    public static List<ManifestLine>? ReadManifest(string mount, KeyRing keys)
+    public static List<ManifestLine>? ReadManifest(string mount, KeyRing keys, Dictionary<int, string>? hashes = null)
     {
         var manifests = Manifests(mount);
         if (manifests.Count == 0) return null;
-        var lines = new List<ManifestLine>();
-        var at = new Dictionary<long, int>();   // position in the stream -> index in lines (a later line replaces an earlier one)
-        foreach (string path in manifests)
+        var sessions = new List<List<ManifestLine>>();
+        foreach (var (session, path) in manifests)
         {
-            string name = Path.GetFileName(path);
-            byte[] plain;
-            try { plain = FileCrypto.Open(File.ReadAllBytes(path), keys, KeyPurpose.Manifest); }
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(path);
+                if (hashes != null) hashes[session] = Convert.ToHexString(SHA256.HashData(bytes));
+                sessions.Add(OpenManifest(bytes, keys, Path.GetFileName(path)));
+            }
             catch (InvalidDataException ex)
             {
-                throw new UserException($"Cannot read {name}: {ex.Message}." + (ex.Message.Contains("another key") ? " " + OtherCatalogHint(mount) : ""));
+                throw new UserException($"Cannot read {Path.GetFileName(path)}: {ex.Message}." + (ex.Message.Contains("another key") ? " " + OtherCatalogHint(mount) : ""));
             }
-            foreach (var line in JsonStore.ParseLines<ManifestLine>(plain, name))
-            {
-                if (at.TryGetValue(line.At, out int i)) lines[i] = line;
-                else { at[line.At] = lines.Count; lines.Add(line); }
-            }
+        }
+        return Merge(sessions);
+    }
+
+    /// <summary>The lines of one manifest file (InvalidDataException: damaged, or another key).</summary>
+    public static List<ManifestLine> OpenManifest(byte[] bytes, KeyRing keys, string name)
+    {
+        byte[] plain = FileCrypto.Open(bytes, keys, KeyPurpose.Manifest);
+        try { return JsonStore.ParseLines<ManifestLine>(plain, name); }
+        catch (JsonException ex) { throw new InvalidDataException($"its lines cannot be read ({ex.Message})"); }
+    }
+
+    /// <summary>The sessions' manifests as one list: a later line at the same place in the stream replaces an earlier one.</summary>
+    public static List<ManifestLine> Merge(IEnumerable<List<ManifestLine>> sessions)
+    {
+        var lines = new List<ManifestLine>();
+        var at = new Dictionary<long, int>();   // position in the stream -> index in lines
+        foreach (var line in sessions.SelectMany(s => s))
+        {
+            if (at.TryGetValue(line.At, out int i)) lines[i] = line;
+            else { at[line.At] = lines.Count; lines.Add(line); }
         }
         return lines;
     }
@@ -108,11 +131,11 @@ public static class DiscFiles
         "This disc belongs to another catalog. Use that catalog, or make one from the disc's own key: " +
         $"bdxl init --key-from \"{mount}\" --catalog <new folder>   (asks for the password the disc was staged with)";
 
-    /// <summary>disc.json of a mounted disc, or null.</summary>
+    /// <summary>disc.json of a mounted disc, or null (none, or it cannot be read).</summary>
     public static DiscInfo? ReadInfo(string mount)
     {
         try { return JsonStore.ReadObject<DiscInfo>(Path.Combine(mount, InfoName)); }
-        catch (JsonException) { return null; }
+        catch (Exception ex) when (ex is JsonException or IOException) { return null; }
     }
 
     /// <summary>The drive that holds path (longest matching root), or null.</summary>

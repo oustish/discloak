@@ -50,7 +50,8 @@ public sealed class ScanDiscCommand : ICommand
         DateTime burnedAt = c.Opt.GetDate("date") ?? existing?.BurnedUtc ?? info.CreatedUtc;
 
         // 2. what is on it: the manifests of every session, and the packs
-        var lines = DiscFiles.ReadManifest(mount, c.Keys) ?? throw new UserException($"{label} has no manifest.");
+        var manifestHashes = new Dictionary<int, string>();
+        var lines = DiscFiles.ReadManifest(mount, c.Keys, manifestHashes) ?? throw new UserException($"{label} has no manifest.");
         var packList = DiscFiles.ReadPackList(mount);
         int packs = Math.Max(packList.Count == 0 ? 0 : packList.Keys.Max(), lines.Count == 0 ? 0 : lines.Max(l => DiscFormat.PackOf(l.At + Math.Max(0, l.Size - 1))));
         var problems = new List<string>();
@@ -138,6 +139,7 @@ public sealed class ScanDiscCommand : ICommand
         disc.Sessions = Math.Max(1, info.Sessions);
         disc.Packs = Enumerable.Range(1, packs).Select(p => packList.GetValueOrDefault(p, "")).ToList();
         if (disc.Packs.Any(h => h.Length == 0)) disc.Packs = [];   // incomplete: 'verify --deep' still checks the disc
+        disc.Manifests = Enumerable.Range(1, disc.Sessions).Select(s => manifestHashes.GetValueOrDefault(s, "")).ToList();
         var onDisc = c.Arc.CopiesOn(label);
         disc.FileCount = onDisc.Count;
         disc.UsedBytes = onDisc.Sum(x => x.Copy.StoredSize);

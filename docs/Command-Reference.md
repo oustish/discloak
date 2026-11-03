@@ -132,6 +132,9 @@ Folder: `<destDir>\<label>\` (`<label>.s2` … for sessions) holding the packs `
 session's packs continue the disc's numbering), `manifest.enc` (a session: `manifest.sN.enc`, only its own files),
 `packs.sha256`, `disc.json`, `bdxl.key`, `README.txt`, optional `_catalog\`. See [Files and Formats](Files-and-Formats.md#a-staged--burned-disc).
 Ctrl+C finishes the disc with what was copied. A file that changed since `scan` is left out; its space in the pack stays unused.
+Every file is printed as soon as it is stored, with the disc's progress, speed and time left
+(`  [3/302   12.4%    85.3 MB/s  ~3h 12m left] Video/a.mkv (4,212,334,123 bytes)`); while a large file is copied, a
+status line shows how far it is.
 
 ### burned
 Mark a staged disc, or its staged session, as burned.
@@ -147,6 +150,41 @@ bdxl verify <label> <mountedDiscPath> [--deep]
 Compares every pack's SHA-256 with the catalog (no password needed for that). `--deep` also decrypts every pack and
 checks every file against its hash, in the same single read. A damaged pack is named with the files that have data in
 it. Exit code 3: damaged or missing packs, or files that do not come back intact.
+
+Before the packs, the disc's other files are checked, a line each:
+
+| File | Checked |
+|---|---|
+| `disc.json` | readable, this catalog's, the disc's key and number of sessions |
+| `packs.sha256` | lists the same pack hashes as the catalog |
+| `manifest.enc`, `manifest.sN.enc` | SHA-256 as the catalog has it; `--deep` also decrypts each one and compares the files it lists with the catalog |
+| `bdxl.key` | readable, this catalog's, with a password envelope |
+| `README.txt` | readable |
+| `_catalog\` | every file against its repair data (as `catalog backup verify` does; a damaged spot that cannot be read counts as damaged and is repairable like any other) |
+
+A disc staged before bdxl kept the manifests' hashes (before 2026-11-03) has none in the catalog: a plain verify then
+only reads its manifests; its first `--deep` verify that finds them intact records them.
+
+It starts by saying which disc it reads, from where, how many packs, bytes and files, and what it checks. While it
+reads, a status line shows the pack, the progress by bytes, the speed, the time left and the file whose data is
+being read (rewritten in place; not written when the output goes to a file). With `--deep` every file is printed as
+soon as it is checked (`OK` or `DAMAGED: why`). A damaged pack is printed as soon as it is read, and listed again
+at the end. Example (`--deep`; the last line is the status line):
+```
+Verifying BDXL-0001 in G:\: 1,485 pack(s), 99,658,266,840 bytes, 302 file(s)
+  --deep: every pack is hashed and decrypted, and every file is checked against its hash
+The disc's files:
+  OK       disc.json
+  OK       packs.sha256 (1,485 packs, as in the catalog)
+  OK       manifest.enc (decrypts: 302 file(s))
+  OK       the manifests list the 302 file(s) the catalog has on this disc
+  OK       bdxl.key (this catalog's, with a password envelope)
+  OK       README.txt
+  OK       _catalog (7 file(s) intact, checked against their repair data)
+
+  [  1/302    6.2%    35.1 MB/s  ~44m 10s left] Video/2024-08 Holiday.mkv (6,182,453,120 bytes) OK
+  [pack   312/1,485   21.0%    35.2 MB/s  ~37m 02s left] Video/2019 Wedding.mkv
+```
 
 ### discard
 Forget a staged disc (or a staged session) that was never burned. Its files are pending again; its blank disc goes
@@ -228,6 +266,8 @@ bdxl restage <label> <destDir> [--from dirA;dirB] [--allow-partial]
 
 Same layout as before: a pack whose hash matches is copied as it is; any other is rebuilt from the source files and
 encrypted again. The disc becomes *staged* until `burned`. Ctrl+C keeps `<label>.partial` for `--from`.
+Every pack is printed when it is written, with the progress, speed and time left
+(`[BDXL-0001] pack 2 of 1,485: rebuilt       0.1%    35.2 MB/s  ~46m 50s left`).
 
 ### restore
 Copy files back from mounted discs.
@@ -244,6 +284,10 @@ bdxl restore <destDir> <text|hashPrefix|*> --mount F:\;G:\ [--disc label] [--sou
 
 Only the parts of the packs a file needs are read. A file in a damaged spot is taken from another mounted disc with a
 copy, if there is one; the rest is restored anyway. Exit code 2: more discs needed (listed); 3: failures.
+It says how many files and bytes it reads from which mounted discs; every file is printed when it is done, with the
+progress, speed and time left (`  [3/302   12.4%    35.1 MB/s  ~41m left] restored Video/a.mkv`), and while a large
+file is read a status line shows how far it is. Files that already exist (EXISTS) do not count: progress and time
+left are for what is still to be read.
 
 ---
 

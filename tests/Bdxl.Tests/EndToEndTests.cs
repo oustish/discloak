@@ -2,8 +2,10 @@ namespace Bdxl.Tests;
 
 /// <summary>
 /// Runs real commands through Program.Main against a temporary catalog, source folder and "discs" (staged folders
-/// used as if they were mounted discs).
+/// used as if they were mounted discs). Non-parallel: some tests read what a command prints, and Console.Out is
+/// the whole process's.
 /// </summary>
+[Collection(nameof(InterruptTests))]
 public class EndToEndTests : IDisposable
 {
     const string PasswordVar = "BDXL_TEST_PASSWORD";
@@ -16,6 +18,16 @@ public class EndToEndTests : IDisposable
     {
         TestKeys.Init(tmp.File("cat"));
         return Program.Main([.. args, "--catalog", tmp.File("cat"), "--password-env", PasswordVar, "--yes"]);
+    }
+
+    /// <summary>A command's exit code and what it printed.</summary>
+    (int Code, string Text) Run(params string[] args)
+    {
+        var output = new StringWriter();
+        var stdout = Console.Out;
+        Console.SetOut(output);
+        try { return (Bdxl(args), output.ToString()); }
+        finally { Console.SetOut(stdout); }
     }
 
     string Disc(string label) => tmp.File(Path.Combine("stg", label));
@@ -190,6 +202,142 @@ public class EndToEndTests : IDisposable
         Assert.False(File.Exists(tmp.File("out/S/a.bin")));                 // the damaged chunk is a.bin's
         Assert.Equal(b, File.ReadAllBytes(tmp.File("out/S/b.bin")));        // the rest is restored
         Assert.Equal(c, File.ReadAllBytes(tmp.File("out/S/c.bin")));
+    }
+
+    [Fact]
+    public void Verify_says_what_it_checks_names_every_file_with_deep_and_reports_damage_as_it_is_read()
+    {
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);   // packs 1-2
+        tmp.RandomFile("src/b.bin", 30_000, seed: 2);
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));
+        string disc = Disc("BDXL-0001");
+        string Verify(params string[] more) => Run(["verify", "BDXL-0001", disc, .. more]).Text;
+
+        string plain = Verify();
+        Assert.Contains($"Verifying BDXL-0001 in {disc}: ", plain);
+        Assert.Contains("nothing is decrypted", plain);
+        Assert.DoesNotContain("S/a.bin", plain);                      // the files only show in the status line
+        string deep = Verify("--deep");
+        Assert.Contains("--deep: every pack is hashed and decrypted", deep);
+        Assert.Matches(@"\[1/2 .*\] S/a\.bin \(100,000 bytes\) OK", deep);
+        Assert.Matches(@"\[2/2 .*\] S/b\.bin \(30,000 bytes\) OK", deep);
+
+        string pack1 = Path.Combine(disc, DiscFormat.PackPath(1));
+        byte[] bytes = File.ReadAllBytes(pack1);
+        bytes[DiscFormat.HeaderSize + 500] ^= 1;
+        File.WriteAllBytes(pack1, bytes);
+        deep = Verify("--deep");
+        Assert.True(deep.IndexOf("DAMAGED  pack 1 differs from the catalog", StringComparison.Ordinal) is >= 0 and var at &&
+                    at < deep.IndexOf("S/a.bin (", StringComparison.Ordinal));   // as soon as the pack is read
+        Assert.Contains("S/a.bin (100,000 bytes) DAMAGED: pack 1, chunk 0 is damaged", deep);
+        Assert.Contains("Damaged pack(s): 1", deep);
+        Assert.Contains("DAMAGED  pack 1 differs from the catalog", Verify());
+    }
+
+    [Fact]
+    public void Verify_checks_the_discs_other_files_and_its_catalog_backup()
+    {
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);
+        tmp.RandomFile("src/b.bin", 30_000, seed: 2);
+        Bdxl("blanks", "add", "1", "--size", "2MB", "--reserve", "600KB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"), "--with-catalog");
+        string disc = Disc("BDXL-0001");
+
+        var (code, text) = Run("verify", "BDXL-0001", disc);
+        Assert.Equal(0, code);
+        foreach (string ok in new[] { "OK       disc.json", "OK       packs.sha256 (2 packs, as in the catalog)", "OK       manifest.enc (SHA-256 as in the catalog)",
+                                      "OK       bdxl.key (this catalog's", "OK       README.txt", "OK       _catalog (" })
+            Assert.Contains(ok, text);
+        Assert.Contains("the disc's other files OK", text);
+        Assert.Contains("OK       the manifests list the 2 file(s) the catalog has on this disc", Run("verify", "BDXL-0001", disc, "--deep").Text);
+
+        // each damage is found (by a plain verify: no decrypting), then the file is put back as it was
+        void Damaged(string file, Action<string> damage, string expected)
+        {
+            string path = Path.Combine(disc, file);
+            byte[] before = File.ReadAllBytes(path);
+            damage(path);
+            var (code, text) = Run("verify", "BDXL-0001", disc);
+            Assert.Equal(3, code);
+            Assert.Contains(expected, text);
+            Assert.Contains("1 of the disc's other files with a problem", text);
+            File.WriteAllBytes(path, before);
+        }
+        void Flip(string path)
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            bytes[bytes.Length / 2] ^= 1;
+            File.WriteAllBytes(path, bytes);
+        }
+        Damaged(DiscFiles.ManifestName, Flip, "PROBLEM  manifest.enc: differs from the catalog");
+        string pack2 = TestKeys.Load(tmp.File("cat")).Discs[0].Packs[1].ToLowerInvariant();
+        Damaged(DiscFiles.PackListName, p => File.WriteAllText(p, File.ReadAllText(p).Replace(pack2, new string('0', 64))),
+                "PROBLEM  packs.sha256: 1 of the 2 pack hashes are missing or differ from the catalog");
+        Damaged(DiscFiles.InfoName, p => File.WriteAllText(p, "{"), "PROBLEM  disc.json: cannot be read");
+        Damaged(KeyFile.FileName, File.Delete, "PROBLEM  bdxl.key: is missing");
+        Damaged(DiscFiles.ReadmeName, File.Delete, "PROBLEM  README.txt: is missing");
+        Damaged("_catalog/bdxl.key", File.Delete, "PROBLEM  _catalog: 1 file(s) damaged, but the repair data can rebuild them");
+        Damaged("_catalog/catalog.hash.json.par", File.Delete, "PROBLEM  _catalog: 1 file(s) damaged, but the repair data can rebuild them");
+        Assert.Equal(0, Bdxl("verify", "BDXL-0001", disc, "--deep"));   // all put back
+    }
+
+    [Fact]
+    public void A_disc_without_manifest_hashes_gets_them_from_its_first_deep_verify_which_also_compares_the_manifests_with_the_catalog()
+    {
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);
+        tmp.RandomFile("src/b.bin", 30_000, seed: 2);
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));
+        string disc = Disc("BDXL-0001");
+        var cat = TestKeys.Load(tmp.File("cat"));
+        Assert.Single(cat.Discs[0].Manifests);
+        cat.Discs[0].Manifests.Clear();   // as on a disc staged before the hashes were kept
+        cat.Save();
+
+        Assert.Contains("OK       manifest.enc (readable; the catalog has no hash of it: --deep checks it)", Run("verify", "BDXL-0001", disc).Text);
+        var (code, text) = Run("verify", "BDXL-0001", disc, "--deep");
+        Assert.Equal(0, code);
+        Assert.Contains("OK       manifest.enc (decrypts: 2 file(s))", text);
+        Assert.Contains("their SHA-256 is now in the catalog", text);
+        Assert.Contains("OK       manifest.enc (SHA-256 as in the catalog)", Run("verify", "BDXL-0001", disc).Text);
+
+        cat = TestKeys.Load(tmp.File("cat"));
+        cat.Files.Single(f => f.RelPath == "b.bin").Backups.Clear();   // the catalog no longer has b on the disc
+        cat.Save();
+        (code, text) = Run("verify", "BDXL-0001", disc, "--deep");
+        Assert.Equal(3, code);
+        Assert.Contains("PROBLEM  the manifests: list 1 file(s) the catalog does not have on this disc", text);
+    }
+
+    [Fact]
+    public void Stage_restore_and_restage_show_their_progress()
+    {
+        tmp.RandomFile("src/a.bin", 100_000, seed: 1);
+        tmp.RandomFile("src/b.bin", 30_000, seed: 2);
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+
+        string stage = Run("stage", tmp.File("stg")).Text;
+        Assert.Contains($"BDXL-0001: 2 file(s), 130,000 bytes to store in {Disc("BDXL-0001")}", stage);
+        Assert.Matches(@"\[1/2 +\d+\.\d% .*\] S/a\.bin \(100,000 bytes\)", stage);
+        Assert.Matches(@"\[2/2 +100\.0% .*\] S/b\.bin \(30,000 bytes\)", stage);
+        Bdxl("burned", "BDXL-0001");
+
+        string restore = Run("restore", tmp.File("out"), "*", "--mount", Disc("BDXL-0001")).Text;
+        Assert.Contains($"Restoring 2 file(s) into {tmp.File("out")}: 130,000 bytes to read from BDXL-0001 ({Disc("BDXL-0001")})", restore);
+        Assert.Matches(@"\[1/2 +\d+\.\d% .*\] restored S/a\.bin", restore);
+        Assert.Matches(@"\[2/2 +100\.0% .*\] restored S/b\.bin", restore);
+        Assert.Matches(@"\[1/2 +0\.0% .*\] EXISTS   S/a\.bin", Run("restore", tmp.File("out"), "*", "--mount", Disc("BDXL-0001")).Text);
+
+        Bdxl("lost", "BDXL-0001");
+        string restage = Run("restage", "BDXL-0001", tmp.File("re")).Text;
+        Assert.Contains($"Restaging BDXL-0001 into {Path.Combine(tmp.File("re"), "BDXL-0001")}: 2 pack(s)", restage);
+        Assert.Matches(@"pack 1 of 2: rebuilt +50\.0% ", restage);
+        Assert.Matches(@"pack 2 of 2: rebuilt +100\.0% ", restage);
     }
 
     [Fact]

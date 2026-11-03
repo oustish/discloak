@@ -316,7 +316,7 @@ public sealed class CatalogCommand : ICommand
             "Restore:  bdxl catalog backup restore <this folder> --catalog <catalog folder> [--force] [--recovery]\n");
     }
 
-    static string[] RepairNames(string dir)
+    internal static string[] RepairNames(string dir)
     {
         const string suffix = ".repair.json";
         if (!Directory.Exists(dir)) throw new UserException($"Not a folder: {dir}");
@@ -326,14 +326,40 @@ public sealed class CatalogCommand : ICommand
         return names;
     }
 
-    static (RsStatus Status, byte[] Data, byte[]? Parity, int BadData, int BadParity) Load(string dir, string name)
+    internal static (RsStatus Status, byte[] Data, byte[]? Parity, int BadData, int BadParity) Load(string dir, string name)
     {
-        var meta = JsonStore.ReadObject<RepairMeta>(Path.Combine(dir, name + ".repair.json"))
-                   ?? throw new UserException($"Unreadable repair file for {name}.");
-        string dataPath = Path.Combine(dir, name), parPath = Path.Combine(dir, name + ".par");
-        byte[]? data = File.Exists(dataPath) ? File.ReadAllBytes(dataPath) : null;
-        byte[]? par = File.Exists(parPath) ? File.ReadAllBytes(parPath) : null;
-        return Rs.Check(meta, data, par);
+        RepairMeta? meta;
+        try { meta = JsonStore.ReadObject<RepairMeta>(Path.Combine(dir, name + ".repair.json")); }
+        catch (Exception ex) when (ex is IOException or JsonException) { throw new UserException($"Unreadable repair file for {name} ({ex.Message})."); }
+        if (meta == null) throw new UserException($"Unreadable repair file for {name}.");
+        int block = Math.Max(DiscSpace.Sector, meta.BlockSize);
+        return Rs.Check(meta, ReadBlocks(Path.Combine(dir, name), block), ReadBlocks(Path.Combine(dir, name + ".par"), block));
+    }
+
+    /// <summary>
+    /// A file read block by block: a block that cannot be read (a bad spot on a disc) is left as zeros, so its hash
+    /// marks it damaged and the repair data rebuilds it. null if the file is missing or cannot be opened.
+    /// </summary>
+    static byte[]? ReadBlocks(string path, int block)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.RandomAccess);
+            var data = new byte[input.Length];
+            for (int at = 0; at < data.Length; at += block)
+            {
+                int n = Math.Min(block, data.Length - at);
+                try
+                {
+                    input.Position = at;
+                    input.ReadExactly(data, at, n);
+                }
+                catch (IOException) { Array.Clear(data, at, n); }
+            }
+            return data;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     static int BackupVerify(Ctx c, string dirArg)

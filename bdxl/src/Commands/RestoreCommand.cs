@@ -14,6 +14,8 @@ public sealed class RestoreCommand : ICommand
         read and decrypted; every file is checked against its hash. Layout: <destDir>/<alias>/<path>, or --flat.
         A damaged spot on a disc costs only the files with data there: if another mounted disc holds a copy of such a
         file, it is taken from there; the others are listed as FAILED, and the rest is restored.
+        Every file is printed when it is done, with the progress by bytes still to read, speed and time left; while a
+        large file is read, a status line shows how far it is (not written when the output is redirected).
         Ctrl+C stops after the file being copied (that one is removed; parts of split files already verified are
         kept) and lists what is left; running the same command again continues (restored files show as EXISTS).
         """;
@@ -76,13 +78,25 @@ public sealed class RestoreCommand : ICommand
         var needDiscs = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var readers = new Dictionary<string, PackReader>(StringComparer.OrdinalIgnoreCase);
 
+        // progress by the bytes to read from the mounted discs; a file that is not read (it exists, its disc is not
+        // mounted) is taken out of the total, so speed and time left stay true
+        long ToRead(List<BackupRef> copy) => copy.Where(p => mounts.ContainsKey(p.Disc)).Sum(p => p.Length);
+        var meter = new ProgressMeter(jobs.Sum(j => ToRead(j.Copy)));
+        if (jobs.Count > 0)
+            Console.WriteLine($"Restoring {jobs.Count:N0} file(s) into {dest}: {SizeText.Bytes(meter.Total)} bytes to read from " +
+                              (mounts.Count == 0 ? "the discs (none mounted)" : string.Join(", ", mounts.Select(m => $"{m.Key} ({m.Value})"))));
+        int handled = 0;
+        long jobRead = 0;   // bytes of the file in hand read so far (earlier parts of a split file)
+        string Head() => $"  [{StatusLine.Count(handled, jobs.Count)}  {meter.Rate()}]";
+
         // the stored copy, read from its disc's packs into dst; returns the plaintext hash (InvalidDataException: damaged)
-        string Fetch(BackupRef copy, string dst)
+        string Fetch(BackupRef copy, string dst, string what)
         {
             if (!readers.TryGetValue(copy.Disc, out var reader)) readers[copy.Disc] = reader = new PackReader(mounts[copy.Disc], c.Keys);
             using var output = new FileStream(dst, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
             using var stored = reader.Open(copy.At, copy.StoredSize);
-            return StoredForm.Read(stored, copy.Compression, output, Interrupt.Token);
+            return StoredForm.Read(stored, copy.Compression, output, Interrupt.Token,
+                read => meter.Show(StatusLine.Count(handled, jobs.Count), $"{what} ({StatusLine.Percent(read, copy.Length)}) from {copy.Disc}", jobRead + read));
         }
 
         // the first mounted copy among `options` that comes back intact, into dst; null = none (each failure is printed)
@@ -93,34 +107,49 @@ public sealed class RestoreCommand : ICommand
                 if (File.Exists(dst)) File.Delete(dst);
                 try
                 {
-                    if (Hashing.SameHash(Fetch(copy, dst), expected)) return copy;
-                    Console.WriteLine($"CORRUPT  {what} on {copy.Disc} (hash mismatch)");
+                    if (Hashing.SameHash(Fetch(copy, dst, what), expected)) return copy;
+                    meter.WriteLine($"CORRUPT  {what} on {copy.Disc} (hash mismatch)");
                 }
-                catch (InvalidDataException ex) { Console.WriteLine($"DAMAGED  {what} on {copy.Disc}: {ex.Message}"); }
-                catch (IOException ex) { Console.WriteLine($"FAILED   {what} on {copy.Disc}: {ex.Message}"); }
+                catch (InvalidDataException ex) { meter.WriteLine($"DAMAGED  {what} on {copy.Disc}: {ex.Message}"); }
+                catch (IOException ex) { meter.WriteLine($"FAILED   {what} on {copy.Disc}: {ex.Message}"); }
                 if (File.Exists(dst)) File.Delete(dst);
             }
             return null;
         }
 
-        int handled = 0;
         try
         {
             foreach (var (f, copy) in jobs.OrderBy(j => j.Copy[0].Disc, StringComparer.Ordinal).ThenBy(j => j.Copy[0].At))
             {
                 if (Interrupt.Requested) break;
                 handled++;
+                long toRead = ToRead(copy);
+                jobRead = 0;
                 var live = f.Backups.Where(x => !dead.Contains(x.Disc)).ToList();
                 string rel = flat ? Path.GetFileName(f.RelPath) : f.RootName + "/" + f.RelPath;
                 string target = Path.GetFullPath(Path.Combine(dest, rel));
                 if (!target.StartsWith(destPrefix, StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine($"SKIPPED (path escapes destination)  {rel}");
+                    meter.Total -= toRead;
+                    meter.WriteLine($"{Head()} SKIPPED (path escapes destination)  {rel}");
                     failed++;
                     continue;
                 }
-                if (File.Exists(target) && !overwrite) { Console.WriteLine($"EXISTS   {rel}  (use --overwrite)"); skipped++; continue; }
+                if (File.Exists(target) && !overwrite)
+                {
+                    meter.Total -= toRead;
+                    meter.WriteLine($"{Head()} EXISTS   {rel}  (use --overwrite)");
+                    skipped++;
+                    continue;
+                }
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                // the file's bytes count as read once it is done with, however it ended
+                void Finished(string text)
+                {
+                    meter.Done += toRead;
+                    toRead = 0;
+                    meter.WriteLine($"{Head()} {text}");
+                }
 
                 string? inProgress = null;   // half-written file to remove if something throws
                 try
@@ -133,7 +162,7 @@ public sealed class RestoreCommand : ICommand
                         inProgress = target + ".part";
                         if (FetchAny(Candidates(live, whole).Prepend(whole), inProgress, whole.Sha256, rel) == null)
                         {
-                            Console.WriteLine($"FAILED   {rel}: no intact copy on the mounted discs");
+                            Finished($"FAILED   {rel}: no intact copy on the mounted discs");
                             failed++;
                             continue;
                         }
@@ -141,7 +170,7 @@ public sealed class RestoreCommand : ICommand
                         File.Move(inProgress, target, overwrite: true);
                         inProgress = null;
                         done++;
-                        Console.WriteLine($"restored {rel}");
+                        Finished($"restored {rel}");
                         continue;
                     }
 
@@ -152,11 +181,17 @@ public sealed class RestoreCommand : ICommand
                     for (int i = 0; i < copy.Count; i++)
                     {
                         var p = copy[i];
-                        if (File.Exists(held[i])) continue;   // fetched in an earlier run (kept only after its hash matched)
+                        if (File.Exists(held[i]))   // fetched in an earlier run (kept only after its hash matched)
+                        {
+                            if (mounts.ContainsKey(p.Disc)) { meter.Total -= p.Length; toRead -= p.Length; }   // not read again
+                            continue;
+                        }
                         if (!mounts.ContainsKey(p.Disc)) { needDiscs[p.Disc] = needDiscs.GetValueOrDefault(p.Disc) + 1; continue; }
 
                         inProgress = held[i] + ".tmp";
-                        if (FetchAny(Candidates(live, p).Prepend(p), inProgress, p.ContentSha256, $"{rel} part {p.Part}/{p.Parts}") == null) { bad = true; continue; }
+                        bool got = FetchAny(Candidates(live, p).Prepend(p), inProgress, p.ContentSha256, $"{rel} part {p.Part}/{p.Parts}") != null;
+                        jobRead += p.Length;
+                        if (!got) { bad = true; continue; }
                         File.Move(inProgress, held[i]);
                         inProgress = null;
                     }
@@ -164,7 +199,7 @@ public sealed class RestoreCommand : ICommand
                     int have = held.Count(File.Exists);
                     if (have < copy.Count)
                     {
-                        Console.WriteLine($"PARTIAL  {rel}: {have} of {copy.Count} parts restored so far (kept next to it; run again with the other discs)");
+                        Finished($"PARTIAL  {rel}: {have} of {copy.Count} parts restored so far (kept next to it; run again with the other discs)");
                         if (bad) failed++; else waiting++;
                         continue;
                     }
@@ -193,8 +228,8 @@ public sealed class RestoreCommand : ICommand
                     if (!Hashing.SameHash(joinedHash, copy[0].Sha256))
                     {
                         File.Delete(inProgress);
-                        Console.WriteLine($"CORRUPT  {rel}: every part is intact, but joined they do not match the file's hash " +
-                                          "(the source changed while it was being staged?). The parts are kept next to it.");
+                        Finished($"CORRUPT  {rel}: every part is intact, but joined they do not match the file's hash " +
+                                 "(the source changed while it was being staged?). The parts are kept next to it.");
                         failed++;
                         continue;
                     }
@@ -203,18 +238,19 @@ public sealed class RestoreCommand : ICommand
                     inProgress = null;
                     foreach (string h in held) File.Delete(h);
                     done++;
-                    Console.WriteLine($"restored {rel}  (joined {copy.Count} parts)");
+                    Finished($"restored {rel}  (joined {copy.Count} parts)");
                 }
                 catch (OperationCanceledException)
                 {
                     if (inProgress != null && File.Exists(inProgress)) File.Delete(inProgress);
-                    Console.WriteLine($"STOPPED  {rel}  (Ctrl+C, not restored)");
+                    meter.Total -= toRead;
+                    meter.WriteLine($"{Head()} STOPPED  {rel}  (Ctrl+C, not restored)");
                     handled--;
                     break;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
                 {
-                    Console.WriteLine($"FAILED   {rel}: {ex.Message}");
+                    Finished($"FAILED   {rel}: {ex.Message}");
                     if (inProgress != null && File.Exists(inProgress)) File.Delete(inProgress);
                     failed++;
                 }
@@ -222,6 +258,7 @@ public sealed class RestoreCommand : ICommand
         }
         finally
         {
+            meter.Clear();
             foreach (var r in readers.Values) r.Dispose();
         }
 

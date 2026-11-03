@@ -38,7 +38,9 @@ The regular cycle: **scan → plan → stage → burn → verify → burned**. R
    bdxl verify BDXL-0001 G:\
    ```
    Every pack is read and its hash compared with the catalog. `--deep` also decrypts every pack and checks every
-   file against its hash, in the same single read (proves the content can be restored).
+   file against its hash, in the same single read (proves the content can be restored). The disc's other files are
+   checked first: its manifest, `packs.sha256`, `disc.json`, `bdxl.key` and the catalog backup in `_catalog\`
+   (against its repair data). A status line shows the progress, speed and time left.
 7. **Record** it:
    ```
    bdxl burned BDXL-0001                      (or --date 2026-10-29 for another day)

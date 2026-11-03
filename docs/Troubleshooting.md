@@ -9,7 +9,7 @@
 | 0 | done |
 | 1 | error (wrong arguments, wrong password, refused, nothing to do where something was expected) |
 | 2 | partial: not everything fits (`plan`, `stage`), more discs needed (`restore`), data lost (`lost`), fewer copies than wanted (`copies list`) |
-| 3 | problems found: damaged or missing packs, files that do not come back intact (`verify`, `restore`), files `restage` cannot rebuild, an unrecoverable backup file |
+| 3 | problems found: damaged or missing packs, files that do not come back intact, a damaged or missing manifest, `packs.sha256`, `disc.json`, `bdxl.key` or `_catalog` file (`verify`, `restore`), files `restage` cannot rebuild, an unrecoverable backup file |
 | 4 | the catalog failed its integrity check (only `catalog …` commands run), or its [mirror](Guide-Mirror.md) is not connected or not in step (only read-only commands run) |
 | 130 | stopped with Ctrl+C (after cleaning up; see the command's message) |
 
@@ -40,6 +40,9 @@
 | `Ignoring G:\: no disc.json there` | The disc has no `disc.json`: add `--disc <label>` (one mount at a time). |
 | `… is not a bdxl disc (no disc.json)` (`scandisc`) | Only discs made by bdxl can be read into a catalog. |
 | `DAMAGED  pack N …` (`verify`) | That pack does not match its hash (or does not decrypt). The files listed below it are the ones affected; restore them from another copy, and/or rebuild the disc with `restage … --from <the disc>` (the intact packs are reused). |
+| `PROBLEM  manifest.enc: …` (`verify`) | The disc's manifest is damaged or differs from the catalog. The files are still restorable with this catalog; only `scandisc` (rebuilding a catalog from the disc) needs it. Rebuild the disc with `restage … --from <the disc>` to get a good one. |
+| `PROBLEM  _catalog: …` (`verify`) | The catalog backup on the disc is damaged. "Repairable": `catalog backup restore` repairs it as it reads, or copy the folder and run `catalog backup verify <copy> --repair`. "Beyond repair": use the backup on another disc. |
+| `PROBLEM  packs.sha256 / disc.json / bdxl.key / README.txt: …` (`verify`) | One of the disc's small files is damaged or missing. The catalog has what they hold; `restage … --from <the disc>` writes them again. Only `bdxl.key` matters without the catalog: keep a disc whose `bdxl.key` is intact (or the catalog backup). |
 | `DAMAGED  … on BDXL-…: pack N, chunk C is damaged` (`restore`) | That file has data in a damaged spot. Mount another disc with a copy (`find` lists them); everything else is restored. |
 | `A different folder is already catalogued as 'X'. Use --name <alias>.` | Each alias belongs to one folder; choose another name. |
 | `This folder is already catalogued as 'X'.` | Rescan without `--name`, or rename with `bdxl alias rename`. |

@@ -1,5 +1,6 @@
 namespace Bdxl.Tests;
 
+[Collection(nameof(InterruptTests))]   // non-parallel: some tests read what a command prints (Console.Out is the whole process's)
 public class CatalogTests : IDisposable
 {
     readonly TempDir tmp = new();

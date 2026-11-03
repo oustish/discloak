@@ -14,6 +14,12 @@
   everything but `disc.json`: file names, manifest and `_catalog` backup (see Key rules).
   Then `stage --append <label>`: a burned disc that is not full gets another session (see Key rules).
   `scan` prints every file as soon as it is hashed (progress by bytes, speed, time left), with a status line rewritten in place while large files are hashed.
+  `verify` says what it checks, shows a status line (pack, progress, speed, time left, the file being read), prints every
+  file with `--deep` and a damaged pack as soon as it is read. Before the packs it checks the disc's other files:
+  disc.json, packs.sha256 (= `DiscRecord.Packs`), the manifests (SHA-256 = `DiscRecord.Manifests`, one per session,
+  recorded by stage/restage/scandisc; `--deep` decrypts them and compares their lines with `CopiesOn`, and records the
+  hashes of a disc staged before they were kept), bdxl.key, README.txt and `_catalog` (`CatalogCommand.Load`).
+  `stage`, `restore` and `restage` show progress the same way (`ProgressMeter`).
 - **Encrypted catalog (phase 1 of `ENCRYPTION.md`, the agreed design):** the catalog is encrypted with a random master
   key that `bdxl.key` holds wrapped by the password (Argon2id) and optionally a recovery key; `init`, migration of
   plaintext catalogs, `password change`, `password check` (one password against any bdxl.key, no agent), `recovery-key`, `catalog export/import`, password-free catalog backups.
@@ -30,7 +36,7 @@
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 222 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 226 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -46,6 +52,7 @@ Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; 
 | `src/Cli/ICommand.cs` | `ICommand`: `Name`, `Group` (a `CommandGroup` constant), `Summary`, `Usage`, `Details` (help text), `AllowBrokenCatalog` / `NeedsCatalog` (default false / true), `Run(Ctx)` |
 | `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
 | `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing); a new password: typed, then copied back from the password manager, then confirmed as saved |
+| `src/Cli/StatusLine.cs` | The status line rewritten in place at the bottom of the console (nothing when output is redirected); `Rate` ("12.4%  85.3 MB/s  ~3h 12m left"), `Count`, `Percent`, `Duration`. `ProgressMeter`: a job's progress by bytes (`Total`, `Done`, `Show` at most once a second, `WriteLine` for lines that stay). Used by `scan`, `verify`, `stage`, `restore`, `restage` |
 | `src/Cli/Interrupt.cs` | Ctrl+C: `Interruptible` commands get `Interrupt.Requested` and stop cleanly; others (or a 2nd Ctrl+C) exit at once with a note. `Catalog.Save` runs inside `Interrupt.Critical()`, so a save is never cut off |
 | `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `AppendSession`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
@@ -239,14 +246,14 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off` and makes packs small (8 Ã
 | `FileCryptoTests` | `BDXLENC2` streams: round trips around chunk boundaries, byte ranges, another key, flipped byte, truncation, cut-off chunks, password policy |
 | `PackTests` | real geometry (64 MiB, 67,109,944-byte packs), equal pack sizes and ranges read back across chunks/packs, a damaged chunk fails only its ranges, swapped packs and another key refused, whole-pack reading (hash per pack, missing pack), a pack that cannot be written stops the command, the stored form (plain and zstd frames) round trips and `HashAndMeasure` = written size, never more than planned, `Room` |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
-| `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done; a restage stopped after pack 2 continues from `.partial`, taking over only the packs whose files were checked (own non-parallel collection: `Interrupt` is process-wide) |
+| `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done; a restage stopped after pack 2 continues from `.partial`, taking over only the packs whose files were checked (own non-parallel collection: `Interrupt` is process-wide; `EndToEndTests`, `CatalogTests` and `AgentTests` share it, as they read `Console.Out` or set `BDXL_AGENT`) |
 | `MasterKeyTests` | password/recovery envelopes, password change keeps the master key, envelopes bound to their catalog, `bdxl.key` round trip, KDF limits, `BDXLENC2` round trips/another key/another purpose/tampering, recovery key checksum; key rings: rotation, an old envelope opens only the old keys, a `bdxl-key-1` file opens and is rewritten as a ring |
 | `AgentTests` | in-process server on its own pipe with a test clock: hand over / get / lock, idle time restarts with use, maximum, Win+L and sleep per catalog, other protocol, second agent refused, commands use the agent instead of the password |
 | `CompressionTests` | auto/on/off, a location that fits only compressed: scan counts, plan, stage at the counted size, verify, restore, restage at the recorded level, level from the manifest; recount on a new level, alias rename, clear |
 | `KeyRotationTests` | after a rotation: catalog under the new key, history still checks, old disc verified/restored via the ring, new disc on the new key, each disc's bdxl.key opens only its keys (old password: old key only), leak simulation with `init --key-from`, append + restage keep the disc's key, a broken catalog is not rotated |
 | `CatalogTests` | nothing readable in an encrypted catalog, file list split per location (unchanged parts not rewritten, stale parts removed, rollback), unsplit list read and split + too-old marker, compression, damage, HMAC against mixed saves + accept, snapshots (never `bdxl.key`), pruning, rollback, `init` + wrong password, migration (history too, `--force`, interrupted), export/import, password change + recovery key, `password check`, backup restore into empty/own/other catalog |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
-| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, of equally full discs the one with the largest file staged first, tiny files in one pack, a damaged pack (verify names it, restore loses only its file), restore from a copy on another disc, restage taking intact packs from the old disc and rebuilding the damaged one, restage without a source (refused / `--allow-partial`), 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), split restore one drive at a time, lost + restage (same layout), hand-edited catalog |
+| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, what verify prints (what it checks, every file with `--deep`, a damaged pack as soon as it is read), verify checks the disc's other files (each kind of damage found by a plain verify, `_catalog` against its repair data), manifest hashes recorded by the first `--deep` verify of an older disc and the manifests compared with the catalog, progress lines of stage/restore/restage, of equally full discs the one with the largest file staged first, tiny files in one pack, a damaged pack (verify names it, restore loses only its file), restore from a copy on another disc, restage taking intact packs from the old disc and rebuilding the damaged one, restage without a source (refused / `--allow-partial`), 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), split restore one drive at a time, lost + restage (same layout), hand-edited catalog |
 | `EncryptedDiscTests` | nothing on a disc shows names/hashes/counts, two discs with different files look alike, `bdxl.key` + README + packs.sha256 + key ids on the disc, verify + restore, a lost catalog rebuilt with `init --key-from` + `scandisc` (wrong/no password refused; unverified until `verify`), plain discs refused, old and new discs across a password change, `_catalog` repaired without and restored with the password, standalone backup, restage keeps the layout, a disc of another key refused (restage, restore) |
 | `AppendTests` | only new/changed files in the session's packs (numbering continued), session manifest of its own (merged on the disc in session order), burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only (packs too), refusals, the disc's own key and nothing telling in the session, a disc of another key refused (catalog or `--mount`) |
 | `CopiesTests` | per-location copies on different discs, never two on one disc, staged copies count for planning but only burned ones as made, lost discs, higher number of two locations, not onto an `--append` disc that holds it, split parts twice, end to end (stage, burn, restore from either disc, lost + restaged, alias rename) |
@@ -255,7 +262,6 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off` and makes packs small (8 Ã
 ## Suggested next steps
 Ideas not built yet:
    - `burn` command that runs an external burner from a configurable command template, then `verify` + `burned`.
-   - Restore-time progress output.
    - Faster disc reads (`restore`, `verify`). Do NOT read several files from the same
      optical disc in parallel: a CD/DVD/BD drive has one read head, so concurrent reads make it seek back and forth
      (slow seeks, spin-speed changes) and total throughput drops well below one sequential reader. The disc is the

@@ -60,8 +60,8 @@ public static class StoredForm
         return (Convert.ToHexString(hash.GetHashAndReset()), stored);
     }
 
-    /// <summary>Turns the stored form back into the original bytes (written to output); returns their SHA-256.</summary>
-    public static string Read(Stream stored, int level, Stream output, CancellationToken ct = default)
+    /// <summary>Turns the stored form back into the original bytes (written to output); returns their SHA-256 (progress: bytes written).</summary>
+    public static string Read(Stream stored, int level, Stream output, CancellationToken ct = default, Action<long>? progress = null)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Stream source = stored;
@@ -70,12 +70,14 @@ public static class StoredForm
         try
         {
             var buffer = new byte[Block];
+            long written = 0;
             int n;
             while ((n = Fill(source, buffer)) > 0)
             {
                 ct.ThrowIfCancellationRequested();
                 hash.AppendData(buffer, 0, n);
                 output.Write(buffer, 0, n);
+                progress?.Invoke(written += n);
             }
         }
         catch (Exception ex) when (ex is ZstdSharp.ZstdException or EndOfStreamException)

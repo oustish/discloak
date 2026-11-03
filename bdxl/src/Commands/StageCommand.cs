@@ -36,6 +36,8 @@ public sealed class StageCommand : ICommand
           --mount P        with --append: the disc is in the drive at P - its label (and key) is checked, and the free
                            space the drive reports is used if it is smaller.
         Labels are <prefix><counter>, e.g. BDXL-0007 (see 'settings').
+        Every file is printed as soon as it is stored, with the disc's progress by bytes, speed and time left; while a
+        large file is copied, a status line shows how far it is (not written when the output is redirected).
         Ctrl+C stops after the file being copied (that one is left out): the disc (or session) is finished with the
         files copied so far - a complete, smaller folder you can burn or 'discard' - and no further disc is started.
         A file that changed since 'scan' or cannot be read is left out too; the space it took in its pack stays unused.
@@ -205,22 +207,27 @@ public sealed class StageCommand : ICommand
     static List<ManifestLine> StorePieces(DiscRecord disc, string dir, IEnumerable<Piece> pieces, MasterKey key, Settings settings)
     {
         var manifest = new List<ManifestLine>();
+        var list = pieces.ToList();
+        var meter = new ProgressMeter(list.Sum(p => p.Length));
+        Console.WriteLine($"{disc.Label}: {list.Count:N0} file(s), {SizeText.Bytes(meter.Total)} bytes to store in {dir}");
         using var packs = new PackWriter(dir, disc.Packs.Count + 1, key);
-        foreach (var p in pieces)
+        for (int n = 1; n <= list.Count && !Interrupt.Requested; n++)
         {
-            if (Interrupt.Requested) break;
+            var p = list[n - 1];
             var f = p.File;
             string src = Path.Combine(f.Root, f.RelPath);
             int level = p.IsPart ? 0 : Compression.StoredLevel(settings, f);   // a part keeps its planned plain size
-            Console.WriteLine($"[{disc.Label}] {p.Name}");
+            // printed when the file is done: "  [3/302  12.4%  85.3 MB/s  ~3h 12m left] S/a.bin ..."
+            void Done(string text)
+            {
+                meter.Done += p.Length;
+                meter.WriteLine($"  [{StatusLine.Count(n, list.Count)}  {meter.Rate()}] {p.Name}{text}");
+            }
+            const string Changed = ": changed since last scan - not staged. Re-run 'scan'.";
 
             // a part cannot be checked against the whole file's hash, so the source must be exactly as scanned
             // (same size and time - the rule 'scan' uses), before and after the copy
-            if (p.IsPart && !SameAsScanned(src, f))
-            {
-                Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
-                continue;
-            }
+            if (p.IsPart && !SameAsScanned(src, f)) { Done(Changed); continue; }
 
             long at = packs.Position;
             string plainHash;
@@ -230,29 +237,26 @@ public sealed class StageCommand : ICommand
                 using var input = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.Read, StoredForm.Block, FileOptions.SequentialScan);
                 input.Seek(p.Offset, SeekOrigin.Begin);
                 // never more than planned: the plan (and the disc) has room for exactly that
-                (plainHash, stored) = StoredForm.Write(input, p.Length, level, packs.Write, Archive.StoredSizeOf(settings, p), Interrupt.Token);
+                (plainHash, stored) = StoredForm.Write(input, p.Length, level, packs.Write, Archive.StoredSizeOf(settings, p), Interrupt.Token,
+                    read => meter.Show(disc.Label, $"{p.Name} ({StatusLine.Percent(read, p.Length)})", read));
             }
             catch (OperationCanceledException)
             {
-                Console.WriteLine("  stopped (Ctrl+C) - not staged");
+                Done(": stopped (Ctrl+C) - not staged");
                 break;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Console.WriteLine($"  FAILED: {ex.Message}");
+                Done($": FAILED: {ex.Message}");
                 continue;
             }
             catch (StoredForm.TooLargeException)
             {
-                Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
+                Done(Changed);
                 continue;
             }
 
-            if (p.IsPart ? !SameAsScanned(src, f) : !Hashing.SameHash(plainHash, f.Sha256))
-            {
-                Console.WriteLine("  changed since last scan - not staged. Re-run 'scan'.");
-                continue;
-            }
+            if (p.IsPart ? !SameAsScanned(src, f) : !Hashing.SameHash(plainHash, f.Sha256)) { Done(Changed); continue; }
 
             var copy = new BackupRef
             {
@@ -267,7 +271,9 @@ public sealed class StageCommand : ICommand
             disc.FileCount++;
             disc.UsedBytes += stored;
             manifest.Add(ManifestLine.For(copy, f));
+            Done($" ({SizeText.Bytes(p.Length)} bytes" + (level > 0 ? $", compressed to {100.0 * stored / Math.Max(1, p.Length):F0}%)" : ")"));
         }
+        meter.Clear();
         packs.Finish();
         disc.Packs.AddRange(packs.Written.Select(w => w.Sha256));
         return manifest;
@@ -284,7 +290,7 @@ public sealed class StageCommand : ICommand
     static (int Dups, long FolderBytes) Finish(Ctx c, DiscRecord disc, string dir, List<ManifestLine> manifest,
                                                long sessionSpace, long occupiedBefore, MasterKey key, int session)
     {
-        DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session);   // the disc describes itself
+        disc.SetManifest(session, DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session));   // the disc describes itself
         int dups = c.Arc.LinkDuplicates();                  // other files with identical content now point at this disc too
         long reserve = disc.Reserve ?? 0;
         disc.OccupiedBytes = occupiedBefore + sessionSpace + reserve;
@@ -292,7 +298,7 @@ public sealed class StageCommand : ICommand
         if (c.Opt.Has("with-catalog"))                      // leave room for it in the blank discs' reserve
         {
             Console.WriteLine("Writing catalog backup into the disc folder:");
-            CatalogCommand.WriteBackup(c, Path.Combine(dir, "_catalog"));
+            CatalogCommand.WriteBackup(c, Path.Combine(dir, DiscFiles.CatalogBackupName));
         }
 
         long folderBytes = DiscSpace.Folder(dir);

@@ -149,6 +149,9 @@ bdxl catalog backup verify G:\_catalog            # which files are damaged, and
 bdxl catalog backup verify G:\_catalog --repair   # fix it in place
 ```
 
+`bdxl verify <label> G:\` checks a disc's `_catalog` too, along with the disc's packs. A spot on the disc that
+cannot be read counts as damage, which the repair data rebuilds like any other.
+
 A backup on a burned disc cannot be changed: copy the `_catalog` folder to your disk and repair the copy.
 
 Each file carries Reed-Solomon repair data (25% by default; `--parity-percent` when creating). No password is needed

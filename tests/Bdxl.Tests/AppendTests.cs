@@ -146,7 +146,7 @@ public class AppendTests : IDisposable
         tmp.RandomFile("src/a.bin", 300_000);
         FirstDisc();
         var disc = Disc1;
-        long ManifestSpace(string dir) => DiscSpace.OnDisc(new FileInfo(DiscFiles.Manifests(dir).Single()).Length);
+        long ManifestSpace(string dir) => DiscSpace.OnDisc(new FileInfo(DiscFiles.Manifests(dir).Single().Path).Length);
         // its packs and its manifest, and the reserve
         Assert.Equal(DiscFormat.PacksFor(300_000) * DiscFormat.PackOnDisc + ManifestSpace(DiscDir) + 100_000, disc.OccupiedBytes);
         long free = 1_000_000 - disc.OccupiedBytes - 100_000;

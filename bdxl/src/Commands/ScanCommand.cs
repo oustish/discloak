@@ -59,38 +59,6 @@ public sealed class ScanCommand : ICommand
     static readonly TimeSpan StatusEvery = TimeSpan.FromSeconds(2);   // refresh of the status line while large files are hashed
     const string BeingWritten = "it changed while it was being read (still being written to?) - left as it was, scan again later";
 
-    /// <summary>
-    /// One line at the bottom of the console, rewritten in place (the files already done stay printed above it).
-    /// Nothing is written when the output goes to a file or pipe.
-    /// </summary>
-    sealed class StatusLine
-    {
-        readonly bool live = !Console.IsOutputRedirected;
-        int width;
-
-        public void Show(string text)
-        {
-            if (!live) return;
-            int max = Math.Max(20, WindowWidth() - 1);   // a wrapped line could not be overwritten
-            if (text.Length > max) text = text[..(max - 3)] + "...";
-            Console.Write("\r" + text.PadRight(width));
-            width = Math.Max(width, text.Length);
-        }
-
-        public void Clear()
-        {
-            if (width == 0) return;
-            Console.Write("\r" + new string(' ', width) + "\r");
-            width = 0;
-        }
-
-        public static int WindowWidth()
-        {
-            try { return Console.WindowWidth > 0 ? Console.WindowWidth : 120; }
-            catch (IOException) { return 120; }
-        }
-    }
-
     sealed class Totals
     {
         public int Added, Changed, Unchanged, Skipped, Missing, Moved, IgnoredNew, BecameIgnored, NoLongerIgnored, Counted;
@@ -461,18 +429,8 @@ public sealed class ScanCommand : ICommand
     }
 
     /// <summary>"1,234/50,000  12.4%  85.3 MB/s  ~3h 12m left" - by bytes, counting what the threads have read of their current files.</summary>
-    static string Progress(int done, int count, long doneBytes, long totalBytes, IEnumerable<WorkItem> active, TimeSpan elapsed)
-    {
-        long read = doneBytes + active.Sum(a => Volatile.Read(ref a.BytesRead));
-        double perSecond = elapsed.TotalSeconds > 0 ? read / elapsed.TotalSeconds : 0;
-        // fixed widths, so the status does not move from line to line ("100.0%", speeds up to 9999.9 MB/s)
-        string countText = count.ToString("N0", CultureInfo.InvariantCulture);
-        string text = $"{done.ToString("N0", CultureInfo.InvariantCulture).PadLeft(countText.Length)}/{countText}  " +
-                      $"{Percent(read, totalBytes),6}  {(perSecond / 1e6).ToString("F1", CultureInfo.InvariantCulture),6} MB/s";
-        if (perSecond > 0 && read < totalBytes && elapsed > TimeSpan.FromSeconds(5))
-            text += $"  ~{Duration(TimeSpan.FromSeconds((totalBytes - read) / perSecond))} left";
-        return text;
-    }
+    static string Progress(int done, int count, long doneBytes, long totalBytes, IEnumerable<WorkItem> active, TimeSpan elapsed) =>
+        $"{StatusLine.Count(done, count)}  {StatusLine.Rate(doneBytes + active.Sum(a => Volatile.Read(ref a.BytesRead)), totalBytes, elapsed)}";
 
     const int MinFileWidth = 24;   // narrower than this a shortened path says too little
 
@@ -483,7 +441,7 @@ public sealed class ScanCommand : ICommand
     /// </summary>
     static string ActiveFiles(List<WorkItem> active, int room)
     {
-        var items = active.Select(a => (a.Rel, Pct: Percent(Volatile.Read(ref a.BytesRead), a.Size), Left: a.Size - Volatile.Read(ref a.BytesRead)))
+        var items = active.Select(a => (a.Rel, Pct: StatusLine.Percent(Volatile.Read(ref a.BytesRead), a.Size), Left: a.Size - Volatile.Read(ref a.BytesRead)))
                           .OrderBy(x => x.Left).ToList();
         string Label(string rel, string pct) => $"{rel} ({pct})";
         string all = string.Join(", ", items.Select(x => Label(x.Rel, x.Pct)));
@@ -499,11 +457,4 @@ public sealed class ScanCommand : ICommand
         int each = Math.Max(MinFileWidth, (room - more.Length) / shown - 2);   // 2 = ", "
         return string.Join(", ", items.Take(shown).Select(x => Label(SizeText.ShortenMiddle(x.Rel, each - x.Pct.Length - 3), x.Pct))) + more;
     }
-
-    static string Percent(long part, long whole) =>
-        (whole > 0 ? 100.0 * part / whole : 100.0).ToString("F1", CultureInfo.InvariantCulture) + "%";
-
-    static string Duration(TimeSpan d) =>
-        d.TotalHours >= 1 ? $"{(int)d.TotalHours}h {d.Minutes:D2}m" :
-        d.TotalMinutes >= 1 ? $"{d.Minutes}m {d.Seconds:D2}s" : $"{d.Seconds}s";
 }
