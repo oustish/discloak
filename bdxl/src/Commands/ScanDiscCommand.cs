@@ -108,7 +108,7 @@ public sealed class ScanDiscCommand : ICommand
             var copy = new BackupRef
             {
                 Disc = label, At = line.At, StoredSize = line.Size, Length = line.PlainSize, Sha256 = sha, BackedUpUtc = burnedAt,
-                Unverified = true, Compression = line.Compression ?? 0
+                Unverified = true, Compression = line.Compression ?? 0, Codec = line.Codec
             };
             if (line.IsPart)
             {
@@ -140,6 +140,9 @@ public sealed class ScanDiscCommand : ICommand
         disc.Packs = Enumerable.Range(1, packs).Select(p => packList.GetValueOrDefault(p, "")).ToList();
         if (disc.Packs.Any(h => h.Length == 0)) disc.Packs = [];   // incomplete: 'verify --deep' still checks the disc
         disc.Manifests = Enumerable.Range(1, disc.Sessions).Select(s => manifestHashes.GetValueOrDefault(s, "")).ToList();
+        var writtenBy = disc.WrittenBy;   // disc.json names the build of the latest session only
+        disc.WrittenBy = Enumerable.Range(1, disc.Sessions)
+            .Select(s => s == disc.Sessions && info.CreatedBy != null ? info.CreatedBy : s <= writtenBy.Count ? writtenBy[s - 1] : "").ToList();
         var onDisc = c.Arc.CopiesOn(label);
         disc.FileCount = onDisc.Count;
         disc.UsedBytes = onDisc.Sum(x => x.Copy.StoredSize);

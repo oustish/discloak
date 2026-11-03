@@ -21,7 +21,7 @@ public static class CommandTable
         // the catalog itself
         new CatalogCommand(), new PasswordCommand(), new RecoveryKeyCommand(), new UnlockCommand(), new LockCommand(), new AgentCommand(), new PurgeCommand(), new AliasCommand(), new SettingsCommand(),
         // help
-        new WorkflowCommand(), new HelpCommand(),
+        new WorkflowCommand(), new VersionCommand(), new HelpCommand(),
     ];
 
     public static ICommand? Find(string name) =>

@@ -180,9 +180,13 @@ public class AppendTests : IDisposable
         Scan();
         Assert.Equal(0, Bdxl("stage", tmp.File("stg"), "--append", "BDXL-0001"));
         Assert.True(Disc1.Packs.Count > before.Packs.Count);
+        Assert.Equal((2, 2), (Disc1.Manifests.Count, Disc1.WrittenBy.Count));             // the session's own manifest hash and build
+        Assert.Equal(BuildInfo.CreatedBy, Disc1.WrittenBy[1]);
 
         Assert.Equal(0, Bdxl("discard", "BDXL-0001"));
         var disc = Disc1;
+        Assert.Equal(before.Manifests, disc.Manifests);
+        Assert.Equal(before.WrittenBy, disc.WrittenBy);
         Assert.Equal("burned", disc.State);
         Assert.Null(disc.PendingAppend);
         Assert.Equal((before.FileCount, before.UsedBytes, before.OccupiedBytes, 1), (disc.FileCount, disc.UsedBytes, disc.OccupiedBytes, disc.Sessions));

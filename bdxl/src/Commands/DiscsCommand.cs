@@ -9,7 +9,8 @@ public sealed class DiscsCommand : ICommand
     public bool NeedsFilesFor(Options opt) => false;   // discs only
     public bool ReadOnlyFor(Options opt) => true;
     public string Details => """
-        State is staged, burned, lost or destroyed. Shows its packs, cost and notes, the sessions of a disc that
+        State is staged, burned, lost or destroyed. Shows its packs, cost, the bdxl build that staged it (its latest
+        session; 'version' explains the form) and notes, the sessions of a disc that
         'stage --append' added to, and how much a burned disc of known size still has free for files (as far as the
         catalog knows - a finalized disc takes nothing more).
         """;
@@ -28,6 +29,7 @@ public sealed class DiscsCommand : ICommand
                               (d.PendingAppend is { } session ? $" (session {session.Number} staged, not burned)" : "") +
                               (d.State == "burned" && AppendTarget.FreeFor(d) is { } free ? $"  {SizeText.Bytes(free)} bytes free" : "") +
                               (d.Cost is { } cost ? $"  cost {SizeText.Money(cost, currency)}" : "") +
+                              (d.WrittenBy.LastOrDefault(w => w.Length > 0) is { } by ? $"  by {by}" : "") +
                               (string.IsNullOrEmpty(d.Note) ? "" : $"  # {d.Note}"));
         return 0;
     }

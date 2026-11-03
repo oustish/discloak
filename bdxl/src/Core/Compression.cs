@@ -36,6 +36,19 @@ public static class Compression
     /// <summary>Changes with the zstd library, whose output (and so the counted sizes) may differ between versions.</summary>
     static readonly string LibraryVersion = typeof(ZstdSharp.Compressor).Assembly.GetName().Version?.ToString() ?? "?";
 
+    /// <summary>
+    /// The codec of every compressed copy so far: copies record it (BackupRef.Codec, the manifest's "codec"); one made
+    /// before it was recorded has none, and is zstd too.
+    /// </summary>
+    public const string Zstd = "zstd";
+
+    /// <summary>The codec of a copy stored at `level` (null: not compressed).</summary>
+    public static string? CodecOf(int level, string? codec) => level > 0 ? codec ?? Zstd : null;
+
+    /// <summary>Why this bdxl cannot read a copy compressed with `codec`, or null if it can.</summary>
+    public static string? Unreadable(string? codec) =>
+        codec is null or Zstd ? null : $"it is compressed with '{codec}', which this bdxl does not know (a newer bdxl reads it)";
+
     /// <summary>What a counted size is valid for: the stored form (frames of 1 MiB), the level and the library.</summary>
     public static string Signature(int level) => $"zstd{level}-frames/{LibraryVersion}";
 

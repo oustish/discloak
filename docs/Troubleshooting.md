@@ -107,6 +107,13 @@ parallel), because two diverging copies cannot be merged.
 **Where are the logs?**
 Commands print to the console only. The agent logs to `%LOCALAPPDATA%\bdxl\agent\agent.log`.
 
+**Which version do I have?**
+`bdxl version`: the version, the commit it was built from and when. Include its output when reporting a problem. A
+disc's `disc.json` names the build that wrote it (`createdBy`), and `bdxl discs` shows it for every disc.
+
+**`… is compressed with 'xyz', which this bdxl does not know`**
+That copy was made by a newer bdxl with another compression codec. Restore it with that version (or a newer one).
+
 **How do I start completely over?**
 Delete the catalog folder (and staging folders). Burned discs stay readable with their password; `scandisc` brings
 them into a new catalog made with `init --key-from <disc>`.

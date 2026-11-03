@@ -22,7 +22,7 @@ public sealed class DiscardCommand : ICommand
             disc.UsedBytes = session.UsedBytesBefore;
             disc.OccupiedBytes = session.OccupiedBytesBefore;
             disc.Packs.RemoveRange(session.PacksBefore, disc.Packs.Count - session.PacksBefore);
-            if (disc.Manifests.Count >= session.Number) disc.Manifests.RemoveRange(session.Number - 1, disc.Manifests.Count - session.Number + 1);
+            disc.DropSessionsFrom(session.Number);
             disc.Sessions = session.Number - 1;
             disc.PendingAppend = null;
             c.Cat.Save();

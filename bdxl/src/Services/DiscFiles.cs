@@ -161,7 +161,8 @@ public static class DiscFiles
         =======================================
 
         disc.json             label, date, sessions, format ("bdxl-pack-1"), packSize and chunkSize; catalogId + keyId
-                              name the key in bdxl.key (plain JSON). Nothing about the files.
+                              name the key in bdxl.key; createdBy = the bdxl build that wrote it (plain JSON).
+                              Nothing about the files.
         bdxl.key              the master key, wrapped (plain JSON, safe to keep openly)
         packs.sha256          SHA-256 of every pack: check the disc with any sha256sum tool, no password needed
         data/NNN/NNNNNN.pack  the data: every file, laid end to end in one stream, cut into packs of equal size
@@ -207,7 +208,8 @@ public static class DiscFiles
              "source"      the file's real path (alias/relative path)
              "at", "size"  where its stored bytes are in the data stream, and how many
              "plainSize", "sha256"   size and SHA-256 of the original content
-             "compression" if present: the stored bytes are zstd frames (RFC 8878; 'zstd -d' reads them)
+             "compression", "codec"  if present: the stored bytes are compressed at that level with that codec;
+                         "zstd" (or no codec: discs staged before bdxl 0.6.0) = zstd frames (RFC 8878; 'zstd -d' reads them)
              "modified"    the file's time when it was staged
            A file split across discs: "part"/"parts"/"offset" (where the part belongs), "fileSize"/"fileSha256" (the
            whole file); join the parts in order.

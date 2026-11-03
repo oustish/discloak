@@ -1,7 +1,10 @@
-# bdxl – handoff notes (state as of 2026-11-02)
+# bdxl – handoff notes (state as of 2026-11-03, version 0.6.0)
+
+How to build, test, version and commit: [`../CONTRIBUTING.md`](../CONTRIBUTING.md). Changes per version:
+[`../CHANGELOG.md`](../CHANGELOG.md).
 
 ## Status
-- C# / .NET 10 console app (`net10.0`), 57 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
+- C# / .NET 10 console app (`net10.0`), 86 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).
 - Builds cleanly (0 warnings). Smoke-tested by hand on 2026-10-29 in a temp folder: every command was run, including
   encryption, tamper detection, lost/restage, catalog rollback, backup repair and scandisc. Automated tests: `tests/Bdxl.Tests` (xUnit, see below).
 - Fixed during that smoke test: UTF-8 console output, `--date` stored one day early (local midnight to UTC), false
@@ -20,6 +23,14 @@
   recorded by stage/restage/scandisc; `--deep` decrypts them and compares their lines with `CopiesOn`, and records the
   hashes of a disc staged before they were kept), bdxl.key, README.txt and `_catalog` (`CatalogCommand.Load`).
   `stage`, `restore` and `restage` show progress the same way (`ProgressMeter`).
+- **Versions (0.6.0, 2026-11-03):** `<Version>` in `Bdxl.csproj`, raised by hand (CONTRIBUTING.md). The
+  `BdxlBuildInfo` target runs git at build time: InformationalVersion `0.6.0+<commit>[-dirty].<yyyyMMddTHHmmZ>` and
+  assembly metadata GitCommit/GitBranch/GitDirty/BuiltUtc, read by `BuildInfo` (`src/Cli/BuildInfo.cs`); `version`
+  / `--version` prints them. Every staged session records `BuildInfo.CreatedBy`: `disc.json` "createdBy" (latest
+  session) and `DiscRecord.WrittenBy` (per session, kept with `Manifests` by `SetSession`/`DropSessionsFrom`;
+  restage and scandisc set it too). Compressed copies record `BackupRef.Codec` / manifest "codec" = "zstd"
+  (`Compression.Zstd`; none = zstd); `Compression.Unreadable` refuses another codec with a reason (`StoredForm.Read`,
+  restage).
 - **Encrypted catalog (phase 1 of `ENCRYPTION.md`, the agreed design):** the catalog is encrypted with a random master
   key that `bdxl.key` holds wrapped by the password (Argon2id) and optionally a recovery key; `init`, migration of
   plaintext catalogs, `password change`, `password check` (one password against any bdxl.key, no agent), `recovery-key`, `catalog export/import`, password-free catalog backups.
@@ -36,7 +47,7 @@
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/bdxl.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 233 tests, a few seconds
+dotnet test ../BdxlPlanner.slnx -c Release   # from bdxl/; 235 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -53,6 +64,7 @@ Every command takes `--catalog <dir>` (default `./catalog`). Start with `init`; 
 | `src/Cli/CommandTable.cs` | The list of command instances; its order is the order of `bdxl help` |
 | `src/Cli/Ui.cs` | `Confirm` (`--yes`), password prompt (`BDXL_PASSWORD` or `--password-env VAR`, else hidden typing); a new password: typed, then copied back from the password manager, then confirmed as saved |
 | `src/Cli/StatusLine.cs` | The status line rewritten in place at the bottom of the console (nothing when output is redirected); `Rate` ("12.4%  85.3 MB/s  ~3h 12m left"), `Count`, `Percent`, `Duration`. `ProgressMeter`: a job's progress by bytes (`Total`, `Done`, `Show` at most once a second, `WriteLine` for lines that stay). Used by `scan`, `verify`, `stage`, `restore`, `restage` |
+| `src/Cli/BuildInfo.cs` | The build's version, configuration, commit, branch, dirty flag and build time (from the assembly attributes the `BdxlBuildInfo` target in `Bdxl.csproj` writes); `CreatedBy` = what a staged session records |
 | `src/Cli/Interrupt.cs` | Ctrl+C: `Interruptible` commands get `Interrupt.Requested` and stop cleanly; others (or a 2nd Ctrl+C) exit at once with a note. `Catalog.Save` runs inside `Interrupt.Critical()`, so a save is never cut off |
 | `src/Model/` | One file per type: `FileRecord`, `BackupRef`, `DiscRecord`, `BlankDisc`, `ManifestLine`, `DiscInfo`, `AppendSession`, `RepairMeta`, `RsStatus`, `Piece`, `Bin`, `PlanResult`, `UserException` |
 | `src/Model/Settings.cs` | `settings.json`: label prefix + never-reset counter, currency, history-keep, default-threads, ignore rules |
@@ -251,13 +263,13 @@ initializer sets `BDXL_PASSWORD` and `BDXL_AGENT=off` and makes packs small (8 �
 | `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done; a restage stopped after pack 2 continues from `.partial`, taking over only the packs whose files were checked (own non-parallel collection: `Interrupt` is process-wide; `EndToEndTests`, `CatalogTests` and `AgentTests` share it, as they read `Console.Out` or set `BDXL_AGENT`) |
 | `MasterKeyTests` | password/recovery envelopes, password change keeps the master key, envelopes bound to their catalog, `bdxl.key` round trip, KDF limits, `BDXLENC2` round trips/another key/another purpose/tampering, recovery key checksum; key rings: rotation, an old envelope opens only the old keys, a `bdxl-key-1` file opens and is rewritten as a ring |
 | `AgentTests` | in-process server on its own pipe with a test clock: hand over / get / lock, idle time restarts with use, maximum, Win+L and sleep per catalog, other protocol, second agent refused, commands use the agent instead of the password |
-| `CompressionTests` | auto/on/off, a location that fits only compressed: scan counts, plan, stage at the counted size, verify, restore, restage at the recorded level, level from the manifest; recount on a new level, alias rename, clear |
+| `CompressionTests` | auto/on/off, a location that fits only compressed: scan counts, plan, stage at the counted size, verify, restore, restage at the recorded level, level and codec from the manifest (catalog and manifest record `codec`); a copy without a codec is zstd, an unknown codec is refused with its reason (restore, verify); recount on a new level, alias rename, clear |
 | `KeyRotationTests` | after a rotation: catalog under the new key, history still checks, old disc verified/restored via the ring, new disc on the new key, each disc's bdxl.key opens only its keys (old password: old key only), leak simulation with `init --key-from`, append + restage keep the disc's key, a broken catalog is not rotated |
 | `CatalogTests` | nothing readable in an encrypted catalog, file list split per location (unchanged parts not rewritten, stale parts removed, rollback), unsplit list read and split + too-old marker, compression, damage, HMAC against mixed saves + accept, snapshots (never `bdxl.key`), pruning, rollback, `init` + wrong password, migration (history too, `--force`, interrupted), export/import, password change + recovery key, `password check`, backup restore into empty/own/other catalog |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
-| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, what verify prints (what it checks, every file with `--deep`, a damaged pack as soon as it is read), verify checks the disc's other files (each kind of damage found by a plain verify, with and without `--no-cache`, `_catalog` against its repair data), manifest hashes recorded by the first `--deep` verify of an older disc and the manifests compared with the catalog, progress lines of stage/restore/restage, of equally full discs the one with the largest file staged first, tiny files in one pack, a damaged pack (verify names it, restore loses only its file), restore from a copy on another disc, restage taking intact packs from the old disc and rebuilding the damaged one, restage without a source (refused / `--allow-partial`), 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), split restore one drive at a time, lost + restage (same layout), hand-edited catalog |
+| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, `version` (and `--version`) and the build every staged disc records (disc.json, the catalog, `discs`, kept by restage), what verify prints (what it checks, every file with `--deep`, a damaged pack as soon as it is read), verify checks the disc's other files (each kind of damage found by a plain verify, with and without `--no-cache`, `_catalog` against its repair data), manifest hashes recorded by the first `--deep` verify of an older disc and the manifests compared with the catalog, progress lines of stage/restore/restage, of equally full discs the one with the largest file staged first, tiny files in one pack, a damaged pack (verify names it, restore loses only its file), restore from a copy on another disc, restage taking intact packs from the old disc and rebuilding the damaged one, restage without a source (refused / `--allow-partial`), 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), split restore one drive at a time, lost + restage (same layout), hand-edited catalog |
 | `EncryptedDiscTests` | nothing on a disc shows names/hashes/counts, two discs with different files look alike, `bdxl.key` + README + packs.sha256 + key ids on the disc, verify + restore, a lost catalog rebuilt with `init --key-from` + `scandisc` (wrong/no password refused; unverified until `verify`), plain discs refused, old and new discs across a password change, `_catalog` repaired without and restored with the password, standalone backup, restage keeps the layout, a disc of another key refused (restage, restore) |
-| `AppendTests` | only new/changed files in the session's packs (numbering continued), session manifest of its own (merged on the disc in session order), burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only (packs too), refusals, the disc's own key and nothing telling in the session, a disc of another key refused (catalog or `--mount`) |
+| `AppendTests` | only new/changed files in the session's packs (numbering continued), the session's manifest hash and build recorded (and dropped by discard), session manifest of its own (merged on the disc in session order), burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only (packs too), refusals, the disc's own key and nothing telling in the session, a disc of another key refused (catalog or `--mount`) |
 | `CopiesTests` | per-location copies on different discs, never two on one disc, staged copies count for planning but only burned ones as made, lost discs, higher number of two locations, not onto an `--append` disc that holds it, split parts twice, end to end (stage, burn, restore from either disc, lost + restaged, alias rename) |
 | `MirrorTests` | an empty folder gets a copy that every save keeps in step (and opens as a catalog), without the mirror only read-only commands run (password change refused too), a missed save fixed by `mirror sync`, a damaged catalog taken back with `mirror restore` (also a listed-but-damaged file), a newer mirror, password change reaches the mirror, folder rules, `mirror none` while disconnected |
 

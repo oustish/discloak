@@ -20,6 +20,7 @@ public class BackupRef
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int Compression { get; set; }           // zstd level the stored copy was made with (0 = none); restage uses it again
+    public string? Codec { get; set; }             // what compressed it: "zstd" (null: not compressed, or made before it was recorded = zstd)
 
     public long Length { get; set; }               // plaintext bytes in the copy (the file's size, or the part's)
 

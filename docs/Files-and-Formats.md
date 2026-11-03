@@ -35,7 +35,8 @@ opened. Back up the whole folder.
 
 ```
 <disc>\
-  disc.json                label, creation time, sessions, format, catalog id, key id - plain JSON, nothing about the files
+  disc.json                label, creation time, sessions, format, catalog id, key id, the bdxl build that wrote it -
+                           plain JSON, nothing about the files
   bdxl.key                 the catalog's key file as it was when the disc was staged - plain JSON
   README.txt               how to read the disc, with or without bdxl
   packs.sha256             SHA-256 of every pack (sha256sum format) - plain
@@ -73,12 +74,14 @@ standard zstd stream that `zstd -d` reads.
   "catalogId": "849CE29D5206E512059962B7D091C5E4",
   "keyId": "C4782A3F591D44A3",
   "packSize": 67108864,
-  "chunkSize": 1048576
+  "chunkSize": 1048576,
+  "createdBy": "bdxl 0.6.0+8082b22.20261103T2215Z"
 }
 ```
 
 `restore` and `verify` use it to recognise a disc in any drive. `keyId` names the master key the disc's packs are
-encrypted with. How many files a disc holds and how big they are is only in the catalog and in the encrypted
+encrypted with. `createdBy` is the bdxl build that wrote the disc's latest session (see `bdxl version`; discs staged
+before 0.6.0 have none); the catalog keeps it for every session. How many files a disc holds and how big they are is only in the catalog and in the encrypted
 manifest.
 
 ### The manifest (`manifest.enc`, `manifest.sN.enc`)
@@ -88,10 +91,12 @@ whole number of 64 MiB:
 
 ```json
 {"source":"Photos/2024/IMG_0001.CR3","at":0,"size":25165824,"plainSize":25165824,"sha256":"…","modified":"2024-06-01T10:00:00Z"}
-{"source":"Docs/ledger.csv","at":25165824,"size":1203345,"plainSize":6400000,"sha256":"…","modified":"…","compression":3}
+{"source":"Docs/ledger.csv","at":25165824,"size":1203345,"plainSize":6400000,"sha256":"…","modified":"…","compression":3,"codec":"zstd"}
 ```
 
 `at`/`size`: where the stored bytes lie in the disc's data and how many there are; `plainSize`/`sha256`: the original.
+`compression`/`codec`: the level and the codec of a compressed copy (only `zstd` so far; a compressed copy without
+`codec`, staged before 0.6.0, is zstd too).
 A part of a split file adds `part`, `parts`, `offset` (where the part belongs), `fileSize` and `fileSha256`.
 
 bdxl reads only discs it made itself. Discs written with other tools cannot be recorded in a catalog.

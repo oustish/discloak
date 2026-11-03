@@ -1,6 +1,7 @@
 namespace Bdxl.Tests;
 
 /// <summary>Compression per location from scan to restore (the stored form itself: PackTests).</summary>
+[Collection(nameof(InterruptTests))]   // non-parallel: a test reads what a command prints (Console.Out is the whole process's)
 public class CompressionTests : IDisposable
 {
     readonly TempDir tmp = new();
@@ -66,7 +67,11 @@ public class CompressionTests : IDisposable
 
         Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
         var copy = Cat.Files.Single(f => f.RelPath == "ledger.csv").Backups.Single();
-        Assert.Equal(3, copy.Compression);
+        Assert.Equal((3, "zstd"), (copy.Compression, copy.Codec));
+        Assert.Null(Cat.Files.Single(f => f.RelPath == "photo.jpg").Backups.Single().Codec);
+        var lines = DiscFiles.ReadManifest(Disc, TestKeys.Key(tmp.File("cat")))!;
+        Assert.Equal((3, "zstd"), (lines.Single(l => l.Source == "Docs/ledger.csv").Compression, lines.Single(l => l.Source == "Docs/ledger.csv").Codec));
+        Assert.Null(lines.Single(l => l.Source == "Docs/photo.jpg").Codec);
         Assert.Equal(ledgerRec.CompressedSize, copy.StoredSize);                     // exactly as counted
         Assert.Equal(0, Cat.Files.Single(f => f.RelPath == "photo.jpg").Backups.Single().Compression);
         Assert.Equal(0, Bdxl("verify", "BDXL-0001", Disc, "--deep"));
@@ -84,7 +89,44 @@ public class CompressionTests : IDisposable
 
         Assert.Equal(0, Program.Main(["init", "--key-from", Disc, "--catalog", tmp.File("other")]));
         Assert.Equal(0, Program.Main(["scandisc", Disc, "--catalog", tmp.File("other")]));
-        Assert.Equal(3, TestKeys.Load(tmp.File("other")).Files.Single(f => f.RelPath == "ledger.csv").Backups.Single().Compression);
+        var fromDisc = TestKeys.Load(tmp.File("other")).Files.Single(f => f.RelPath == "ledger.csv").Backups.Single();
+        Assert.Equal((3, "zstd"), (fromDisc.Compression, fromDisc.Codec));
+        Assert.Equal([BuildInfo.CreatedBy], TestKeys.Load(tmp.File("other")).Discs.Single().WrittenBy);   // from its disc.json
+    }
+
+    [Fact]
+    public void A_copy_without_a_codec_is_zstd_and_one_with_a_codec_this_bdxl_does_not_know_is_refused_with_a_reason()
+    {
+        var ledger = Text(300_000, seed: 1);
+        File.WriteAllBytes(Directory.CreateDirectory(tmp.File("src")).FullName + "/ledger.csv", ledger);
+        Assert.Equal(0, Bdxl("blanks", "add", "1", "--size", "2MB"));
+        Assert.Equal(0, Bdxl("compression", "set", "--default", "on"));
+        Assert.Equal(0, Bdxl("scan", tmp.File("src"), "--name", "Docs"));
+        Assert.Equal(0, Bdxl("stage", tmp.File("stg")));
+        Assert.Equal(0, Bdxl("burned", "BDXL-0001"));
+
+        void SetCodec(string? codec)
+        {
+            var cat = Cat;
+            cat.Files.Single().Backups.Single().Codec = codec;
+            cat.Save();
+        }
+        SetCodec(null);   // as in a catalog from before the codec was recorded
+        Assert.Equal(0, Bdxl("restore", tmp.File("out"), "*", "--mount", Disc));
+        Assert.Equal(ledger, File.ReadAllBytes(tmp.File("out/Docs/ledger.csv")));
+
+        SetCodec("xz");   // as if a newer bdxl had made it
+        var output = new StringWriter();
+        var stdout = Console.Out;
+        Console.SetOut(output);
+        try
+        {
+            Assert.Equal(3, Bdxl("restore", tmp.File("out2"), "*", "--mount", Disc));
+            Assert.Equal(3, Bdxl("verify", "BDXL-0001", Disc, "--deep"));
+        }
+        finally { Console.SetOut(stdout); }
+        Assert.Contains("compressed with 'xz', which this bdxl does not know (a newer bdxl reads it)", output.ToString());
+        Assert.False(File.Exists(tmp.File("out2/Docs/ledger.csv")));
     }
 
     [Fact]

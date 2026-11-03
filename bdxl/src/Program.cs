@@ -30,6 +30,7 @@ public static class Program
 
         if (opt.Command == null)
         {
+            if (opt.Has("version")) return VersionCommand.Print();
             HelpCommand.PrintOverview();
             return opt.Has("help") ? 0 : 1;
         }

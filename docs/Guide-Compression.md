@@ -7,7 +7,8 @@ with a default for all. It is off unless you turn it on.
 
 ## How it works
 
-- Every 1 MiB piece of a file becomes one zstd frame: together a standard zstd stream (`zstd -d` reads it).
+- Every 1 MiB piece of a file becomes one zstd frame: together a standard zstd stream (`zstd -d` reads it). Each
+  compressed copy records its level and codec (`zstd`), in the catalog and in the disc's manifest.
   Incompressible data grows by about 30 bytes per MiB - `auto` does not even try the usual compressed formats.
 - `scan` also counts the **exact** size each file will have on the disc, in the same read as hashing, so `plan`
   and `stage` still fill discs exactly. A file whose size was not counted for today's setting is stored

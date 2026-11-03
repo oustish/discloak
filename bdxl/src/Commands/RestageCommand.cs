@@ -82,6 +82,7 @@ public sealed class RestageCommand : ICommand
                     foreach (var (file, copy) in here)
                     {
                         if (failed.Contains(copy)) continue;
+                        if (copy.Compression > 0 && Compression.Unreadable(copy.Codec) is { } why) { Fail(copy, file, why); continue; }
                         if (!sources.TryGetValue(copy, out var source)) sources[copy] = source = PieceSource.Open(copy, onSource);
                         if (source == null) { Fail(copy, file, "no source file with identical content"); continue; }
                         long from = Math.Max(copy.At, start), to = Math.Min(copy.End, end);
@@ -163,6 +164,7 @@ public sealed class RestageCommand : ICommand
 
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, x.File)).ToList();
         disc.Manifests = [DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session: 1)];
+        disc.WrittenBy = [BuildInfo.CreatedBy];
         disc.OccupiedBytes = Math.Max(packs * DiscFormat.PackOnDisc + DiscFiles.ManifestSpace(manifest) + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
         c.Arc.LinkDuplicates();
         c.Cat.Save();

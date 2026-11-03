@@ -260,7 +260,8 @@ public sealed class StageCommand : ICommand
 
             var copy = new BackupRef
             {
-                Disc = disc.Label, At = at, StoredSize = stored, Length = p.Length, Sha256 = f.Sha256, Compression = level
+                Disc = disc.Label, At = at, StoredSize = stored, Length = p.Length, Sha256 = f.Sha256, Compression = level,
+                Codec = level > 0 ? Compression.Zstd : null
             };
             if (p.IsPart)
             {
@@ -290,7 +291,7 @@ public sealed class StageCommand : ICommand
     static (int Dups, long FolderBytes) Finish(Ctx c, DiscRecord disc, string dir, List<ManifestLine> manifest,
                                                long sessionSpace, long occupiedBefore, MasterKey key, int session)
     {
-        disc.SetManifest(session, DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session));   // the disc describes itself
+        disc.SetSession(session, DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session), BuildInfo.CreatedBy);   // the disc describes itself
         int dups = c.Arc.LinkDuplicates();                  // other files with identical content now point at this disc too
         long reserve = disc.Reserve ?? 0;
         disc.OccupiedBytes = occupiedBefore + sessionSpace + reserve;

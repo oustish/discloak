@@ -60,9 +60,13 @@ public static class StoredForm
         return (Convert.ToHexString(hash.GetHashAndReset()), stored);
     }
 
-    /// <summary>Turns the stored form back into the original bytes (written to output); returns their SHA-256 (progress: bytes written).</summary>
-    public static string Read(Stream stored, int level, Stream output, CancellationToken ct = default, Action<long>? progress = null)
+    /// <summary>
+    /// Turns the stored form back into the original bytes (written to output); returns their SHA-256 (progress: bytes
+    /// written). A codec this bdxl does not know is an InvalidDataException that says so.
+    /// </summary>
+    public static string Read(Stream stored, int level, string? codec, Stream output, CancellationToken ct = default, Action<long>? progress = null)
     {
+        if (level > 0 && Compression.Unreadable(codec) is { } why) throw new InvalidDataException(why);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Stream source = stored;
         ZstdSharp.DecompressionStream? zstd = null;

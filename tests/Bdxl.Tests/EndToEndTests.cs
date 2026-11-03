@@ -350,6 +350,33 @@ public class EndToEndTests : IDisposable
     }
 
     [Fact]
+    public void Version_names_the_build_and_every_staged_disc_records_it()
+    {
+        Assert.Matches(@"^\d+\.\d+\.\d+\+([0-9a-f]{7,}(-dirty)?\.)?\d{8}T\d{4}Z$", BuildInfo.Full);   // semver build metadata
+        var (code, text) = Run("version");
+        Assert.Equal(0, code);
+        Assert.Matches(@"^bdxl \d+\.\d+\.\d+ \((Debug|Release)\)\r?\n", text);
+        Assert.Matches(@"\ncommit ([0-9a-f]{7,}\*? on .+, built \d{4}-\d\d-\d\d \d\d:\d\d UTC|unknown)", text);
+        Assert.Contains($"full version: {BuildInfo.Full}", text);
+        Assert.Equal(text, Run("--version").Text);
+
+        tmp.RandomFile("src/a.bin", 30_000, seed: 1);
+        Bdxl("blanks", "add", "1", "--size", "1MB");
+        Bdxl("scan", tmp.File("src"), "--name", "S");
+        Bdxl("stage", tmp.File("stg"));
+        Assert.Equal(BuildInfo.CreatedBy, DiscFiles.ReadInfo(Disc("BDXL-0001"))!.CreatedBy);
+        Assert.Equal([BuildInfo.CreatedBy], TestKeys.Load(tmp.File("cat")).Discs.Single().WrittenBy);
+        Assert.Contains($"by {BuildInfo.CreatedBy}", Run("discs").Text);
+
+        var cat = TestKeys.Load(tmp.File("cat"));
+        cat.Discs.Single().WrittenBy.Clear();   // as on a disc staged before 0.6.0
+        cat.Save();
+        Bdxl("lost", "BDXL-0001");
+        Bdxl("restage", "BDXL-0001", tmp.File("re"));
+        Assert.Equal([BuildInfo.CreatedBy], TestKeys.Load(tmp.File("cat")).Discs.Single().WrittenBy);   // the build that rebuilt it
+    }
+
+    [Fact]
     public void A_file_damaged_on_one_disc_is_restored_from_its_copy_on_another()
     {
         var a = tmp.RandomFile("src/a.bin", 50_000, seed: 1);

@@ -151,7 +151,7 @@ public class PackTests : IDisposable
 
             stored.Position = 0;
             using var back = new MemoryStream();
-            Assert.Equal(hash, StoredForm.Read(stored, level, back));
+            Assert.Equal(hash, StoredForm.Read(stored, level, Compression.CodecOf(level, null), back));
             Assert.Equal(plain, back.ToArray());
         }
     }

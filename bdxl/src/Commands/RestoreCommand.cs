@@ -95,7 +95,7 @@ public sealed class RestoreCommand : ICommand
             if (!readers.TryGetValue(copy.Disc, out var reader)) readers[copy.Disc] = reader = new PackReader(mounts[copy.Disc], c.Keys);
             using var output = new FileStream(dst, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
             using var stored = reader.Open(copy.At, copy.StoredSize);
-            return StoredForm.Read(stored, copy.Compression, output, Interrupt.Token,
+            return StoredForm.Read(stored, copy.Compression, copy.Codec, output, Interrupt.Token,
                 read => meter.Show(StatusLine.Count(handled, jobs.Count), $"{what} ({StatusLine.Percent(read, copy.Length)}) from {copy.Disc}", jobRead + read));
         }
 

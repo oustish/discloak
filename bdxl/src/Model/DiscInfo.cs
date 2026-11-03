@@ -3,13 +3,14 @@ namespace Bdxl;
 /// <summary>
 /// disc.json on a disc: lets the disc identify itself before anything is decrypted ('restore', 'verify', 'scandisc').
 /// Holds nothing about the files - not even how many there are: that is in the encrypted manifest. Format, PackSize and
-/// ChunkSize describe the packs; CatalogId and KeyId name the key in the disc's bdxl.key.
+/// ChunkSize describe the packs; CatalogId and KeyId name the key in the disc's bdxl.key. CreatedBy = the bdxl build that
+/// wrote it (its latest session): "bdxl 0.6.0+8082b22.20261103T2215Z" (none on discs staged before 0.6.0).
 /// </summary>
 public record DiscInfo(string Label, DateTime CreatedUtc, string Format, int Sessions, string? CatalogId, string? KeyId,
-                       long PackSize, int ChunkSize)
+                       long PackSize, int ChunkSize, string? CreatedBy = null)
 {
     public static DiscInfo For(DiscRecord d, string catalogId) =>
-        new(d.Label, d.CreatedUtc, DiscFormat.Name, d.Sessions, catalogId, d.KeyId, DiscFormat.PackData, DiscFormat.ChunkSize);
+        new(d.Label, d.CreatedUtc, DiscFormat.Name, d.Sessions, catalogId, d.KeyId, DiscFormat.PackData, DiscFormat.ChunkSize, BuildInfo.CreatedBy);
 
     /// <summary>Why this program cannot read the disc's packs, or null if it can.</summary>
     public string? Unreadable() =>

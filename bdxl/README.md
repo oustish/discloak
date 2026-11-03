@@ -7,6 +7,8 @@ with an optional recovery key and key rotation) protects everything.
 
 **Documentation:** [`../docs/Home.md`](../docs/Home.md) - getting started, step-by-step guides, command reference,
 formats, troubleshooting. Design: [`ENCRYPTION.md`](ENCRYPTION.md). Developer notes: [`HANDOFF.md`](HANDOFF.md).
+Working on it (build, tests, versions, commits): [`../CONTRIBUTING.md`](../CONTRIBUTING.md). What changed in each
+version: [`../CHANGELOG.md`](../CHANGELOG.md); `bdxl version` shows the version of an exe.
 
     dotnet publish -p:PublishProfile=win-x64   one file: ../publish/bdxl.exe (needs the .NET 10 SDK; runs on the .NET 10 runtime)
     dotnet build -c Release          (or a normal build: bin/Release/net10.0/, exe + DLLs)

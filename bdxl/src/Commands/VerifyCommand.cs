@@ -119,7 +119,7 @@ public sealed class VerifyCommand : ICommand
                     try
                     {
                         using var stored = reader.Open(copy.At, copy.StoredSize);
-                        string got = StoredForm.Read(stored, copy.Compression, Stream.Null, Interrupt.Token);
+                        string got = StoredForm.Read(stored, copy.Compression, copy.Codec, Stream.Null, Interrupt.Token);
                         if (!Hashing.SameHash(got, copy.ContentSha256)) damage = "decrypts, but the content differs from the catalog";
                     }
                     catch (InvalidDataException ex) { damage = ex.Message; }
@@ -339,7 +339,8 @@ public sealed class VerifyCommand : ICommand
     /// <summary>A manifest line that describes the catalog's copy.</summary>
     static bool Same(ManifestLine line, BackupRef copy) =>
         line.Size == copy.StoredSize && line.PlainSize == copy.Length && Hashing.SameHash(line.Sha256, copy.ContentSha256) &&
-        (line.Compression ?? 0) == copy.Compression && (line.Part ?? 0) == copy.Part && (line.Offset ?? 0) == copy.Offset;
+        (line.Compression ?? 0) == copy.Compression && Compression.CodecOf(line.Compression ?? 0, line.Codec) == Compression.CodecOf(copy.Compression, copy.Codec) &&
+        (line.Part ?? 0) == copy.Part && (line.Offset ?? 0) == copy.Offset;
 
     /// <summary>
     /// The files with data in pack `pack`, for the status line: "S/a.bin", "S/a.bin +12 more" or the padding.

@@ -234,7 +234,7 @@ bdxl find <text|hashPrefix|*>
 ```
 
 ### discs
-Every disc: state, files, packs, sessions, cost, notes, free space.
+Every disc: state, files, packs, sessions, cost, the bdxl build that staged it (its latest session), notes, free space.
 ```
 bdxl discs
 ```
@@ -381,11 +381,21 @@ bdxl settings set <key> <value>
 | `lock-on-sleep` | yes | lock when the computer goes to sleep |
 | `mirror` | (none) | a folder for the [catalog mirror](Guide-Mirror.md), or `none`; kept in `mirror.json`, not in the encrypted settings |
 
-### workflow / help
+### workflow / help / version
 ```
 bdxl workflow          # a sample session (prints commands, runs nothing)
 bdxl help [<command>]
+bdxl version           # or: bdxl --version
 ```
+`version` shows which build this is:
+```
+bdxl 0.6.0 (Release)
+commit 8082b22 on master, built 2026-11-03 22:15 UTC
+full version: 0.6.0+8082b22.20261103T2215Z
+```
+A `*` after the commit (and `-dirty` in the full version) means it was built with uncommitted changes. The full
+version is what every staged disc records in its `disc.json` (`createdBy`). The changes of each version are in
+`CHANGELOG.md` in the repository.
 
 ## Environment variables
 
