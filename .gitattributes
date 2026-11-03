@@ -1,0 +1,2 @@
+# The fixtures are files exactly as an older version wrote them: never convert their line endings
+tests/*/Fixtures/** -text

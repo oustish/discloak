@@ -10,32 +10,32 @@ everything else is restored.
 ## Find what you need
 
 ```
-bdxl find holiday            # any part of a path
-bdxl find 3FA9C1             # or the start of a SHA-256
-bdxl find "*"                # everything
+discloak find holiday            # any part of a path
+discloak find 3FA9C1             # or the start of a SHA-256
+discloak find "*"                # everything
 ```
 
 The output shows each match, every disc holding it, when it was burned, and whether it is the current version.
 
 ## Restore files (one disc in one drive)
 
-1. Unlock (or have the password ready): `bdxl unlock`
+1. Unlock (or have the password ready): `discloak unlock`
 2. Put the disc in, e.g. drive `G:`, and run:
    ```
-   bdxl restore D:\Recovered "holiday" --mount G:\
+   discloak restore D:\Recovered "holiday" --mount G:\
    ```
 3. Files go to `D:\Recovered\<alias>\<path>`, e.g. `D:\Recovered\Photos\2019\holiday\IMG_0001.jpg`.
 4. If the files are spread over several discs, the end of the output says which ones are still needed:
    ```
    Insert / mount these discs and run the same command again with --mount:
-     BDXL-0004  (12 file(s))
+     DISC-0004  (12 file(s))
    ```
    Swap the disc and run the same command again. Files already restored show as `EXISTS` and are skipped.
 
 ## Several drives at once
 
 ```
-bdxl restore D:\Recovered "*" --mount "F:\;G:\"
+discloak restore D:\Recovered "*" --mount "F:\;G:\"
 ```
 
 Discs are recognised by their `disc.json`, whatever drive they are in.
@@ -47,12 +47,12 @@ Discs are recognised by their `disc.json`, whatever drive they are in.
 | `--source Photos` | only files of this location (alias) |
 | `--flat` | all files straight into the destination folder, without the alias/path folders |
 | `--overwrite` | replace files that already exist in the destination |
-| `--disc BDXL-0004` | the disc in `--mount` has no readable `disc.json`: tell bdxl which disc it is |
+| `--disc DISC-0004` | the disc in `--mount` has no readable `disc.json`: tell discloak which disc it is |
 
 ## Restore everything
 
 ```
-bdxl restore D:\Recovered "*" --mount G:\
+discloak restore D:\Recovered "*" --mount G:\
 ```
 
 Then repeat with each disc it asks for. The query `*` matches all files. Use `--source <alias>` for one location.
@@ -65,7 +65,7 @@ version found on a live disc. Files that are on no surviving disc are listed at 
 ## Split files
 
 A file stored in parts on several discs is collected disc by disc. Each verified part waits next to the target as
-`<file>.bdxl-part.001` …; when the last one is there, the parts are joined, the whole file is checked, and the parts
+`<file>.discloak-part.001` …; when the last one is there, the parts are joined, the whole file is checked, and the parts
 are removed. Put the discs in in any order and run the same command each time.
 
 ## Interrupting
@@ -81,6 +81,6 @@ If the catalog is gone, start a new one from the disc's own key and read the dis
 ## Checking a disc without restoring
 
 ```
-bdxl verify BDXL-0004 G:\          # packs intact? (no password needed for this part)
-bdxl verify BDXL-0004 G:\ --deep   # and every file decrypts to the right content?
+discloak verify DISC-0004 G:\          # packs intact? (no password needed for this part)
+discloak verify DISC-0004 G:\ --deep   # and every file decrypts to the right content?
 ```

@@ -9,12 +9,12 @@ big. With `--split`, it is cut into parts, one per disc.
 
 1. See it:
    ```
-   bdxl plan                 # lists the file as too big
-   bdxl plan --split         # shows the parts on the discs
+   discloak plan                 # lists the file as too big
+   discloak plan --split         # shows the parts on the discs
    ```
 2. Stage with `--split`, as many discs as the parts need:
    ```
-   bdxl stage E:\Staging --split --max-discs 3 --with-catalog
+   discloak stage E:\Staging --split --max-discs 3 --with-catalog
    ```
 3. Burn, verify and record each disc as usual.
 
@@ -32,8 +32,8 @@ big. With `--split`, it is cut into parts, one per disc.
 ## Restoring
 
 ```
-bdxl restore D:\Recovered "image.vhdx" --mount G:\
+discloak restore D:\Recovered "image.vhdx" --mount G:\
 ```
 
 Put the discs in one after another and run the same command each time. Verified parts wait next to the target as
-`image.vhdx.bdxl-part.001` …; when all are there, they are joined and the whole file is checked against its hash.
+`image.vhdx.discloak-part.001` …; when all are there, they are joined and the whole file is checked against its hash.

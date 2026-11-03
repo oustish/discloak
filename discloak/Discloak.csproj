@@ -1,0 +1,79 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>discloak</AssemblyName>
+    <RootNamespace>Discloak</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- major.minor.patch, raised by hand in the commit that makes the change: see CONTRIBUTING.md -->
+    <Version>0.8.0</Version>
+    <Authors>oustish</Authors>
+    <Copyright>Copyright 2026 oustish (https://github.com/oustish)</Copyright>
+    <!-- DiscloakBuildInfo below appends the short commit, uncommitted changes and the build time instead of the full commit -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <!--
+    What the exe was built from, for 'discloak version' and the "createdBy" each staged disc records:
+    InformationalVersion = 0.6.0+<commit>[-dirty].<yyyyMMddTHHmmZ> (semver build metadata), plus the branch, the
+    commit, whether there were uncommitted changes and the build time (UTC) as assembly metadata. Without git
+    (a source copy) it is 0.6.0+<yyyyMMddTHHmmZ> and the commit is unknown.
+  -->
+  <Target Name="DiscloakBuildInfo" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="DiscloakCommit" />
+      <Output TaskParameter="ExitCode" PropertyName="DiscloakGitExit" />
+    </Exec>
+    <Exec Command="git branch --show-current" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" WorkingDirectory="$(MSBuildProjectDirectory)" Condition="'$(DiscloakGitExit)' == '0'">
+      <Output TaskParameter="ConsoleOutput" PropertyName="DiscloakBranch" />
+    </Exec>
+    <Exec Command="git status --porcelain" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low" StandardErrorImportance="low" WorkingDirectory="$(MSBuildProjectDirectory)" Condition="'$(DiscloakGitExit)' == '0'">
+      <Output TaskParameter="ConsoleOutput" PropertyName="DiscloakChanges" />
+    </Exec>
+    <PropertyGroup>
+      <DiscloakCommit Condition="'$(DiscloakGitExit)' != '0'"></DiscloakCommit>
+      <DiscloakDirty>false</DiscloakDirty>
+      <DiscloakDirty Condition="'$(DiscloakCommit)' != '' and '$(DiscloakChanges)' != ''">true</DiscloakDirty>
+      <DiscloakDirtyTag Condition="'$(DiscloakDirty)' == 'true'">-dirty</DiscloakDirtyTag>
+      <DiscloakNow>$([System.DateTime]::UtcNow.ToString("yyyyMMddHHmm"))</DiscloakNow>
+      <DiscloakBuildStamp>$(DiscloakNow.Substring(0, 8))T$(DiscloakNow.Substring(8, 4))Z</DiscloakBuildStamp>
+      <DiscloakBuiltUtc>$(DiscloakNow.Substring(0, 4))-$(DiscloakNow.Substring(4, 2))-$(DiscloakNow.Substring(6, 2))T$(DiscloakNow.Substring(8, 2)):$(DiscloakNow.Substring(10, 2)):00Z</DiscloakBuiltUtc>
+      <InformationalVersion Condition="'$(DiscloakCommit)' != ''">$(Version)+$(DiscloakCommit)$(DiscloakDirtyTag).$(DiscloakBuildStamp)</InformationalVersion>
+      <InformationalVersion Condition="'$(DiscloakCommit)' == ''">$(Version)+$(DiscloakBuildStamp)</InformationalVersion>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyMetadata Include="GitCommit" Value="$(DiscloakCommit)" />
+      <AssemblyMetadata Include="GitBranch" Value="$(DiscloakBranch)" />
+      <AssemblyMetadata Include="GitDirty" Value="$(DiscloakDirty)" />
+      <AssemblyMetadata Include="BuiltUtc" Value="$(DiscloakBuiltUtc)" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <Using Include="System.Globalization" />
+    <Using Include="System.Security.Cryptography" />
+    <Using Include="System.Text" />
+    <Using Include="System.Text.Json" />
+    <Using Include="System.Text.Json.Serialization" />
+    <Using Include="System.Text.RegularExpressions" />
+  </ItemGroup>
+
+  <!-- the license and the third-party notices go with every copy of the program: next to discloak.exe when published -->
+  <ItemGroup>
+    <None Include="..\LICENSE.md;..\LICENSING.md;..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)"
+          CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.14" />
+    <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+  </ItemGroup>
+
+</Project>

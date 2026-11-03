@@ -30,16 +30,16 @@ Level: zstd 1–19, default 3. Higher levels pack a little tighter and are much 
 
 1. Set it:
    ```
-   bdxl compression set Docs auto
+   discloak compression set Docs auto
    ```
 2. Count the compressed sizes (reads the affected files once more):
    ```
-   bdxl scan
+   discloak scan
    ```
    Until this has run, `plan` and `stage` count those files uncompressed, so nothing ever overfills.
 3. See the effect:
    ```
-   bdxl compression list
+   discloak compression list
    ```
    ```
    Default: off
@@ -51,9 +51,9 @@ Level: zstd 1–19, default 3. Higher levels pack a little tighter and are much 
 ## Other settings
 
 ```
-bdxl compression set --default auto            # every location without its own setting
-bdxl compression set Docs on --level 9         # another mode or level for one location
-bdxl compression clear Docs                    # back to the default
+discloak compression set --default auto            # every location without its own setting
+discloak compression set Docs on --level 9         # another mode or level for one location
+discloak compression clear Docs                    # back to the default
 ```
 
 A changed level means the sizes are counted again on the next `scan`.

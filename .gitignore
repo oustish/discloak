@@ -8,7 +8,7 @@ obj/
 *.user
 *.suo
 
-# a catalog created by running bdxl from inside the repo (the default --catalog is ./catalog):
+# a catalog created by running discloak from inside the repo (the default --catalog is ./catalog):
 # it lists personal files and hashes and does not belong in source control
 catalog/
 

@@ -3,22 +3,22 @@
 [Home](Home.md) › Several Copies
 
 By default every file is stored once. A disc that becomes unreadable then loses the files that exist nowhere else.
-For data that matters, ask for more copies: bdxl keeps planning them until each file is on that many **different**
+For data that matters, ask for more copies: discloak keeps planning them until each file is on that many **different**
 discs. Two copies of one file never go on the same disc.
 
 ## Steps
 
 1. Choose the number per location (or for all of them):
    ```
-   bdxl copies set Photos 2          # the location (alias) 'Photos' wants 2 copies
-   bdxl copies set --default 1       # every other location: 1 (the default)
-   bdxl copies list                  # the numbers and, per location, how many files have fewer burned copies
+   discloak copies set Photos 2          # the location (alias) 'Photos' wants 2 copies
+   discloak copies set --default 1       # every other location: 1 (the default)
+   discloak copies list                  # the numbers and, per location, how many files have fewer burned copies
    ```
 2. Plan and stage as usual. `plan` counts the extra copies ("incl. N further copies of files already on a disc");
    each copy lands on a different disc:
    ```
-   bdxl plan
-   bdxl stage E:\Staging --max-discs 2
+   discloak plan
+   discloak stage E:\Staging --max-discs 2
    ```
 3. Burn, verify and record each disc (`burned`). A copy counts as made only when its disc is burned:
    `copies list` and `status` show what is still missing.

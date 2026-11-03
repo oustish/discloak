@@ -1,6 +1,0 @@
-<Solution>
-  <Folder Name="/tests/">
-    <Project Path="tests/Bdxl.Tests/Bdxl.Tests.csproj" />
-  </Folder>
-  <Project Path="bdxl/Bdxl.csproj" />
-</Solution>
