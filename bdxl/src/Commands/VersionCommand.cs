@@ -10,7 +10,8 @@ public sealed class VersionCommand : ICommand
     public string Details => """
         The version (major.minor.patch), Debug or Release, and the git commit and branch it was built from - with *
         when it was built with uncommitted changes - and when it was built (UTC). The last line is the full version
-        as every staged disc records it in disc.json ("createdBy"). Include it when reporting a problem.
+        as every staged disc records it in disc.json ("createdBy"), then the copyright and the license. Include it
+        when reporting a problem.
         """;
     public bool AllowBrokenCatalog => true;
     public bool NeedsCatalog => false;
@@ -26,6 +27,8 @@ public sealed class VersionCommand : ICommand
         string built = BuildInfo.BuiltUtc is { } t ? $", built {t:yyyy-MM-dd HH:mm} UTC" : "";
         Console.WriteLine(commit + built + (BuildInfo.Dirty ? "   (*: with uncommitted changes)" : ""));
         Console.WriteLine($"full version: {BuildInfo.Full}");
+        Console.WriteLine($"{BuildInfo.Copyright}. License: {BuildInfo.License} - free to use, not to compete with " +
+                          "(LICENSE.md, LICENSING.md and THIRD-PARTY-NOTICES.md come with bdxl.exe).");
         return 0;
     }
 }

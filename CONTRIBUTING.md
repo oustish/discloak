@@ -55,6 +55,16 @@ The build adds the rest (the `BdxlBuildInfo` target in `Bdxl.csproj`): the full 
 section to `CHANGELOG.md`, commit, publish, and tag the commit: `git tag v0.6.0`, `git push --tags`. An exe built from
 uncommitted changes shows `*` in `bdxl version` (and `-dirty` on its discs).
 
+## License
+
+bdxl is under the [PolyForm Shield License 1.0.0](LICENSE.md); [LICENSING.md](LICENSING.md) says in plain words what
+it allows, and holds the rules for the name "bdxl" and the format names. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+has the licenses of the components inside `bdxl.exe`; a new dependency adds its notice there, word for word from its
+package or project. `dotnet publish` puts all three files next to `bdxl.exe`; they go with every copy given away.
+
+By contributing a change you agree that it is distributed under the project's license, and that the author may also
+license it under other terms (so that separate licenses can be granted for the whole program).
+
 ## Commits
 
 - One change per commit, the message saying what changed for the user (the first line) and why (below).

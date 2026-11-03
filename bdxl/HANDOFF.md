@@ -1,7 +1,9 @@
-# bdxl – handoff notes (state as of 2026-11-03, version 0.7.0)
+# bdxl – handoff notes (state as of 2026-11-03, version 0.7.1)
 
 How to build, test, version and commit: [`../CONTRIBUTING.md`](../CONTRIBUTING.md). Changes per version:
-[`../CHANGELOG.md`](../CHANGELOG.md).
+[`../CHANGELOG.md`](../CHANGELOG.md). License: PolyForm Shield 1.0.0 ([`../LICENSE.md`](../LICENSE.md),
+[`../LICENSING.md`](../LICENSING.md): plain words, name and format rules; [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md)),
+copied next to `bdxl.exe` by publish (`Bdxl.csproj`); `BuildInfo.Copyright`/`License` for `version`.
 
 ## Status
 - C# / .NET 10 console app (`net10.0`), 86 source files under `src/`, single namespace `Bdxl`, classic `Main` (no top-level statements).

@@ -9,6 +9,9 @@ with an optional recovery key and key rotation) protects everything.
 formats, troubleshooting. Design: [`ENCRYPTION.md`](ENCRYPTION.md). Developer notes: [`HANDOFF.md`](HANDOFF.md).
 Working on it (build, tests, versions, commits): [`../CONTRIBUTING.md`](../CONTRIBUTING.md). What changed in each
 version: [`../CHANGELOG.md`](../CHANGELOG.md); `bdxl version` shows the version of an exe.
+License: [PolyForm Shield 1.0.0](../LICENSE.md) - free to use, not to compete with; see
+[`../LICENSING.md`](../LICENSING.md) (also the name and format rules) and
+[`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md).
 
     dotnet publish -p:PublishProfile=win-x64   one file: ../publish/bdxl.exe (needs the .NET 10 SDK; runs on the .NET 10 runtime)
     dotnet build -c Release          (or a normal build: bin/Release/net10.0/, exe + DLLs)

@@ -35,6 +35,8 @@ the catalog, with nothing but the password.
 - [Troubleshooting and FAQ](Troubleshooting.md): exit codes, common messages, questions
 
 Design background: [`bdxl/ENCRYPTION.md`](../bdxl/ENCRYPTION.md). Developer notes: [`bdxl/HANDOFF.md`](../bdxl/HANDOFF.md).
+License: [PolyForm Shield 1.0.0](../LICENSE.md) - free to use for any purpose, not to build a competing product on
+([what that means](../LICENSING.md)).
 
 ## In one minute
 

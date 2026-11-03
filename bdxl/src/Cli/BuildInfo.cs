@@ -14,6 +14,8 @@ public static class BuildInfo
     public static string Full { get; } = Me.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
     public static string Version => Full.Split('+')[0];
     public static string CreatedBy => "bdxl " + Full;
+    public static string Copyright { get; } = Me.GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright ?? "";
+    public const string License = "PolyForm Shield 1.0.0";
     public static string Configuration { get; } = Me.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "unknown";
     public static string? Commit { get; } = Metadata("GitCommit");
     public static string? Branch { get; } = Metadata("GitBranch");

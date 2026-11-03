@@ -358,6 +358,7 @@ public class EndToEndTests : IDisposable
         Assert.Matches(@"^bdxl \d+\.\d+\.\d+ \((Debug|Release)\)\r?\n", text);
         Assert.Matches(@"\ncommit ([0-9a-f]{7,}\*? on .+, built \d{4}-\d\d-\d\d \d\d:\d\d UTC|unknown)", text);
         Assert.Contains($"full version: {BuildInfo.Full}", text);
+        Assert.Contains("Copyright 2026 oustish (https://github.com/oustish). License: PolyForm Shield 1.0.0", text);
         Assert.Equal(text, Run("--version").Text);
 
         tmp.RandomFile("src/a.bin", 30_000, seed: 1);

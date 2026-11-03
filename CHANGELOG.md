@@ -3,6 +3,14 @@
 What changed in each version of bdxl. Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions)
 for what raises which part. `bdxl version` shows the version of an exe.
 
+## 0.7.1 - 2026-11-03
+
+- License: [PolyForm Shield 1.0.0](LICENSE.md) - free to use for any purpose, not to build a competing product on;
+  [LICENSING.md](LICENSING.md) explains it and sets the rules for the name and the format names.
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) holds the licenses of the components in `bdxl.exe`. `dotnet publish`
+  puts all three next to the exe.
+- `bdxl version` shows the copyright and the license.
+
 ## 0.7.0 - 2026-11-03
 
 - `catalog import` wipes the plain export once the import is saved: every file in the folder overwritten with random
