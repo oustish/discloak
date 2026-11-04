@@ -61,9 +61,19 @@ The build adds the rest (the `DiscloakBuildInfo` target in `Discloak.csproj`): t
 (UTC). `discloak version` shows it, and every staged session records it (`disc.json` "createdBy", the catalog's
 `WrittenBy`), so a disc says which build made it.
 
-**Publishing** a version: raise the version (if the changes since the last publish have not already), add its
-section to `CHANGELOG.md`, commit, publish, and tag the commit: `git tag v0.6.0`, `git push --tags`. An exe built from
-uncommitted changes shows `*` in `discloak version` (and `-dirty` on its discs).
+**Releasing** a version, from `master`:
+
+1. The version and its `CHANGELOG.md` section are in (raised by the changes since the last release).
+2. Tag the merge commit: `git tag -a v0.9.0 -m "discloak 0.9.0"`, then `git push origin master --tags`.
+3. Build the release files from the tag: `.\tools\release.ps1 v0.9.0`. It builds in a fresh worktree of the tag
+   (so nothing uncommitted can get in) and writes `release\v0.9.0\`: `discloak-0.9.0-win-x64.zip` (the exe, its
+   license files and the changelog), `discloak-0.9.0-source.zip` (`git archive` of the tag), `SHA256SUMS.txt` and
+   `notes.md` (the version's changelog section).
+4. On GitHub: a release for the tag, with `notes.md` as its text and the two zips and `SHA256SUMS.txt` attached
+   (Releases › Draft a new release, or `gh release create v0.9.0 release\v0.9.0\*.zip release\v0.9.0\SHA256SUMS.txt
+   --notes-file release\v0.9.0\notes.md`).
+
+An exe built from uncommitted changes shows `*` in `discloak version` (and `-dirty` on its discs): never release one.
 
 ## License
 
@@ -84,6 +94,18 @@ license it under other terms (so that separate licenses can be granted for the w
 - Releases are published and tagged from `master` only, so `master` is always releasable.
 - On GitHub: pushing a branch is optional (a backup, or a pull request). Changes from others come as pull requests
   to `master`.
+
+## Pull requests
+
+Welcome, for fixes and for features that fit the project (for a larger change, open an issue first to talk it over).
+
+- One topic per pull request, from a `feature/<name>` or `fix/<name>` branch, against `master`.
+- What every change needs (above): tests that fail without it - `dotnet test Discloak.slnx -c Release` passes -,
+  the docs it touches, and a line in `CHANGELOG.md` under `## Unreleased` (create it at the top if it is not there).
+  Leave `<Version>` alone: it is raised when the change is merged.
+- Never break reading what older versions wrote (discs, catalogs, key files): see *Formats* above and the fixtures.
+- A security issue is not a pull request or an issue: see [SECURITY.md](SECURITY.md).
+- By opening a pull request you agree to the contribution terms under *License* above.
 
 ## Commits
 

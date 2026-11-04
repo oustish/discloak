@@ -4,6 +4,16 @@ What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entr
 name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
 `discloak version` shows the version of an exe.
 
+## 0.9.1 - 2026-11-04
+
+The repository, ready to be public; the program itself is unchanged.
+
+- `README.md` (what Discloak is, getting it, the first commands), `SECURITY.md` (how to report a vulnerability
+  privately), `.gitattributes` (LF line endings everywhere but Windows scripts).
+- CONTRIBUTING: a section on pull requests, and how a version is released.
+- `toolselease.ps1 <tag>` builds a tagged version's release files from a fresh worktree of the tag: the exe with
+  its licenses, the source, their SHA-256 and the release notes (the version's changelog section).
+
 ## 0.9.0 - 2026-11-04
 
 - **Every disc carries the program that staged it**, in `_program\`: `discloak.exe` (self-contained: it needs nothing

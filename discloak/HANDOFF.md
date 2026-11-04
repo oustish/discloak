@@ -1,4 +1,4 @@
-# Discloak – handoff notes (state as of 2026-11-04, version 0.9.0; called bdxl before 0.8.0)
+# Discloak – handoff notes (state as of 2026-11-04, version 0.9.1; called bdxl before 0.8.0)
 
 How to build, test, version and commit: [`../CONTRIBUTING.md`](../CONTRIBUTING.md). Changes per version:
 [`../CHANGELOG.md`](../CHANGELOG.md). License: PolyForm Shield 1.0.0 ([`../LICENSE.md`](../LICENSE.md),
@@ -6,6 +6,10 @@ How to build, test, version and commit: [`../CONTRIBUTING.md`](../CONTRIBUTING.m
 copied next to `discloak.exe` by publish (`Discloak.csproj`); `BuildInfo.Copyright`/`License` for `version`.
 
 ## Status
+- **Repository (0.9.1):** root `README.md`, `SECURITY.md`, `.gitattributes` (LF; `*.ps1` CRLF; the fixtures
+  untouched), and `tools/release.ps1 <tag>`: builds the tag in a temporary worktree on a branch `release/<tag>` (so
+  the exe is clean and names it), checks the exe's version, and writes `release/<tag>/` (ignored): the win-x64 zip,
+  the source zip (`git archive`), `SHA256SUMS.txt`, `notes.md` (the changelog section). Release steps: CONTRIBUTING.
 - **The program on every disc (0.9.0):** `DiscProgram` writes `_program\` (the running `discloak.exe` when it is the
   published single file - no `discloak.dll` next to it -, the source zip and the license files, both embedded as
   resources: `DiscloakSourceZip` target and `EmbeddedResource` in `Discloak.csproj`). `Archive.MakePlan(programSpace:)`
