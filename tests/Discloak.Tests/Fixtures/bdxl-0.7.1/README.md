@@ -4,8 +4,9 @@ A catalog and a disc as **bdxl 0.7.1** wrote them, before the program was rename
 them to prove that Discloak still reads what bdxl wrote, with the old names: `bdxl.key`, `bdxl-pack-1`, `bdxl-key-2`,
 `BDXLPAK1` (packs) and `BDXLENC2` (catalog files, manifests).
 
-Made on 2026-11-04 by the code of commit `eab32e3` (plus the one-off test that wrote this folder, hence `-dirty` in
-`disc.json` "createdBy"), with the tests' small packs: 8 chunks of 8 KiB.
+Made on 2026-11-04 by the code of bdxl 0.7.1 (tag `v0.7.1`), plus the one-off test that wrote this folder - hence
+`-dirty` in `disc.json` "createdBy", where `eab32e3` is that commit's id before the history was rewritten for
+publishing. With the tests' small packs: 8 chunks of 8 KiB.
 
 | Folder | What |
 |---|---|

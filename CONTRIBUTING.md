@@ -73,6 +73,10 @@ The build adds the rest (the `DiscloakBuildInfo` target in `Discloak.csproj`): t
    (Releases › Draft a new release, or `gh release create v0.9.0 release\v0.9.0\*.zip release\v0.9.0\SHA256SUMS.txt
    --notes-file release\v0.9.0\notes.md`).
 
+5. Publish the documentation to the wiki: `.\tools\publish-wiki.ps1`. `docs\` is the source; the
+   [wiki](https://github.com/oustish/discloak/wiki) is a copy of it with a sidebar, and every publish overwrites it -
+   so a page is changed in `docs\`, never in the wiki. `-DryRun` writes the pages into a folder to look at.
+
 An exe built from uncommitted changes shows `*` in `discloak version` (and `-dirty` on its discs): never release one.
 
 ## License

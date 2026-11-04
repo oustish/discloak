@@ -11,8 +11,11 @@ The repository, ready to be public; the program itself is unchanged.
 - `README.md` (what Discloak is, getting it, the first commands), `SECURITY.md` (how to report a vulnerability
   privately), `.gitattributes` (LF line endings everywhere but Windows scripts).
 - CONTRIBUTING: a section on pull requests, and how a version is released.
-- `toolselease.ps1 <tag>` builds a tagged version's release files from a fresh worktree of the tag: the exe with
+- `tools
+elease.ps1 <tag>` builds a tagged version's release files from a fresh worktree of the tag: the exe with
   its licenses, the source, their SHA-256 and the release notes (the version's changelog section).
+- `tools\publish-wiki.ps1` publishes `docs\` to the [wiki](https://github.com/oustish/discloak/wiki): links between
+  pages become wiki links, links into the repository full addresses, and a footer names the version and commit.
 
 ## 0.9.0 - 2026-11-04
 
