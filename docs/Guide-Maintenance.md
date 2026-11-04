@@ -70,7 +70,7 @@ Files with a copy on any disc are kept.
 
 ```
 discloak settings                              # show all
-discloak settings set label-prefix ARCH-       # next disc: ARCH-0008 (the counter continues, never resets)
+discloak settings set label-prefix ARCH-       # next disc: ARCH-0008 (the counter continues)
 discloak settings set currency EUR
 discloak settings set history-keep 20          # catalog versions kept in history\
 discloak settings set default-threads 4

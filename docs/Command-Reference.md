@@ -117,7 +117,7 @@ discloak ignore apply
 ### stage
 Write the next disc folder(s), ready to burn.
 ```
-discloak stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--append <label> [--mount <path>]]
+discloak stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--without-program] [--append <label> [--mount <path>]]
 ```
 | Option | |
 |---|---|
@@ -125,12 +125,16 @@ discloak stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-cata
 | `--min-fill 0.9` | only stage discs at least 90% full |
 | `--split` | cut files larger than every blank disc into parts |
 | `--with-catalog` | add a catalog backup with repair data (`_catalog\`) |
+| `--without-program` | leave out `_program\` (below): its room on the disc goes to files |
 | `--append <label>` | a new session for a burned, not finalized disc ([Appending](Guide-Appending.md)) |
 | `--mount <path>` | with `--append`: the disc is in the drive |
 
 Folder: `<destDir>\<label>\` (`<label>.s2` … for sessions) holding the packs `data\NNN\NNNNNN.pack` (64 MiB each; a
 session's packs continue the disc's numbering), `manifest.enc` (a session: `manifest.sN.enc`, only its own files),
-`packs.sha256`, `disc.json`, `discloak.key`, `README.txt`, optional `_catalog\`. See [Files and Formats](Files-and-Formats.md#a-staged--burned-disc).
+`packs.sha256`, `disc.json`, `discloak.key`, `README.txt`, `_program\`, optional `_catalog\`. See [Files and Formats](Files-and-Formats.md#a-staged--burned-disc).
+`_program\` is the program that staged the disc: `discloak.exe` (self-contained, needs nothing installed), its source
+code and the licenses, about 40 MB - so the disc can be read with nothing else. The plan keeps room for it on every
+disc and every appended session.
 Ctrl+C finishes the disc with what was copied. A file that changed since `scan` is left out; its space in the pack stays unused.
 Every file is printed as soon as it is stored, with the disc's progress, speed and time left
 (`  [3/302   12.4%    85.3 MB/s  ~3h 12m left] Video/a.mkv (4,212,334,123 bytes)`); while a large file is copied, a
@@ -165,6 +169,7 @@ Before the packs, the disc's other files are checked, a line each:
 | `manifest.enc`, `manifest.sN.enc` | SHA-256 as the catalog has it; `--deep` also decrypts each one and compares the files it lists with the catalog |
 | `discloak.key` | readable, this catalog's, with a password envelope |
 | `README.txt` | readable |
+| `_program\` | every file readable, the source zip opens, `discloak.exe` present (its version is shown) |
 | `_catalog\` | every file against its repair data (as `catalog backup verify` does; a damaged spot that cannot be read counts as damaged and is repairable like any other) |
 
 A disc staged before the catalog kept the manifests' hashes (before 2026-11-03) has none in the catalog: a plain verify then
@@ -371,7 +376,7 @@ discloak settings set <key> <value>
 ```
 | Key | Default | |
 |---|---|---|
-| `label-prefix` | `DISC-` | new discs: `<prefix><counter>`; the counter never resets |
+| `label-prefix` | `DISC-` | new discs: `<prefix><counter>`; one counter for all prefixes, which goes back only when `discard` takes the newest discs out (the next disc takes the number after the highest one still in the catalog) |
 | `currency` | | shown next to costs |
 | `history-keep` | 10 | catalog versions kept in `history\` |
 | `default-threads` | 1 | default for `scan --threads` |

@@ -5,7 +5,7 @@ public sealed class PlanCommand : ICommand
     public string Name => "plan";
     public string Group => CommandGroup.Indexing;
     public string Summary => "Show which files would go on which blank disc (changes nothing)";
-    public string Usage => "plan [--split] [--append <label> [--mount <path>]]";
+    public string Usage => "plan [--split] [--without-program] [--append <label> [--mount <path>]]";
     public bool ReadOnlyFor(Options opt) => true;
     public string Details => """
         Allocates all pending files to the blank discs registered with 'blanks'. Prints how full each disc would be
@@ -14,6 +14,7 @@ public sealed class PlanCommand : ICommand
         Sizes are those 'stage' writes (compressed where set); a disc's room is what its packs can hold.
           --split     cut files larger than every blank disc into parts (see 'stage --help')
           --append L  instead: what 'stage --append L' would put into a new session of the burned disc L
+          --without-program   as 'stage --without-program': no room kept for the program folder
         Pending = on the source, not ignored, and no live disc holds identical content (hash-based dedup).
         """;
 
@@ -24,7 +25,7 @@ public sealed class PlanCommand : ICommand
     public int Run(Ctx c)
     {
         if (c.Opt.Get("append") is { } appendTo) return PlanAppend(c, appendTo);
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), programSpace: DiscProgram.SpaceFor(c.Opt));
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
         int splitFiles = plan.Pending.Where(p => p.IsPart).Select(p => p.File).Distinct().Count();
         if (splitFiles > 0)
@@ -41,7 +42,9 @@ public sealed class PlanCommand : ICommand
             return plan.Pending.Count > 0 ? 2 : 0;
         }
 
-        Console.WriteLine($"Blank discs: {c.Cat.Blanks.Count} ({SizeText.Bytes(c.Cat.Blanks.Sum(b => b.Usable))} usable bytes)\n");
+        long program = DiscProgram.SpaceFor(c.Opt);
+        Console.WriteLine($"Blank discs: {c.Cat.Blanks.Count} ({SizeText.Bytes(c.Cat.Blanks.Sum(b => b.Usable))} usable bytes)" +
+                          (program > 0 ? $"; {SizeText.Bytes(program)} bytes of each are kept for the program folder (--without-program: none)" : "") + "\n");
         foreach (var bin in plan.Bins.Where(b => b.Pieces.Count > 0))
         {
             int parts = bin.Pieces.Count(p => p.IsPart);
@@ -78,7 +81,7 @@ public sealed class PlanCommand : ICommand
     static int PlanAppend(Ctx c, string label)
     {
         var target = AppendTarget.Open(c, label);
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()]);
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()], DiscProgram.SpaceFor(c.Opt));
         var bin = plan.Bins[0];
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
         Console.WriteLine($"{target.Disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +

@@ -49,7 +49,9 @@ Every command checks the catalog first and refuses to work on a damaged one (exi
 
 ## The catalog is lost
 
-You need the password (or the recovery key) and either a catalog backup or the discs themselves.
+You need the password (or the recovery key) and either a catalog backup or the discs themselves. You do not need a
+copy of Discloak: every disc staged since 0.9.0 carries the one that made it, `_program\discloak.exe`, which runs with
+nothing installed (run it from the disc, or copy it to a folder first).
 
 ### With a catalog backup (best)
 

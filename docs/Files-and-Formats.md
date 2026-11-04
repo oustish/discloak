@@ -49,6 +49,10 @@ opened. Back up the whole folder.
   data\000\000002.pack     encrypted on its own; all packs have the same size (the last one is filled up with zeros)
   ...                      1000 per folder
   _catalog\                (stage --with-catalog) a catalog backup, see below
+  _program\                the program that staged the disc (unless --without-program; discs from before 0.9.0 have none):
+    discloak.exe           self-contained (Windows x64): runs with nothing installed
+    discloak-<version>-source.zip   its source code: the exact tree it was built from
+    LICENSE.md, LICENSING.md, THIRD-PARTY-NOTICES.md, THIRD-PARTY-NOTICES-dotnet.txt   the licenses that go with it
 ```
 
 Without the password only `disc.json`, `packs.sha256`, `discloak.key` and `README.txt` can be read. File names, paths,

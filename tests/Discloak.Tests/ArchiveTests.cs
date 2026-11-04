@@ -264,12 +264,26 @@ public class ArchiveTests
     }
 
     [Fact]
-    public void Labels_continue_after_existing_ones_and_never_reuse_a_number()
+    public void Labels_continue_after_existing_ones_of_any_prefix()
     {
-        cat.Discs.Add(new DiscRecord { Label = "DISC-0007" });
+        cat.Discs.Add(new DiscRecord { Label = "BDXL-0007" });   // a catalog from before the counter, with the old default prefix
         Assert.Equal("DISC-0008", Arc.NextLabel());
 
         cat.Settings.LabelPrefix = "ARC-";
         Assert.Equal("ARC-0009", Arc.NextLabel());   // the counter is global, the prefix is not part of it
+    }
+
+    [Fact]
+    public void Reclaiming_goes_back_to_the_highest_number_still_in_the_catalog_and_never_below()
+    {
+        cat.Discs.Add(new DiscRecord { Label = "DISC-0002", State = "lost" });   // lost: its number stays taken
+        cat.Settings.LabelCounter = 5;                                          // 3, 4 and 5 were discarded
+        Assert.True(Arc.ReclaimLabels());
+        cat.Discs.Add(new DiscRecord { Label = Arc.NextLabel() });             // staged as DISC-0003
+        Assert.Equal("DISC-0003", cat.Discs[^1].Label);
+        Assert.False(Arc.ReclaimLabels());                                      // nothing above it to give back
+        cat.Discs.Clear();
+        Assert.True(Arc.ReclaimLabels());
+        Assert.Equal("DISC-0001", Arc.NextLabel());
     }
 }

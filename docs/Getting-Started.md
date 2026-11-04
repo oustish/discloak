@@ -6,15 +6,16 @@ This page takes you from nothing to a first verified, burned disc.
 
 ## 1. Build discloak
 
-You need the .NET 10 SDK to build, and the .NET 10 runtime (part of the SDK) to run.
+You need the .NET 10 SDK and git to build. The built program needs nothing installed to run.
 
 ```
 cd <repository>\discloak
 dotnet publish -p:PublishProfile=win-x64
 ```
 
-The program is a single file, `<repository>\publish\discloak.exe` (about 1.7 MB; libsodium, used for the password's
-Argon2id, is inside it). Copy it anywhere you like, e.g. `C:\Tools\discloak.exe`, and add that folder to your `PATH`.
+The program is a single file, `<repository>\publish\discloak.exe` (about 37 MB: the .NET runtime and libsodium, used
+for the password's Argon2id, are inside it, so it runs on any 64-bit Windows with nothing installed; every disc gets a
+copy of it). Copy it anywhere you like, e.g. `C:\Tools\discloak.exe`, and add that folder to your `PATH`.
 The examples on these pages just write `discloak`.
 
 (`dotnet build -c Release` also works; then the program is `discloak\bin\Release\net10.0\discloak.exe` together with the
@@ -68,7 +69,7 @@ Details: [Security](Guide-Security.md#unlocking-for-a-while).
 ## 5. One-time settings (optional)
 
 ```
-discloak settings set label-prefix DISC-       # discs are named DISC-0001, DISC-0002 ... (the counter never resets)
+discloak settings set label-prefix DISC-       # discs are named DISC-0001, DISC-0002 ...
 discloak settings set currency PLN             # shown next to costs
 discloak settings set default-threads 4        # hash with 4 threads by default (helps on SSDs / several disks)
 discloak settings set mirror F:\discloak-mirror    # a second copy of the catalog on another drive (see Catalog Mirror)

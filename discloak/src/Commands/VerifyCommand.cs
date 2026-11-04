@@ -305,6 +305,34 @@ public sealed class VerifyCommand : ICommand
         try { Report(DiscFiles.ReadmeName, Read(readme) is not { } bytes ? "is missing" : bytes.Length == 0 ? "is empty" : null); }
         catch (IOException ex) { Report(DiscFiles.ReadmeName, $"cannot be read ({ex.Message})"); }
 
+        // _program: the program that wrote the disc - its exe, source and licenses readable, the source zip whole
+        string program = Path.Combine(mount, DiscProgram.FolderName);
+        if (!Directory.Exists(program))
+            Console.WriteLine($"  -        {DiscProgram.FolderName}: none on this disc (staged before 0.9.0, or with --without-program)");
+        else
+        {
+            string? problem = null;
+            string? exeVersion = null;
+            var names = Directory.GetFiles(program).Select(p => Path.GetFileName(p)!).Order(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (string name in names)
+            {
+                try
+                {
+                    byte[] bytes = DiscRead.AllBytes(Path.Combine(program, name), noCache);
+                    if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(bytes));
+                        foreach (var entry in zip.Entries) { using var s = entry.Open(); s.CopyTo(Stream.Null); }   // every entry unpacks
+                    }
+                    if (name.Equals(DiscProgram.ExeName, StringComparison.OrdinalIgnoreCase))
+                        exeVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(Path.Combine(program, name)).ProductVersion;
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException) { problem ??= $"{name} cannot be read ({ex.Message})"; }
+            }
+            if (!names.Contains(DiscProgram.ExeName, StringComparer.OrdinalIgnoreCase)) problem ??= $"{DiscProgram.ExeName} is missing";
+            Report(DiscProgram.FolderName, problem, $" ({DiscProgram.ExeName} {exeVersion}, {names.Count - 1:N0} more file(s): source, licenses)");
+        }
+
         // _catalog: every file against its repair data (no password needed)
         string backup = Path.Combine(mount, DiscFiles.CatalogBackupName);
         if (!Directory.Exists(backup))

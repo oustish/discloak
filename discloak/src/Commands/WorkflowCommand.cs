@@ -20,7 +20,7 @@ public sealed class WorkflowCommand : ICommand
             1. One-time setup
                  discloak init --recovery-key                      encrypted catalog: choose a password, write down the recovery key
                  discloak unlock                                   then no password per command until it locks (lock to end it)
-                 discloak settings set label-prefix DISC-          disc names: DISC-0001, DISC-0002 ... (counter never resets)
+                 discloak settings set label-prefix DISC-          disc names: DISC-0001, DISC-0002 ... (one counter for all prefixes)
                  discloak settings set currency PLN
                  discloak ignore add "node_modules/" "*.tmp" "Thumbs.db"     .gitignore syntax, kept in the catalog
                  discloak blanks add 5 --size 96882130944 --reserve 200MB --cost 45

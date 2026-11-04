@@ -8,6 +8,9 @@ public sealed class DiscardCommand : ICommand
     public string Usage => "discard <label>";
     public string Details => """
         Its files become pending again and its blank disc goes back to the inventory. The staged folder is not deleted.
+        Its number is given back when no higher one is in the catalog: the next disc takes the number after the highest
+        one still there (discard DISC-0004 and DISC-0003 while DISC-0002 is burned, and the next disc is DISC-0003 again;
+        free numbers below a disc that stays are not reused). Lost and destroyed discs keep their numbers.
         For a burned disc with a session staged by 'stage --append', only that session is taken back; what was burned
         before stays recorded.
         """;
@@ -40,9 +43,14 @@ public sealed class DiscardCommand : ICommand
             {
                 Id = c.Arc.NextBlankId(), Capacity = capacity, Reserve = disc.Reserve ?? 0, Cost = disc.Cost, AddedUtc = DateTime.UtcNow
             });
+        bool reclaimed = c.Arc.ReclaimLabels();
         c.Cat.Save();
         Console.WriteLine($"{disc.Label} discarded; its files are pending again" + (returned ? " and its blank disc is back in the inventory" : "") +
                           ". (The staged folder, if any, was not deleted.)");
+        if (reclaimed)
+            Console.WriteLine($"The next disc will be {c.Settings.LabelPrefix}{(c.Settings.LabelCounter + 1).ToString("D4", CultureInfo.InvariantCulture)}: " +
+                              "numbers no disc in the catalog uses any more are given out again - delete their staged folders first " +
+                              "(stage does not write over a folder).");
         return 0;
     }
 }

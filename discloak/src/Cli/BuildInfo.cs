@@ -16,6 +16,8 @@ public static class BuildInfo
     public static string CreatedBy => "discloak " + Full;
     public static string Copyright { get; } = Me.GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright ?? "";
     public const string License = "PolyForm Shield 1.0.0";
+    /// <summary>Where the project lives: source, releases, documentation (also in every disc's README.txt).</summary>
+    public const string ProjectUrl = "https://github.com/oustish/discloak";
     public static string Configuration { get; } = Me.GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration ?? "unknown";
     public static string? Commit { get; } = Metadata("GitCommit");
     public static string? Branch { get; } = Metadata("GitBranch");

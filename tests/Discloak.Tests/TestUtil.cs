@@ -5,7 +5,8 @@ namespace Discloak.Tests;
 /// <summary>
 /// Every test catalog is encrypted with one password, with the cheapest Argon2id settings allowed (fast tests).
 /// DISCLOAK_PASSWORD is set for the whole test run; the agent is never used. Discs use packs of 64 KiB (8 chunks of
-/// 8 KiB) instead of 64 MiB, so test discs of a few hundred KB still hold several packs.
+/// 8 KiB) instead of 64 MiB, so test discs of a few hundred KB still hold several packs, and their _program folder
+/// holds small stand-ins (ProgramFiles) instead of a 37 MB exe and its source.
 /// </summary>
 public static class TestKeys
 {
@@ -13,12 +14,26 @@ public static class TestKeys
     public static readonly KdfParams Fast = new(Kdf.MinKiB, 1);
     public const int ChunkSize = 8192, ChunksPerPack = 8;
 
+    /// <summary>What test discs get in _program: a stand-in exe, a small but real zip, and a license file.</summary>
+    public static readonly IReadOnlyList<(string Name, byte[] Data)> ProgramFiles =
+        [(DiscProgram.ExeName, Encoding.ASCII.GetBytes("a stand-in for discloak.exe")), ("discloak-0.0.0-source.zip", SmallZip()), ("LICENSE.md", "the license"u8.ToArray())];
+
+    static byte[] SmallZip()
+    {
+        var bytes = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(bytes, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        using (var entry = new StreamWriter(zip.CreateEntry("discloak/README.md").Open()))
+            entry.Write("the source");
+        return bytes.ToArray();
+    }
+
     [ModuleInitializer]
     internal static void Setup()
     {
         Environment.SetEnvironmentVariable("DISCLOAK_PASSWORD", Password);
         Environment.SetEnvironmentVariable("DISCLOAK_AGENT", "off");
         DiscFormat.UseGeometryForTests(ChunkSize, ChunksPerPack);
+        DiscProgram.UseFilesForTests(ProgramFiles);
     }
 
     /// <summary>The pack files of a staged disc folder, as relative paths in order.</summary>

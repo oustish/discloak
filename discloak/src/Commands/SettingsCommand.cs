@@ -13,8 +13,9 @@ public sealed class SettingsCommand : ICommand
         Keys: label-prefix, currency, history-keep, default-threads, unlock-idle, unlock-max, lock-on-win-l, lock-on-sleep, mirror.
         unlock-idle / unlock-max (e.g. 30m, 8h): when an unlocked catalog locks again; lock-on-win-l / lock-on-sleep
         (yes/no): lock it when Windows is locked or goes to sleep (see 'unlock').
-        label-prefix: new discs are named <prefix><counter>. The counter is global and never resets, so changing the
-        prefix continues the numbering. Existing labels are not renamed.
+        label-prefix: new discs are named <prefix><counter>. The counter is shared by all prefixes, so changing the
+        prefix continues the numbering. Existing labels are not renamed. It goes back only when 'discard' takes the
+        newest discs out of the catalog: the next disc takes the number after the highest one still there.
         mirror <folder>|none: a second copy of the catalog, kept in step by every save (ideally on another drive). While it
         is set, nothing that changes the catalog runs unless the mirror is there and holds exactly the same (read-only
         commands only warn); see 'catalog mirror'. An empty folder gets a copy at once.
@@ -28,7 +29,7 @@ public sealed class SettingsCommand : ICommand
         {
             foreach (string key in Discloak.Settings.Keys)
                 Console.WriteLine($"{key,-16} {c.Settings.Get(key)}");
-            Console.WriteLine($"{"label counter",-16} {c.Settings.LabelCounter}   (last number used; never reset)");
+            Console.WriteLine($"{"label counter",-16} {c.Settings.LabelCounter}   (the last number given out; discarding the newest discs gives theirs back)");
             Console.WriteLine($"{"ignore rules",-16} {c.Settings.IgnoreRules.Count}   (see: ignore list)");
             var mirror = Mirror.Check(c.Cat.Dir, c.Keys);
             Console.WriteLine($"{"mirror",-16} " + (mirror.State == Mirror.State.None ? "(none)" : $"{mirror.Path}   ({(mirror.Ok ? "in step" : mirror.Message)})"));

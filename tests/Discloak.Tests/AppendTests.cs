@@ -33,9 +33,10 @@ public class AppendTests : IDisposable
     static List<string> FilesIn(string dir) =>
         Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(dir, f).Replace('\\', '/')).Order(StringComparer.Ordinal).ToList();
 
-    /// <summary>The metadata of a session folder and its packs numbered from..to.</summary>
+    /// <summary>The metadata of a session folder, its program folder and its packs numbered from..to.</summary>
     static List<string> SessionFiles(int session, int from, int to, params string[] more) =>
         new[] { "README.txt", "discloak.key", "disc.json", DiscFiles.ManifestFor(session), DiscFiles.PackListName }
+            .Concat(TestKeys.ProgramFiles.Select(f => $"{DiscProgram.FolderName}/{f.Name}"))
             .Concat(Enumerable.Range(from, to - from + 1).Select(DiscFormat.PackPath)).Concat(more).Order(StringComparer.Ordinal).ToList();
 
     /// <summary>One decrypted manifest file of a staged disc folder (default: the first session's).</summary>
@@ -147,12 +148,13 @@ public class AppendTests : IDisposable
         FirstDisc();
         var disc = Disc1;
         long ManifestSpace(string dir) => DiscSpace.OnDisc(new FileInfo(DiscFiles.Manifests(dir).Single().Path).Length);
-        // its packs and its manifest, and the reserve
-        Assert.Equal(DiscFormat.PacksFor(300_000) * DiscFormat.PackOnDisc + ManifestSpace(DiscDir) + 100_000, disc.OccupiedBytes);
+        // its packs, its manifest, its program folder, and the reserve
+        Assert.Equal(DiscFormat.PacksFor(300_000) * DiscFormat.PackOnDisc + ManifestSpace(DiscDir) + DiscProgram.SpaceOnDisc() + 100_000,
+                     disc.OccupiedBytes);
         long free = 1_000_000 - disc.OccupiedBytes - 100_000;
         Assert.Equal(free, AppendTarget.FreeFor(disc));
 
-        tmp.RandomFile("src/big.bin", (int)DiscFormat.Room(free) + 1, seed: 2);
+        tmp.RandomFile("src/big.bin", (int)DiscFormat.Room(free - DiscProgram.SpaceOnDisc()) + 1, seed: 2);   // the session gets the program too
         Scan();
         Assert.Equal(2, Discloak("plan", "--append", "DISC-0001"));
         Assert.Equal(2, Discloak("stage", tmp.File("stg"), "--append", "DISC-0001"));
@@ -165,7 +167,8 @@ public class AppendTests : IDisposable
         int packs = disc.Packs.Count;
         Assert.Equal(SessionFiles(2, packs + 1, packs + DiscFormat.PacksFor(150_000)), FilesIn(Session2));
         var after = Disc1;
-        Assert.Equal((2, disc.OccupiedBytes + DiscFormat.PacksFor(150_000) * DiscFormat.PackOnDisc + ManifestSpace(Session2) + 100_000),
+        Assert.Equal((2, disc.OccupiedBytes + DiscFormat.PacksFor(150_000) * DiscFormat.PackOnDisc + ManifestSpace(Session2)
+                         + DiscProgram.SpaceOnDisc() + 100_000),   // every session gets the program, and the reserve
                      (after.Sessions, after.OccupiedBytes));
         Assert.Contains(Cat().Files, f => f.RelPath == "big.bin" && f.Backups.Count == 0);   // still pending
     }

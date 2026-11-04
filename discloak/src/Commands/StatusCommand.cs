@@ -27,7 +27,7 @@ public sealed class StatusCommand : ICommand
         var sourceHashes = c.Arc.SourceHashes();
         int dataLost = c.Cat.Files.Count(f => f.MissingSinceUtc != null && f.Backups.Count > 0 && !Archive.HasAnyLiveCopy(f, dead)
                                               && !sourceHashes.Contains(f.Sha256));
-        var plan = c.Arc.MakePlan();
+        var plan = c.Arc.MakePlan(programSpace: DiscProgram.SpaceFor(c.Opt));
 
         Console.WriteLine($"Files still on source (not ignored): {onSource:N0}; current version burned: {safe:N0}");
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} files, {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");

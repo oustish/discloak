@@ -1,10 +1,11 @@
 # Third-party notices
 
-`discloak.exe` contains the components below, each under its own license. Their notices go with every copy of discloak.
-(The .NET runtime that discloak runs on is installed separately and is not part of `discloak.exe`.)
+`discloak.exe` contains the components below, each under its own license. Their notices go with every copy of
+Discloak - next to the exe when it is published, and in `_program` on every disc.
 
 | Component | Version | License |
 |---|---|---|
+| .NET runtime (`discloak.exe` is self-contained) | 10.0.14 | MIT (below); the components inside it have their notices in [THIRD-PARTY-NOTICES-dotnet.txt](THIRD-PARTY-NOTICES-dotnet.txt) |
 | NSec.Cryptography | 26.4.0 | MIT (with code from libsodium, RFC 6234, the .NET Runtime and Steve Thomas, below) |
 | libsodium (native library) | 1.0.22 | ISC |
 | ZstdSharp.Port | 0.8.8 | MIT (a port of Zstandard, BSD) |
@@ -239,9 +240,11 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## Microsoft.Win32.SystemEvents
+## .NET runtime and Microsoft.Win32.SystemEvents
 
-<https://github.com/dotnet/runtime>
+<https://github.com/dotnet/runtime> - the notices of the third-party components inside the runtime are in
+[THIRD-PARTY-NOTICES-dotnet.txt](THIRD-PARTY-NOTICES-dotnet.txt), word for word from the runtime package
+(Microsoft.NETCore.App.Runtime.win-x64 10.0.14).
 
 ```
 The MIT License (MIT)
