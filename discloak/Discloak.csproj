@@ -9,7 +9,7 @@
     <RootNamespace>Discloak</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- major.minor.patch, raised by hand in the commit that makes the change: see CONTRIBUTING.md -->
-    <Version>0.8.0</Version>
+    <Version>0.9.0</Version>
     <Authors>oustish</Authors>
     <Copyright>Copyright 2026 oustish (https://github.com/oustish)</Copyright>
     <!-- DiscloakBuildInfo below appends the short commit, uncommitted changes and the build time instead of the full commit -->
@@ -64,11 +64,53 @@
     <Using Include="System.Text.RegularExpressions" />
   </ItemGroup>
 
-  <!-- the license and the third-party notices go with every copy of the program: next to discloak.exe when published -->
+  <!--
+    The license and the third-party notices go with every copy of the program: next to discloak.exe when published,
+    and inside it (resources), so 'stage' can put them on every disc next to the exe (DiscProgram).
+  -->
   <ItemGroup>
-    <None Include="..\LICENSE.md;..\LICENSING.md;..\THIRD-PARTY-NOTICES.md" Link="%(Filename)%(Extension)"
+    <None Include="..\LICENSE.md;..\LICENSING.md;..\THIRD-PARTY-NOTICES.md;..\THIRD-PARTY-NOTICES-dotnet.txt" Link="%(Filename)%(Extension)"
           CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <EmbeddedResource Include="..\LICENSE.md;..\LICENSING.md;..\THIRD-PARTY-NOTICES.md;..\THIRD-PARTY-NOTICES-dotnet.txt"
+                      LogicalName="%(Filename)%(Extension)" />
   </ItemGroup>
+
+  <!--
+    The source code, inside the exe (resource discloak-source.zip), for the disc's _program folder: the tree it is
+    built from - committed, changed and new files, not what .gitignore leaves out - as `git archive` writes it. It goes
+    through an index of its own, so git's real index is not touched. Without git there is no source in the exe.
+  -->
+  <Target Name="DiscloakSourceZip" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <DiscloakSourceZip>$(ProjectDir)$(IntermediateOutputPath)discloak-source.zip</DiscloakSourceZip>
+      <DiscloakSourceIndex>$(ProjectDir)$(IntermediateOutputPath)discloak-source.index</DiscloakSourceIndex>
+      <DiscloakRepo>$(MSBuildProjectDirectory)\..</DiscloakRepo>
+    </PropertyGroup>
+    <MakeDir Directories="$(ProjectDir)$(IntermediateOutputPath)" />
+    <Delete Files="$(DiscloakSourceZip);$(DiscloakSourceIndex)" />
+    <Exec Command="git read-tree HEAD" EnvironmentVariables="GIT_INDEX_FILE=$(DiscloakSourceIndex)" WorkingDirectory="$(DiscloakRepo)"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="DiscloakSourceExit" />
+    </Exec>
+    <Exec Command="git -c core.safecrlf=false add -A" EnvironmentVariables="GIT_INDEX_FILE=$(DiscloakSourceIndex)" WorkingDirectory="$(DiscloakRepo)"
+          Condition="'$(DiscloakSourceExit)' == '0'" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="DiscloakSourceExit" />
+    </Exec>
+    <Exec Command="git write-tree" EnvironmentVariables="GIT_INDEX_FILE=$(DiscloakSourceIndex)" WorkingDirectory="$(DiscloakRepo)"
+          Condition="'$(DiscloakSourceExit)' == '0'" ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="DiscloakSourceTree" />
+      <Output TaskParameter="ExitCode" PropertyName="DiscloakSourceExit" />
+    </Exec>
+    <Exec Command="git archive --format=zip --prefix=discloak-$(Version)/ -o &quot;$(DiscloakSourceZip)&quot; $(DiscloakSourceTree)"
+          WorkingDirectory="$(DiscloakRepo)" Condition="'$(DiscloakSourceExit)' == '0'" IgnoreExitCode="true"
+          IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" />
+    <Delete Files="$(DiscloakSourceIndex)" />
+    <ItemGroup Condition="Exists('$(DiscloakSourceZip)')">
+      <EmbeddedResource Include="$(DiscloakSourceZip)" LogicalName="discloak-source.zip" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.14" />

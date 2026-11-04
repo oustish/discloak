@@ -5,7 +5,7 @@ public sealed class RestageCommand : ICommand
     public string Name => "restage";
     public string Group => CommandGroup.Recovery;
     public string Summary => "Rebuild a disc's folder (same label, same files) to burn it again";
-    public string Usage => "restage <label> <destDir> [--from dirA;dirB] [--allow-partial]";
+    public string Usage => "restage <label> <destDir> [--from dirA;dirB] [--allow-partial] [--without-program]";
     public bool Interruptible => true;
     public string Details => """
         Writes the disc's packs again, with the same layout: every file at the same place in the data stream. A pack
@@ -17,6 +17,8 @@ public sealed class RestageCommand : ICommand
         Without --allow-partial nothing is staged if any file cannot be rebuilt; with it, such files are left out
         (their place in the pack stays unused) and no longer count as being on the disc.
         Every pack is printed when it is written, with the progress, speed and time left.
+        The folder gets the program (_program, see 'stage --help') if the disc has room left for it - its layout is
+        fixed, so a disc filled before it carried the program may not - unless --without-program.
         Ctrl+C stops after the pack being written; the catalog stays unchanged and what was rebuilt is kept as
         <destDir>/<label>.partial, to be reused with --from on the next run.
         """;
@@ -165,6 +167,16 @@ public sealed class RestageCommand : ICommand
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, x.File)).ToList();
         disc.Manifests = [DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session: 1)];
         disc.WrittenBy = [BuildInfo.CreatedBy];
+        if (!c.Opt.Has("without-program"))   // only where it fits: the packs keep their places
+        {
+            long used = packs * DiscFormat.PackOnDisc + DiscFiles.ManifestSpace(manifest) + (disc.Reserve ?? 0);
+            if (disc.Capacity is long capacity && capacity - used >= DiscProgram.SpaceOnDisc())
+            {
+                if (DiscProgram.Write(dir) is { } missing) Console.WriteLine($"Note: left out of {DiscProgram.FolderName}: {missing}.");
+            }
+            else Console.WriteLine($"Note: no {DiscProgram.FolderName} folder: " +
+                                   (disc.Capacity == null ? "the disc's size is not known." : "the disc has no room left for it (its packs keep their places)."));
+        }
         disc.OccupiedBytes = Math.Max(packs * DiscFormat.PackOnDisc + DiscFiles.ManifestSpace(manifest) + (disc.Reserve ?? 0), DiscSpace.Folder(dir));
         c.Arc.LinkDuplicates();
         c.Cat.Save();

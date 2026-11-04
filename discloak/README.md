@@ -13,7 +13,8 @@ License: [PolyForm Shield 1.0.0](../LICENSE.md) - free to use, not to compete wi
 [`../LICENSING.md`](../LICENSING.md) (also the name and format rules) and
 [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md).
 
-    dotnet publish -p:PublishProfile=win-x64   one file: ../publish/discloak.exe (needs the .NET 10 SDK; runs on the .NET 10 runtime)
+    dotnet publish -p:PublishProfile=win-x64   one file: ../publish/discloak.exe (needs the .NET 10 SDK; self-contained:
+                                               runs with nothing installed, about 37 MB; every disc gets a copy)
     dotnet build -c Release          (or a normal build: bin/Release/net10.0/, exe + DLLs)
     dotnet run -- help               list of commands
     dotnet run -- workflow           sample session

@@ -353,6 +353,7 @@ public sealed class CatalogCommand : ICommand
             "                           key (bdxl.key in backups from before 0.8.0)\n" +
             "*.repair.json, *.par       repair data: per-block SHA-256 + Reed-Solomon parity blocks (GF(256), Cauchy matrix),\n" +
             "    computed over the stored bytes: checking and repairing need no password\n\n" +
+            $"Discloak: {BuildInfo.ProjectUrl}\n\n" +
             "Check:    discloak catalog backup verify <this folder>\n" +
             "Repair:   discloak catalog backup verify <this folder> --repair\n" +
             "Restore:  discloak catalog backup restore <this folder> --catalog <catalog folder> [--force] [--recovery]\n");

@@ -5,7 +5,7 @@ public sealed class StageCommand : ICommand
     public string Name => "stage";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
-    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--append <label> [--mount <path>]]";
+    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--without-program] [--append <label> [--mount <path>]]";
     public bool Interruptible => true;
     public string Details => """
         Creates <destDir>/<label>/ for each disc. The files (compressed if set, see 'compression') are laid end to end
@@ -22,6 +22,9 @@ public sealed class StageCommand : ICommand
                            parts disc by disc and joins them; the file counts as backed up only when every part is on a
                            disc. Once a file has parts on discs, its remaining parts are staged even without --split.
           --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
+          --without-program   leave out <disc>/_program: by default every disc (and every appended session) gets the
+                           program that staged it - discloak.exe, self-contained, about 37 MB - with its source code
+                           and the licenses, so it can be read with nothing else. Plan keeps room for it.
           --append L       fill the free space of the burned disc L with a new session instead of using a blank disc.
                            Only the pending files that fit go into <destDir>/L.s2/ (s3, s4 ... later): packs that
                            continue the disc's numbering, their own manifest (manifest.s2.enc: only these files; the
@@ -50,7 +53,7 @@ public sealed class StageCommand : ICommand
         if (c.Opt.Get("append") is { } appendTo) return Append(c, destDir, appendTo);
         int maxDiscs = c.Opt.GetInt("max-discs", 1);
         double minFill = double.Parse(c.Opt.GetOr("min-fill", "0"), CultureInfo.InvariantCulture);
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), programSpace: DiscProgram.SpaceFor(c.Opt));
         if (c.Cat.Blanks.Count == 0)
         {
             Console.WriteLine("No blank discs are registered. Register some first, e.g.:  blanks add 5 --size 96882130944 --reserve 200MB");
@@ -135,7 +138,7 @@ public sealed class StageCommand : ICommand
         var target = AppendTarget.Open(c, label);
         var disc = target.Disc;
 
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()]);
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()], DiscProgram.SpaceFor(c.Opt));
         var bin = plan.Bins[0];
         Console.WriteLine($"{disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +
                           $"({SizeText.Bytes(target.Reserve)} bytes stay reserved for its manifest, disc.json and catalog backup).");
@@ -292,9 +295,15 @@ public sealed class StageCommand : ICommand
                                                long sessionSpace, long occupiedBefore, MasterKey key, int session)
     {
         disc.SetSession(session, DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session), BuildInfo.CreatedBy);   // the disc describes itself
+        long programSpace = 0;                              // planned into the disc's room (DiscProgram.SpaceFor)
+        if (!c.Opt.Has("without-program"))
+        {
+            if (DiscProgram.Write(dir) is { } missing) Console.WriteLine($"Note: left out of {DiscProgram.FolderName}: {missing}.");
+            programSpace = DiscProgram.SpaceOf(dir);
+        }
         int dups = c.Arc.LinkDuplicates();                  // other files with identical content now point at this disc too
         long reserve = disc.Reserve ?? 0;
-        disc.OccupiedBytes = occupiedBefore + sessionSpace + reserve;
+        disc.OccupiedBytes = occupiedBefore + sessionSpace + programSpace + reserve;
         c.Cat.Save();
         if (c.Opt.Has("with-catalog"))                      // leave room for it in the blank discs' reserve
         {
@@ -303,7 +312,7 @@ public sealed class StageCommand : ICommand
         }
 
         long folderBytes = DiscSpace.Folder(dir);
-        if (folderBytes - sessionSpace > reserve)           // the metadata outgrew the reserve
+        if (folderBytes - sessionSpace - programSpace > reserve)   // the metadata outgrew the reserve
         {
             disc.OccupiedBytes = occupiedBefore + folderBytes;
             c.Cat.Save();

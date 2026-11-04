@@ -250,6 +250,14 @@ public static class FileCrypto
         return output.ToArray();
     }
 
+    /// <summary>Whether an encrypted file still starts with the magic from before 0.8.0 (BDXLENC2).</summary>
+    public static bool IsLegacy(string path)
+    {
+        var header = new byte[8];
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return ReadFull(input, header, 8) == 8 && Encoding.ASCII.GetString(header) == LegacyMagic;
+    }
+
     /// <summary>The key id in an encrypted file's header, or null if it is not a DCLKENC2 (or BDXLENC2) file.</summary>
     public static string? KeyIdOf(string path)
     {

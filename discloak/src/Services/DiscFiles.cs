@@ -164,6 +164,7 @@ public static class DiscFiles
         Discloak disc (encrypted) - how to read it
         ===========================================
 
+        Discloak: https://github.com/oustish/discloak (source code, releases, documentation)
         Discloak was called bdxl before version 0.8.0. Discs staged before then use the old names in brackets; they
         are the same formats.
 
@@ -178,8 +179,12 @@ public static class DiscFiles
         manifest.enc          which file lies where in that stream: one JSON object per line, encrypted
         manifest.sN.enc       (a disc with several sessions) the files session N added - read every manifest
         _catalog/             (optional) a backup of the whole catalog, see its own README.txt
+        _program/             (from 0.9.0, unless left out) the program that wrote this disc: discloak.exe (Windows x64,
+                              self-contained: needs nothing installed), its source code (discloak-<version>-source.zip:
+                              the exact code it was built from) and its licenses
 
-        With discloak:  discloak init --key-from <this disc> --catalog <new folder>   then   discloak scandisc <this disc>
+        With discloak (_program/discloak.exe):
+                        discloak init --key-from <this disc> --catalog <new folder>   then   discloak scandisc <this disc>
                         and  discloak restore <folder> "*" --mount <this disc>   (or: catalog backup restore <disc>/_catalog)
 
         Without discloak, all of this is standard cryptography. The labels below that start with "bdxl" are part of

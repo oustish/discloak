@@ -83,7 +83,8 @@ public class LegacyNamesTests : IDisposable
         Assert.Equal(0, Discloak("settings", "set", "currency", "PLN"));
         Assert.True(File.Exists(Path.Combine(Cat, KeyFile.FileName)));
         Assert.False(File.Exists(Path.Combine(Cat, KeyFile.LegacyFileName)));
-        Assert.Equal("DCLKENC2", Magic(Path.Combine(Cat, "settings.json.enc")));   // what was saved has the new magic
+        // one save brings every file to the new magic - also the parts of the file list this command did not read
+        Assert.All(Catalog.StoredFilesIn(Cat), name => Assert.Equal("DCLKENC2", Magic(Path.Combine(Cat, name))));
         Assert.Equal(0, Discloak("catalog", "check"));
         var cat = TestKeys.Load(Cat);
         Assert.Equal((3, 1, "PLN"), (cat.Files.Count, cat.Discs.Count, cat.Settings.Currency));

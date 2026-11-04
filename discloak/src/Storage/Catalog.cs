@@ -339,7 +339,12 @@ public sealed class Catalog
             written.UnionWith(names);
             written.Add(WriteEncrypted("files.jsonl", ms => ms.Write(TooOldMarker)));
         }
-        else written.UnionWith(StoredFilesIn(Dir).Where(n => ShardName.IsMatch(n) || n == UnsplitFiles));   // not read: kept as they are
+        else
+        {
+            var kept = StoredFilesIn(Dir).Where(n => ShardName.IsMatch(n) || n == UnsplitFiles).ToList();   // not read: kept as they are,
+            Parallel.ForEach(kept, ReEncryptLegacy);                                                           // in today's format
+            written.UnionWith(kept);
+        }
         written.Add(WriteEncrypted("discs.jsonl", ms => JsonStore.WriteLinesTo(ms, Discs.OrderBy(d => d.Label, StringComparer.Ordinal))));
         written.Add(WriteEncrypted("blanks.jsonl", ms => JsonStore.WriteLinesTo(ms, Blanks.OrderBy(b => b.Id, StringComparer.Ordinal))));
         written.Add(WriteEncrypted("settings.json", ms => ms.Write(JsonStore.ObjectToBytes(Settings))));
@@ -357,6 +362,28 @@ public sealed class Catalog
     /// Serializes into memory and encrypts (compressed) straight into &lt;name&gt;.enc, via a temp file, then renamed -
     /// unless the file already holds exactly this, encrypted with the current key. Returns the stored name.
     /// </summary>
+    /// <summary>
+    /// A stored file this save keeps as it is (its part of the file list was not read) but which is still in the
+    /// format from before 0.8.0 (BDXLENC2): decrypted and encrypted again in today's (DCLKENC2), content unchanged.
+    /// </summary>
+    void ReEncryptLegacy(string stored)
+    {
+        string path = Path.Combine(Dir, stored), tmp = path + ".tmp";
+        if (!FileCrypto.IsLegacy(path)) return;
+        byte[] plain = FileCrypto.Open(File.ReadAllBytes(path), Keys!, KeyPurpose.Catalog);
+        try
+        {
+            using (var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+                FileCrypto.Encrypt(new MemoryStream(plain, writable: false), output, Keys!.Current, KeyPurpose.Catalog, level: CompressionLevel);
+            File.Move(tmp, path, overwrite: true);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plain);
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
+    }
+
     string WriteEncrypted(string name, Action<Stream> write)
     {
         // 1. only hash what would be written: an unchanged file is neither kept in memory nor rewritten
@@ -365,7 +392,9 @@ public sealed class Catalog
         using (var hashing = new HashingSink()) { write(hashing); hash = hashing.Hex(); }
         string? known;
         lock (plainHashes) plainHashes.TryGetValue(stored, out known);
-        if (known == hash && File.Exists(path) && FileCrypto.KeyIdOf(path) == Keys!.Current.KeyId)
+        // unchanged: not written again - unless it is still in the format from before 0.8.0 (BDXLENC2), so that one
+        // save brings the whole catalog to today's (DCLKENC2)
+        if (known == hash && File.Exists(path) && FileCrypto.KeyIdOf(path) == Keys!.Current.KeyId && !FileCrypto.IsLegacy(path))
             return stored;
 
         // 2. serialize again, straight into the encryption through a pipe (never the whole file in memory)

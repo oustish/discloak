@@ -87,7 +87,7 @@ public class EndToEndTests : IDisposable
     {
         // disc 1: a, 100 bytes left; disc 2: b and the small c (too big for disc 1's gap), 50 bytes left - fuller, but
         // only by 50 bytes
-        long room = DiscFormat.Room(950_000);
+        long room = DiscFormat.Room(950_000 - DiscProgram.SpaceOnDisc());   // the program folder comes out of every disc
         long Share(string name) => DiscSpace.ManifestShare(Piece.Whole(new FileRecord { RootName = "S", RelPath = name }));
         tmp.RandomFile("src/a.bin", (int)(room - Share("a.bin") - 100), seed: 1);
         tmp.RandomFile("src/b.bin", (int)(room - Share("b.bin") - 3000), seed: 2);
@@ -375,6 +375,24 @@ public class EndToEndTests : IDisposable
         Discloak("lost", "DISC-0001");
         Discloak("restage", "DISC-0001", tmp.File("re"));
         Assert.Equal([BuildInfo.CreatedBy], TestKeys.Load(tmp.File("cat")).Discs.Single().WrittenBy);   // the build that rebuilt it
+    }
+
+    [Theory]
+    [InlineData(4, 5)]   // the 4th disc is burned: the next is the 5th (1-3 below it are not reused)
+    [InlineData(1, 2)]   // the 1st is burned: 2 is free again
+    public void Discard_gives_numbers_back_down_to_the_highest_disc_still_in_the_catalog(int burned, int next)
+    {
+        for (int i = 1; i <= 4; i++) tmp.RandomFile($"src/{i}.bin", 600_000 - i * 1000, seed: i);   // one per disc
+        Discloak("blanks", "add", "4", "--size", "1MB", "--reserve", "100KB");
+        Discloak("scan", tmp.File("src"), "--name", "S");
+        Assert.Equal(0, Discloak("stage", tmp.File("stg"), "--max-discs", "4"));
+        Assert.Equal(4, TestKeys.Load(tmp.File("cat")).Discs.Count);
+        Assert.Equal(0, Discloak("burned", $"DISC-000{burned}"));
+        foreach (int n in Enumerable.Range(1, 4).Where(n => n != burned))
+            Assert.Equal(0, Discloak("discard", $"DISC-000{n}"));
+
+        Assert.Equal(0, Discloak("stage", tmp.File("stg2")));
+        Assert.Equal([$"DISC-000{burned}", $"DISC-000{next}"], TestKeys.Load(tmp.File("cat")).Discs.Select(d => d.Label).Order());
     }
 
     [Fact]

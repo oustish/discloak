@@ -4,6 +4,25 @@ What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entr
 name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
 `discloak version` shows the version of an exe.
 
+## 0.9.0 - 2026-11-04
+
+- **Every disc carries the program that staged it**, in `_program\`: `discloak.exe` (self-contained: it needs nothing
+  installed, the .NET runtime is inside), its source code (`discloak-0.9.0-source.zip`, the exact code it was built
+  from) and the licenses. The plan keeps room for it on every disc (about 40 MB); `--without-program` (stage, plan,
+  restage) leaves it out. `verify` checks it (the exe's version is shown, the source zip must open), `restage` adds it
+  where the disc's fixed layout still has room.
+- The published `discloak.exe` is self-contained (about 37 MB): no .NET runtime to install. Its start takes about
+  half a second (it unpacks itself). `THIRD-PARTY-NOTICES-dotnet.txt` holds the notices of the runtime inside it.
+- One save brings a catalog from before 0.8.0 entirely to the new names: every part of it still in the old format
+  is written again, also the parts of the file list the command did not read.
+- `discard` gives a disc's number back: the next disc takes the number after the highest one still in the catalog
+  (stage 4 discs, burn the 1st, discard the others: the next is the 2nd again; burn the 4th instead, and the next is
+  the 5th - free numbers below a disc that stays are not reused). Lost and destroyed discs keep their numbers.
+- Fixed: a catalog from before the label counter existed continues after its highest label number again; 0.8.0
+  looked only at labels starting with `DISC-`, not the old default `BDXL-`. Now every label counts, whatever its prefix.
+- The README on every disc, the catalog backup's README and `discloak version` name the project's home:
+  https://github.com/oustish/discloak.
+
 ## 0.8.0 - 2026-11-04
 
 **bdxl is now Discloak.** The command and the exe are `discloak` (`discloak.exe`); everything else follows:

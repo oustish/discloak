@@ -52,7 +52,8 @@
 ## FAQ
 
 **Can a disc be read without discloak?**
-Yes. Its `README.txt` describes `discloak.key`, the packs and the manifest with standard algorithms (Argon2id,
+It does not need to be: every disc staged since 0.9.0 carries the program itself, in `_program\discloak.exe` (it needs
+nothing installed), with its source code. Without it, too: its `README.txt` describes `discloak.key`, the packs and the manifest with standard algorithms (Argon2id,
 HKDF-SHA256, AES-256-GCM, zstd), enough to write a decryptor. You need the password valid when the disc was staged
 (or the recovery key of that time). Checking it needs nothing at all: `packs.sha256` works with any `sha256sum`.
 
@@ -86,7 +87,8 @@ Their location's compression setting changed (or `--full` was given); their comp
 Enough for the file system's fixed overhead (a few tens of MB on a 100 GB disc; the packs, the manifest and the
 padding of both are counted by the plan itself), the disc's folders and small files (a few hundred KB) and, with
 `--with-catalog`, the catalog backup (~1.25× the catalog's `.enc` files; those take roughly 100-150 bytes per
-catalogued file). `stage` warns when it does not fit.
+catalogued file). `stage` warns when it does not fit. The program folder (`_program\`, about 40 MB) does not need
+the reserve: the plan keeps room for it on every disc.
 
 **Which file system should I burn with?**
 UDF 2.50 (the usual choice for BD-R). discloak's file names are short and plain ASCII, so any burning program works.

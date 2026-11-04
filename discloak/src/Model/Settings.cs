@@ -4,7 +4,7 @@ namespace Discloak;
 public class Settings
 {
     public string LabelPrefix { get; set; } = "DISC-";    // new discs are named <prefix><counter>
-    public int LabelCounter { get; set; }                 // last number handed out; NEVER reset when the prefix changes
+    public int LabelCounter { get; set; }                 // last number handed out; shared by all prefixes; goes back only on discard (Archive.ReclaimLabels)
     public string Currency { get; set; } = "";            // shown next to costs, e.g. "PLN" or "$"
     public int HistoryKeep { get; set; } = 10;           // how many older catalog versions to keep
     public int DefaultThreads { get; set; } = 1;          // default for 'scan --threads'

@@ -12,28 +12,42 @@ public sealed class Archive
     public HashSet<string> DeadDiscs() =>
         cat.Discs.Where(d => d.State is "lost" or "destroyed").Select(d => d.Label).ToHashSet();
 
+    static readonly Regex LabelNumber = new(@"(\d+)$", RegexOptions.CultureInvariant);
+
+    /// <summary>The highest number at the end of a disc label in the catalog (DISC-0007: 7), whatever its prefix; 0 if none.</summary>
+    public int HighestLabelNumber() =>
+        cat.Discs.Select(d => LabelNumber.Match(d.Label))
+           .Select(m => m.Success && int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int n) ? n : 0)
+           .DefaultIfEmpty(0).Max();
+
+    /// <summary>
+    /// After a disc left the catalog (discard): the counter goes back to the highest number still in the catalog, so
+    /// the next disc takes the number after it. Free numbers below it stay unused (the labels keep the order the discs
+    /// were made in); lost and destroyed discs stay in the catalog, so their numbers stay taken. Returns whether the
+    /// counter went back.
+    /// </summary>
+    public bool ReclaimLabels()
+    {
+        var s = cat.Settings;
+        int highest = HighestLabelNumber();
+        if (highest >= s.LabelCounter) return false;
+        s.LabelCounter = highest;
+        return true;
+    }
+
     public DiscRecord FindDisc(string label) =>
         cat.Discs.FirstOrDefault(d => d.Label.Equals(label, StringComparison.OrdinalIgnoreCase))
         ?? throw new UserException($"Unknown disc '{label}'.");
 
     /// <summary>
-    /// Next disc label = prefix + counter. The counter lives in settings.json and is never reset, so changing
-    /// the prefix later continues the numbering instead of starting over.
+    /// Next disc label = prefix + counter. The counter lives in settings.json and is shared by all prefixes, so
+    /// changing the prefix later continues the numbering instead of starting over. It only goes back when discs leave
+    /// the catalog (ReclaimLabels).
     /// </summary>
     public string NextLabel()
     {
         var s = cat.Settings;
-        if (s.LabelCounter == 0)   // catalogs from before the counter existed: continue after the highest number in use
-        {
-            foreach (var d in cat.Discs)
-            {
-                string? tail = null;
-                if (d.Label.StartsWith(s.LabelPrefix, StringComparison.OrdinalIgnoreCase)) tail = d.Label[s.LabelPrefix.Length..];
-                else if (d.Label.StartsWith("DISC-", StringComparison.OrdinalIgnoreCase)) tail = d.Label[5..];
-                if (tail != null && int.TryParse(tail, NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n > s.LabelCounter)
-                    s.LabelCounter = n;
-            }
-        }
+        if (s.LabelCounter == 0) s.LabelCounter = HighestLabelNumber();   // catalogs from before the counter existed
 
         string label;
         do
@@ -137,7 +151,8 @@ public sealed class Archive
     /// into = allocate to these bins instead of the blank discs (stage --append); whether a file is too big, and
     /// the part size of a new split, still follow the blank discs.
     /// </summary>
-    public PlanResult MakePlan(bool split = false, IReadOnlyList<BlankDisc>? into = null)
+    /// <param name="programSpace">kept free on every disc for the program folder (DiscProgram.SpaceFor)</param>
+    public PlanResult MakePlan(bool split = false, IReadOnlyList<BlankDisc>? into = null, long programSpace = 0)
     {
         var live = LiveCopies();
         var wanted = WantedCopies();
@@ -149,8 +164,9 @@ public sealed class Archive
             .ToList();
 
         // the room of a disc is what its packs can hold (DiscFormat.Room); a piece takes its stored size (whole files
-        // maybe compressed, sizes counted by scan; parts never) and its line in the disc's manifest
-        Func<BlankDisc, long> roomOf = b => DiscFormat.Room(b.Usable);
+        // maybe compressed, sizes counted by scan; parts never) and its line in the disc's manifest. The program
+        // folder (DiscProgram) comes out of every disc's room, like the manifest.
+        Func<BlankDisc, long> roomOf = b => DiscFormat.Room(Math.Max(0, b.Usable - programSpace));
         long largest = cat.Blanks.Select(roomOf).DefaultIfEmpty(0).Max();
         Func<Piece, long> sizeOf = p => StoredSizeOf(cat.Settings, p) + DiscSpace.ManifestShare(p);
         long PartSizeFor(FileRecord f) => largest - DiscSpace.ManifestShare(new Piece(f, 1, 2, 0, 0));

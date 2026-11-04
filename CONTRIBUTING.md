@@ -15,7 +15,13 @@ cd discloak && dotnet publish -p:PublishProfile=win-x64         # one file: publ
 ```
 
 `git` must be on the PATH when building: the build records the commit, the branch, whether there were uncommitted
-changes, and the build time (see [Versions](#versions)). Without git it still builds, as "commit unknown".
+changes, and the build time (see [Versions](#versions)), and puts the source code into the exe (the
+`DiscloakSourceZip` target: the working tree as it is - committed, changed and new files, not what `.gitignore`
+excludes - which `stage` writes into every disc's `_program\`). Without git it still builds, as "commit unknown" and
+without the source. The published exe is self-contained (the .NET runtime is inside): when the runtime version
+changes, copy the runtime package's `THIRD-PARTY-NOTICES.TXT` over `THIRD-PARTY-NOTICES-dotnet.txt` (from
+`%USERPROFILE%\.nuget\packages\microsoft.netcore.app.runtime.win-x64\<version>\`) and update the version in
+`THIRD-PARTY-NOTICES.md`.
 
 When testing by hand, never use the real catalog or the real agent: give a scratch folder with `--catalog`, and set
 `DISCLOAK_AGENT=off`.
@@ -68,6 +74,16 @@ package or project. `dotnet publish` puts all three files next to `discloak.exe`
 
 By contributing a change you agree that it is distributed under the project's license, and that the author may also
 license it under other terms (so that separate licenses can be granted for the whole program).
+
+## Branches
+
+- Every change is made on a branch from `master`: `feature/<name>`, or `fix/<name>` for a fix. Its commits carry
+  the version raise and the changelog entry.
+- When it is done and the tests pass, it is merged into `master` with `git merge --no-ff` (the change stays one unit
+  in the history), and the branch is deleted.
+- Releases are published and tagged from `master` only, so `master` is always releasable.
+- On GitHub: pushing a branch is optional (a backup, or a pull request). Changes from others come as pull requests
+  to `master`.
 
 ## Commits
 

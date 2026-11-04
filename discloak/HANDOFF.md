@@ -1,4 +1,4 @@
-# Discloak – handoff notes (state as of 2026-11-04, version 0.8.0; called bdxl before 0.8.0)
+# Discloak – handoff notes (state as of 2026-11-04, version 0.9.0; called bdxl before 0.8.0)
 
 How to build, test, version and commit: [`../CONTRIBUTING.md`](../CONTRIBUTING.md). Changes per version:
 [`../CHANGELOG.md`](../CHANGELOG.md). License: PolyForm Shield 1.0.0 ([`../LICENSE.md`](../LICENSE.md),
@@ -6,6 +6,15 @@ How to build, test, version and commit: [`../CONTRIBUTING.md`](../CONTRIBUTING.m
 copied next to `discloak.exe` by publish (`Discloak.csproj`); `BuildInfo.Copyright`/`License` for `version`.
 
 ## Status
+- **The program on every disc (0.9.0):** `DiscProgram` writes `_program\` (the running `discloak.exe` when it is the
+  published single file - no `discloak.dll` next to it -, the source zip and the license files, both embedded as
+  resources: `DiscloakSourceZip` target and `EmbeddedResource` in `Discloak.csproj`). `Archive.MakePlan(programSpace:)`
+  takes `DiscProgram.SpaceFor(opt)` off every disc's room (stage, append, plan, status); stage counts the written
+  folder (`SpaceOf`) as occupied; restage adds it only if `capacity - packs - manifest - reserve` leaves room; verify
+  checks it. `--without-program` everywhere. The publish profile is self-contained and compressed (about 37 MB);
+  `THIRD-PARTY-NOTICES-dotnet.txt` is the runtime's own notices. Tests use small stand-ins
+  (`TestKeys.ProgramFiles`, `DiscProgram.UseFilesForTests`). A save converts every part of a catalog still in
+  `BDXLENC2` (`Catalog.ReEncryptLegacy` for parts it did not read, `FileCrypto.IsLegacy`).
 - **Renamed from bdxl to Discloak (0.8.0, 2026-11-04):** command, exe, assembly, namespaces (`Discloak`,
   `Discloak.Tests`), folders (`discloak/`, `tests/Discloak.Tests/`, `Discloak.slnx`), environment variables
   (`DISCLOAK_*`, the old `BDXL_*` are not read any more), the agent's folder and pipe, the default label prefix
@@ -61,7 +70,7 @@ copied next to `discloak.exe` by publish (`Discloak.csproj`); `BuildInfo.Copyrig
 ```
 dotnet build -c Release
 dotnet publish -p:PublishProfile=win-x64   # single-file ../publish/discloak.exe (Properties/PublishProfiles/win-x64.pubxml)
-dotnet test ../Discloak.slnx -c Release   # from discloak/; 247 tests, a few seconds
+dotnet test ../Discloak.slnx -c Release   # from discloak/; 253 tests, a few seconds
 dotnet run -- help                 # all commands
 dotnet run -- <command> --help     # details
 dotnet run -- workflow             # sample session
@@ -241,8 +250,10 @@ stored for over aliases.
   files (`RestageCommand.PieceSource` regenerates a piece's stored bytes - same compression level, same frames - and
   checks its hash when the piece ends). `restage.json` lists only packs whose pieces are all checked. Failed pieces
   abort (exit 3) unless `--allow-partial` (their copies are removed; their bytes stay as unused space).
-- **Labels:** `Settings.LabelPrefix` + `LabelCounter` (`D4`). The counter only ever goes up (`Archive.NextLabel`).
-  For old catalogs it is initialised from the existing `BDXL-nnnn` labels.
+- **Labels:** `Settings.LabelPrefix` + `LabelCounter` (`D4`), one counter for all prefixes (`Archive.NextLabel`). It
+  goes back only in `discard` (`Archive.ReclaimLabels`): to the highest number at the end of any label still in the
+  catalog (`HighestLabelNumber`), so the next disc takes the number after it; free numbers below are not reused, lost
+  and destroyed discs keep theirs. A catalog from before the counter starts from `HighestLabelNumber` too.
 - **Blank discs:** `stage` uses up a `BlankDisc` and copies its capacity, reserve and cost to the `DiscRecord`.
   `discard` gives the blank disc back. Discs from `scandisc` have no reserve figure (occupied = the disc folder's
   space); appending to them needs `--capacity` at import or `--mount`.
@@ -271,13 +282,14 @@ initializer sets `DISCLOAK_PASSWORD` and `DISCLOAK_AGENT=off` and makes packs sm
 | `GitIgnoreTests` | anchoring, `**`, `?`, classes, dir-only rules, negation, no re-include inside an ignored folder |
 | `PackerTests` | best-fit order, nothing dropped, never overfilled, stored size via `sizeOf`, determinism |
 | `SplitLayoutTests` | parts cover the file, suffixes, `PartSizeOf` from any part |
-| `ArchiveTests` | `CompleteCopy` (layouts never mix), `DiscSpace` (sectors, entries, folder, manifest share never below the real line), small files take only their bytes, a disc's room filled exactly, dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels |
+| `ArchiveTests` | `CompleteCopy` (layouts never mix), `DiscSpace` (sectors, entries, folder, manifest share never below the real line), small files take only their bytes, a disc's room filled exactly, dedup, dead discs, `MakePlan` with/without `--split`, missing parts only, `LinkDuplicates`, `Matches`, labels, labels after the highest number of any prefix and given back by `ReclaimLabels` (never below a disc still in the catalog) |
 | `FileCryptoTests` | `DCLKENC2` streams: round trips around chunk boundaries, byte ranges, another key, flipped byte, truncation, cut-off chunks, password policy |
 | `PackTests` | real geometry (64 MiB, 67,109,944-byte packs), equal pack sizes and ranges read back across chunks/packs, a damaged chunk fails only its ranges, swapped packs and another key refused, whole-pack reading (hash per pack, missing pack), a pack that cannot be written stops the command, the stored form (plain and zstd frames) round trips and `HashAndMeasure` = written size, never more than planned, `Room` |
 | `SecureDeleteTests` | every byte overwritten (also a file small enough to live in the MFT), a wiped folder gone with its read-only files, folders not to wipe |
 | `DiscReadTests` | uncached reads give the file's bytes from anywhere (sizes around block and sector edges), the handle really bypasses the cache (a read that is not whole sectors is refused) |
 | `ReedSolomonTests` | GF(256), repair of up to m blocks (data + parity), unrecoverable, truncated / missing files |
-| `LegacyNamesTests` | the bdxl 0.7.1 fixture (old names): the catalog opens as it is and takes the new names on its first save (`discloak.key`, `DCLKENC2`), the disc verifies (`--deep`, `--no-cache`) and restores byte for byte, a catalog rebuilt from the disc (`init --key-from` + `scandisc`) and from its old `_catalog`, a session appended by Discloak has the new names and the mixed disc verifies and restores as one |
+| `ProgramOnDiscTests` | every disc gets `_program` (the stand-ins), verify checks it (a broken source zip, a missing exe), `--without-program`; the plan keeps room for it, restage adds it only where there is room; the exe's resources: the license files as in the repo, the source zip of the tree (no build output); the repo's URL in both READMEs and `version` |
+| `LegacyNamesTests` | the bdxl 0.7.1 fixture (old names): the catalog opens as it is and takes the new names on its first save (`discloak.key`, `DCLKENC2` for every part, also the unread ones), the disc verifies (`--deep`, `--no-cache`) and restores byte for byte, a catalog rebuilt from the disc (`init --key-from` + `scandisc`) and from its old `_catalog`, a session appended by Discloak has the new names and the mixed disc verifies and restores as one |
 | `InterruptTests` | an interrupted scan saves, marks nothing missing, and a rerun finishes; interrupted stage/restage/restore/verify/scandisc leave nothing half-done; a restage stopped after pack 2 continues from `.partial`, taking over only the packs whose files were checked (own non-parallel collection: `Interrupt` is process-wide; `EndToEndTests`, `CatalogTests` and `AgentTests` share it, as they read `Console.Out` or set `DISCLOAK_AGENT`) |
 | `MasterKeyTests` | password/recovery envelopes, password change keeps the master key, envelopes bound to their catalog, `discloak.key` round trip, found under its old name `bdxl.key` and written under the new one (both: the new one wins; `MigrateName`), KDF limits, `BDXLENC2` round trips/another key/another purpose/tampering, recovery key checksum; key rings: rotation, an old envelope opens only the old keys, a `bdxl-key-1` file opens and is rewritten as a ring |
 | `AgentTests` | in-process server on its own pipe with a test clock: hand over / get / lock, idle time restarts with use, maximum, Win+L and sleep per catalog, other protocol, second agent refused, commands use the agent instead of the password |
@@ -285,7 +297,7 @@ initializer sets `DISCLOAK_PASSWORD` and `DISCLOAK_AGENT=off` and makes packs sm
 | `KeyRotationTests` | after a rotation: catalog under the new key, history still checks, old disc verified/restored via the ring, new disc on the new key, each disc's discloak.key opens only its keys (old password: old key only), leak simulation with `init --key-from`, append + restage keep the disc's key, a broken catalog is not rotated |
 | `CatalogTests` | nothing readable in an encrypted catalog, file list split per location (unchanged parts not rewritten, stale parts removed, rollback), unsplit list read and split + too-old marker, compression, damage, HMAC against mixed saves + accept, snapshots (never `discloak.key`), pruning, rollback, `init` + wrong password, migration (history too, `--force`, interrupted), export/import, import wipes the export only once saved (`--keep`, refused folders, a failed import, a file held open: exit 2), password change + recovery key, `password check`, backup restore into empty/own/other catalog |
 | `OptionsTests`, `SizeTextTests` | argument parsing, flags, dates in UTC, sizes and money |
-| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, `cost report` and `discs` line up labels of any length, `version` (and `--version`) and the build every staged disc records (disc.json, the catalog, `discs`, kept by restage), what verify prints (what it checks, every file with `--deep`, a damaged pack as soon as it is read), verify checks the disc's other files (each kind of damage found by a plain verify, with and without `--no-cache`, `_catalog` against its repair data), manifest hashes recorded by the first `--deep` verify of an older disc and the manifests compared with the catalog, progress lines of stage/restore/restage, of equally full discs the one with the largest file staged first, tiny files in one pack, a damaged pack (verify names it, restore loses only its file), restore from a copy on another disc, restage taking intact packs from the old disc and rebuilding the damaged one, restage without a source (refused / `--allow-partial`), 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), split restore one drive at a time, lost + restage (same layout), hand-edited catalog |
+| `EndToEndTests` | real commands via `Program.Main`: stage/verify/burn/restore, `cost report` and `discs` line up labels of any length, `version` (and `--version`) and the build every staged disc records (disc.json, the catalog, `discs`, kept by restage), discard gives numbers back down to the highest disc still in the catalog (burn the 4th: the next is the 5th; burn the 1st: the 2nd), what verify prints (what it checks, every file with `--deep`, a damaged pack as soon as it is read), verify checks the disc's other files (each kind of damage found by a plain verify, with and without `--no-cache`, `_catalog` against its repair data), manifest hashes recorded by the first `--deep` verify of an older disc and the manifests compared with the catalog, progress lines of stage/restore/restage, of equally full discs the one with the largest file staged first, tiny files in one pack, a damaged pack (verify names it, restore loses only its file), restore from a copy on another disc, restage taking intact packs from the old disc and rebuilding the damaged one, restage without a source (refused / `--allow-partial`), 1 vs 4 scan threads give the same catalog, moved files keep their record (also across separately scanned locations), split restore one drive at a time, lost + restage (same layout), hand-edited catalog |
 | `EncryptedDiscTests` | nothing on a disc shows names/hashes/counts, two discs with different files look alike, `discloak.key` + README + packs.sha256 + key ids on the disc, verify + restore, a lost catalog rebuilt with `init --key-from` + `scandisc` (wrong/no password refused; unverified until `verify`), plain discs refused, old and new discs across a password change, `_catalog` repaired without and restored with the password, standalone backup, restage keeps the layout, a disc of another key refused (restage, restore) |
 | `AppendTests` | only new/changed files in the session's packs (numbering continued), the session's manifest hash and build recorded (and dropped by discard), session manifest of its own (merged on the disc in session order), burn/verify/restore/scandisc of the merged disc, free space with reserve per session, discard of the session only (packs too), refusals, the disc's own key and nothing telling in the session, a disc of another key refused (catalog or `--mount`) |
 | `CopiesTests` | per-location copies on different discs, never two on one disc, staged copies count for planning but only burned ones as made, lost discs, higher number of two locations, not onto an `--append` disc that holds it, split parts twice, end to end (stage, burn, restore from either disc, lost + restaged, alias rename) |

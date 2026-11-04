@@ -29,6 +29,7 @@ public sealed class VersionCommand : ICommand
         Console.WriteLine($"full version: {BuildInfo.Full}");
         Console.WriteLine($"{BuildInfo.Copyright}. License: {BuildInfo.License} - free to use, not to compete with " +
                           "(LICENSE.md, LICENSING.md and THIRD-PARTY-NOTICES.md come with discloak.exe).");
+        Console.WriteLine($"Source, releases, documentation: {BuildInfo.ProjectUrl}");
         return 0;
     }
 }
