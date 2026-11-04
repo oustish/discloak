@@ -67,11 +67,11 @@ The build adds the rest (the `DiscloakBuildInfo` target in `Discloak.csproj`): t
 2. Tag the merge commit: `git tag -a v0.9.0 -m "discloak 0.9.0"`, then `git push origin master --tags`.
 3. Build the release files from the tag: `.\tools\release.ps1 v0.9.0`. It builds in a fresh worktree of the tag
    (so nothing uncommitted can get in) and writes `release\v0.9.0\`: `discloak-0.9.0-win-x64.zip` (the exe, its
-   license files and the changelog), `discloak-0.9.0-source.zip` (`git archive` of the tag), `SHA256SUMS.txt` and
-   `notes.md` (the version's changelog section).
-4. On GitHub: a release for the tag, with `notes.md` as its text and the two zips and `SHA256SUMS.txt` attached
-   (Releases › Draft a new release, or `gh release create v0.9.0 release\v0.9.0\*.zip release\v0.9.0\SHA256SUMS.txt
-   --notes-file release\v0.9.0\notes.md`).
+   license files and the changelog), `discloak-0.9.0-source.zip` (`git archive` of the tag) and `notes.md` (the
+   version's changelog section).
+4. On GitHub: a release for the tag, with `notes.md` as its text and the two zips attached (Releases › Draft a new
+   release, or `gh release create v0.9.0 release\v0.9.0\*.zip --notes-file release\v0.9.0\notes.md`). No checksum
+   file: the release page shows each file's SHA-256.
 
 5. Publish the documentation to the wiki: `.\tools\publish-wiki.ps1`. `docs\` is the source; the
    [wiki](https://github.com/oustish/discloak/wiki) is a copy of it with a sidebar, and every publish overwrites it -

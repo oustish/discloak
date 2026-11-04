@@ -8,8 +8,8 @@
     tag's, without '*'), then writes release\<tag>\:
       discloak-<version>-win-x64.zip   discloak.exe (self-contained), its license files, CHANGELOG.md
       discloak-<version>-source.zip    git archive of the tag
-      SHA256SUMS.txt                   the two zips' SHA-256 (sha256sum format)
       notes.md                         the version's section of CHANGELOG.md: the text of the GitHub release
+    No checksum file: GitHub shows every release file's SHA-256 on the release page.
     The worktree is removed afterwards. Needs git and the .NET 10 SDK. See CONTRIBUTING.md › Versions.
 
 .EXAMPLE
@@ -58,10 +58,6 @@ try {
     $end = [array]::FindIndex($lines, $start + 1, [Predicate[string]] { param($l) $l -match '^## ' })
     if ($end -lt 0) { $end = $lines.Count }
     $lines[($start + 1)..($end - 1)] -join "`n" | ForEach-Object Trim | Set-Content (Join-Path $out 'notes.md') -Encoding utf8
-
-    Get-ChildItem $out -Filter *.zip | Sort-Object Name |
-        ForEach-Object { "{0} *{1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name } |
-        Set-Content (Join-Path $out 'SHA256SUMS.txt') -Encoding ascii
 
     Write-Host "`n$built`n"
     Get-ChildItem $out | Format-Table Name, Length -AutoSize
