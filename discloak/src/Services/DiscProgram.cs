@@ -81,10 +81,36 @@ public static class DiscProgram
             using var output = new FileStream(Path.Combine(dir, name), FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
             input.CopyTo(output);
         }
+        return Missing();
+    }
+
+    /// <summary>What this exe cannot put into the folder (it runs from a build folder, or was built without git), or null.</summary>
+    public static string? Missing()
+    {
         if (testFiles != null) return null;
         var missing = new List<string>();
         if (ExePath == null) missing.Add($"{ExeName} (this is not the published {ExeName}: it runs from a build folder)");
         if (Me.GetManifestResourceInfo(SourceResource) == null) missing.Add("the source code (this exe was built without git)");
         return missing.Count == 0 ? null : string.Join("; ", missing);
+    }
+
+    /// <summary>The disc folder's _program holds what Write would write now: the same files, sizes and exe version.</summary>
+    public static bool IsCurrent(string discDir)
+    {
+        string dir = Path.Combine(discDir, FolderName);
+        if (!Directory.Exists(dir)) return false;
+        var have = Directory.GetFiles(dir).ToDictionary(p => Path.GetFileName(p)!, p => new FileInfo(p).Length, StringComparer.OrdinalIgnoreCase);
+        var want = Files().ToList();
+        return have.Count == want.Count && want.All(f => have.TryGetValue(f.Name, out long size) && size == f.Size) &&
+               (ExePath == null || testFiles != null || VersionIn(discDir) == System.Diagnostics.FileVersionInfo.GetVersionInfo(ExePath).ProductVersion);
+    }
+
+    /// <summary>The version of the exe in a disc folder's _program ("0.10.0+f196676.20261114T0434Z"), or null.</summary>
+    public static string? VersionIn(string discDir)
+    {
+        string exe = Path.Combine(discDir, FolderName, ExeName);
+        if (!File.Exists(exe)) return null;
+        try { return System.Diagnostics.FileVersionInfo.GetVersionInfo(exe).ProductVersion is { Length: > 0 } v ? v : null; }
+        catch (Exception ex) when (ex is IOException or FileNotFoundException) { return null; }
     }
 }

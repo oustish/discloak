@@ -324,7 +324,7 @@ public sealed class CatalogCommand : ICommand
     /// next to each. Also used by 'stage --with-catalog'. Nothing is decrypted: creating, checking and repairing a
     /// backup need no password.
     /// </summary>
-    public static void WriteBackup(Ctx c, string dir)
+    public static void WriteBackup(Ctx c, string dir, bool quiet = false)
     {
         int pct = c.Opt.GetInt("parity-percent", 25);
         if (pct < 1 || pct > 50) throw new UserException("--parity-percent must be between 1 and 50.");
@@ -340,7 +340,7 @@ public sealed class CatalogCommand : ICommand
             File.WriteAllBytes(Path.Combine(dir, name), data);
             File.WriteAllBytes(Path.Combine(dir, name + ".par"), parity);
             JsonStore.WriteObject(Path.Combine(dir, name + ".repair.json"), meta);
-            Console.WriteLine($"  {name}: {SizeText.Bytes(data.Length)} bytes + {SizeText.Bytes(parity.Length)} bytes repair data " +
+            if (!quiet) Console.WriteLine($"  {name}: {SizeText.Bytes(data.Length)} bytes + {SizeText.Bytes(parity.Length)} bytes repair data " +
                               $"(can rebuild up to {meta.ParityBlocks} damaged blocks of {SizeText.Bytes(meta.BlockSize)} bytes)");
         }
 
