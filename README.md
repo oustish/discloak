@@ -9,8 +9,8 @@ even how many files it holds. Discs can be read back and checked years later - w
 without Discloak installed: every disc carries the program that wrote it, its source code, and a README describing
 the formats.
 
-> Status: **pre-1.0** (0.9.x). The disc and catalog formats are stable, and every version keeps reading what older
-> ones wrote. Windows x64. Formerly called *bdxl* (before 0.8.0).
+> Status: **pre-1.0** (see the [releases](https://github.com/oustish/discloak/releases)). The disc and catalog formats
+> are stable, and every version keeps reading what older ones wrote. Windows x64. Formerly called *bdxl* (before 0.8.0).
 
 ## Features
 
@@ -22,10 +22,16 @@ the formats.
   discs; several copies per location; duplicates stored once; compression per location (zstd); sessions appended
   to a burned disc.
 - **Discs**: AES-256-GCM in equal packs, an encrypted manifest padded to whole packs, `packs.sha256` to check a disc
-  with any `sha256sum`, an optional catalog backup on the disc, and the program itself (`_program\`).
-- **Checking and recovery**: `verify` (hashes, `--deep` decrypts every file, `--no-cache` reads past the Windows
-  cache), `restore` from any mounted copy (a damaged spot costs only the files in it), `restage` (rebuild a disc,
-  reusing its intact packs), `scandisc` (rebuild a lost catalog from the discs).
+  with any `sha256sum`, an optional catalog backup on the disc, and the program itself (`_program\`). Staged discs
+  waiting to be burned are brought up to date with `stage refresh` (the latest catalog backup and program).
+- **Checking**: `verify` compares every pack's hash with the catalog; `--deep` decrypts every file and checks its
+  hash; `--packs 312` checks single packs; `--no-cache` reads past the Windows cache. A read that fails is tried
+  again from the disc before it counts as damage (and reported as a warning sign). Copies found damaged are recorded
+  and stop counting, so the next `stage` backs those files up again; a later verify that reads them back intact
+  clears the mark. `--mark-burned` records the disc as burned once everything checked out.
+- **Recovery**: `restore` from any mounted copy (a damaged spot costs only the files in it), damaged packs burned
+  again as a new session onto a disc left open until it passed `verify`, `restage` (rebuild a disc, reusing its intact
+  packs), `scandisc` (rebuild a lost catalog from the discs).
 
 ## Getting it
 
@@ -44,9 +50,9 @@ discloak init --recovery-key                               # once: a new encrypt
 discloak blanks add 10 --size 96882130944 --reserve 300MB  # the blank discs you have (exact bytes)
 discloak scan D:\Photos --name Photos                      # index a folder
 discloak stage E:\Staging --with-catalog                   # the next disc's folder: E:\Staging\DISC-0001
-   ... burn E:\Staging\DISC-0001 with your burning program (do not finalize it yet) ...
-discloak verify DISC-0001 G:\ --deep                       # read the burned disc back and check every file
-discloak burned DISC-0001
+discloak stage refresh E:\Staging                          # just before burning (if staged a while ago)
+   ... burn E:\Staging\DISC-0001 with your burning program (do not finalize it until verify passes) ...
+discloak verify DISC-0001 G:\ --deep --mark-burned         # read it back, check every file, record it as burned
 discloak restore D:\Recovered "holiday" --mount G:\        # later: get files back
 ```
 
