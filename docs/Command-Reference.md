@@ -140,6 +140,27 @@ Every file is printed as soon as it is stored, with the disc's progress, speed a
 (`  [3/302   12.4%    85.3 MB/s  ~3h 12m left] Video/a.mkv (4,212,334,123 bytes)`); while a large file is copied, a
 status line shows how far it is.
 
+#### stage refresh
+Bring disc folders that are staged but not burned yet up to date, just before burning them.
+```
+discloak stage refresh <discFolder|stagingFolder> [--add-catalog] [--add-program] [--dry-run]
+```
+Give one disc folder (`E:\Staging\DISC-0002`) or the staging folder (every disc folder in it). In each folder of a
+disc (or appended session) that is staged and not burned yet:
+
+| | |
+|---|---|
+| `_catalog\` | written again: the catalog as it is now (a disc staged together with others, or a while ago, has an older one) |
+| `_program\` | replaced by the program running now, if it is another one (another version or build) |
+| `README.txt`, `discloak.key` | written again if they differ (`discloak.key`: the catalog's key file, e.g. after a password change) |
+
+A folder gets what it already has: `--add-catalog` / `--add-program` add `_catalog\` / `_program\` where they are
+missing; to take one out, delete it by hand. The packs, the manifest, `packs.sha256` and `disc.json` are not touched,
+so `verify` works as before. Skipped, with the reason: folders of burned discs, of discs no longer in the catalog
+(discarded), of other catalogs, and old folders whose `packs.sha256` does not match the catalog (from before a
+discard or `restage`). If the new files would not fit on the disc (a catalog backup larger than the reserve), the
+folder stays as it was (exit code 2). `--dry-run` only shows what would change.
+
 ### burned
 Mark a staged disc, or its staged session, as burned.
 ```

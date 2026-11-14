@@ -5,7 +5,8 @@ public sealed class StageCommand : ICommand
     public string Name => "stage";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
-    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--without-program] [--append <label> [--mount <path>]]";
+    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--without-program] [--append <label> [--mount <path>]]" +
+                           " | " + StageRefresh.Usage;
     public bool Interruptible => true;
     public string Details => """
         Creates <destDir>/<label>/ for each disc. The files (compressed if set, see 'compression') are laid end to end
@@ -38,6 +39,19 @@ public sealed class StageCommand : ICommand
                            Afterwards: 'burned L' for the session, or 'discard L' to take it back.
           --mount P        with --append: the disc is in the drive at P - its label (and key) is checked, and the free
                            space the drive reports is used if it is smaller.
+        stage refresh <folder>: brings disc folders that are staged but not burned yet up to date - a disc folder, or
+        every disc folder in a staging folder. Run it just before burning: a disc staged earlier (or together with
+        others, --max-discs) then carries the catalog as it is now and the program running now. In each folder:
+        _catalog is written again from the catalog as it is now, _program is replaced by this program (when it is
+        another one), README.txt and discloak.key (the catalog's key file: a password changed since staging) are
+        written again. A folder gets what it already has; the packs, manifest, packs.sha256 and disc.json stay as they
+        are, so nothing about the packs changes. Folders of burned discs, discarded or restaged discs and other
+        catalogs are skipped. If the new files would not fit on the disc (a catalog backup that outgrew the reserve),
+        the folder is left as it was (exit code 2).
+          --add-catalog    also add _catalog to a folder that has none
+          --add-program    also add _program to a folder that has none
+          --dry-run        only say what would change
+        Removing _catalog or _program from a staged folder is done by hand (delete the folder).
         Labels are <prefix><counter>, e.g. DISC-0007 (see 'settings').
         Every file is printed as soon as it is stored, with the disc's progress by bytes, speed and time left; while a
         large file is copied, a status line shows how far it is (not written when the output is redirected).
@@ -48,6 +62,7 @@ public sealed class StageCommand : ICommand
 
     public int Run(Ctx c)
     {
+        if (c.Args.Count > 0 && c.Args[0].Equals("refresh", StringComparison.OrdinalIgnoreCase)) return StageRefresh.Run(c);
         if (c.Args.Count != 1) throw new UserException("Usage: " + Usage);
         string destDir = Path.GetFullPath(c.Args[0]);
         if (c.Opt.Get("append") is { } appendTo) return Append(c, destDir, appendTo);

@@ -4,6 +4,16 @@ What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entr
 name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
 `discloak version` shows the version of an exe.
 
+## 0.11.0 - 2026-11-14
+
+- `stage refresh <folder>` brings staged disc folders (not burned yet) up to date, for running just before burning:
+  the catalog backup (`_catalog\`) is written again from the catalog as it is now, `_program\` is replaced by the
+  program running now (if it is another one), `README.txt` and `discloak.key` are written again if they differ. A disc
+  staged a while ago, or together with others (`--max-discs`), then carries the latest catalog and program. Give one
+  disc folder or the staging folder. A folder gets what it already has; `--add-catalog` and `--add-program` add the
+  missing ones. Packs, manifest, `packs.sha256` and `disc.json` stay as they are. Folders of burned, discarded or
+  restaged discs are skipped; a folder whose new files would not fit stays as it was. `--dry-run` shows what would change.
+
 ## 0.10.0 - 2026-11-14
 
 - **verify records the copies it finds damaged** in the catalog (new optional fields `damagedUtc` and `damage` on a

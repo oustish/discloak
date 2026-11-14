@@ -31,6 +31,9 @@ The regular cycle: **scan → plan → stage → burn → verify → burned**. R
      whole catalog back ([Disaster Recovery](Guide-Disaster-Recovery.md)).
    - `--max-discs 3` stages up to three discs at once (folders `DISC-0001`, `DISC-0002`, `DISC-0003`).
    - `--min-fill 0.9` only stages discs that would be at least 90% full, so half-empty discs wait for more data.
+   - Staged a while ago, or several discs at once? Just before burning one, bring its folder up to date:
+     `discloak stage refresh E:\Staging\DISC-0001` writes the catalog backup again (as the catalog is now: the discs
+     staged after it, those burned since) and puts the program running now into `_program\`. Nothing else changes.
 5. **Burn** the contents of `E:\Staging\DISC-0001` with your burning program, with a file system the disc supports
    ([which one](Troubleshooting.md#file-system)). **Do not finalize (close)
    the disc yet**: while it is open, a pack that fails `verify` can be burned again on its own, as a small second
