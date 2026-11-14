@@ -23,7 +23,8 @@ public sealed class StatusCommand : ICommand
         var dead = c.Arc.DeadDiscs();
         int onSource = c.Cat.Files.Count(f => f.MissingSinceUtc == null && !f.Ignored);
         int safe = c.Cat.Files.Count(f => f.MissingSinceUtc == null && !f.Ignored &&
-            Archive.CompleteCopy(f.Backups.Where(b => !dead.Contains(b.Disc) && b.BackedUpUtc != null), f.Sha256) != null);
+            Archive.CompleteCopy(f.Backups.Where(b => Archive.Counts(b, dead) && b.BackedUpUtc != null), f.Sha256) != null);
+        var damaged = c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.IsDamaged && !dead.Contains(b.Disc)).ToList();
         var sourceHashes = c.Arc.SourceHashes();
         int dataLost = c.Cat.Files.Count(f => f.MissingSinceUtc != null && f.Backups.Count > 0 && !Archive.HasAnyLiveCopy(f, dead)
                                               && !sourceHashes.Contains(f.Sha256));
@@ -45,6 +46,10 @@ public sealed class StatusCommand : ICommand
                               ? $"; {appending} appended session(s) staged, not yet burned" : ""));
         Console.WriteLine($"Label prefix: {c.Settings.LabelPrefix}  (last number used: {c.Settings.LabelCounter})");
         if (c.Settings.IgnoreRules.Count > 0) Console.WriteLine($"Ignore rules: {c.Settings.IgnoreRules.Count}");
+        if (damaged.Count > 0)
+            Console.WriteLine($"WARNING: {damaged.Count:N0} file copies are recorded as damaged by 'verify', on " +
+                              string.Join(", ", damaged.Select(b => b.Disc).Distinct().Order(StringComparer.Ordinal)) +
+                              ". They do not count as backups ('find' shows them); a verify that reads them back intact removes the mark.");
         if (dataLost > 0) Console.WriteLine($"WARNING: {dataLost:N0} file(s) are gone from the source and have no surviving copy on any disc.");
         Archive.PrintTooBig(plan.TooBig);
         return 0;

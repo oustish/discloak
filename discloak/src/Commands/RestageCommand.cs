@@ -162,7 +162,12 @@ public sealed class RestageCommand : ICommand
         disc.Packs = hashes.ToList();
         disc.Sessions = 1;               // the whole disc (all its sessions) is in one folder now
         disc.KeyId = key.KeyId;
-        foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label)) b.BackedUpUtc = null;
+        foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label))
+        {
+            b.BackedUpUtc = null;
+            b.DamagedUtc = null;          // rebuilt (or copied with its hash checked): no longer damaged
+            b.Damage = null;
+        }
 
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, x.File)).ToList();
         disc.Manifests = [DiscFiles.Write(dir, disc, manifest, key, c.Cat.Dir, session: 1)];

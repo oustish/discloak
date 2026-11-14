@@ -11,7 +11,7 @@ public sealed class AgentCommand : ICommand
     public bool NeedsCatalog => false;
     public bool Hidden => true;
 
-    static readonly object LogGate = new();
+    static readonly Lock LogGate = new();
 
     public int Run(Ctx c)
     {

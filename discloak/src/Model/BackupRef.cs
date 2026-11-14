@@ -15,6 +15,14 @@ public class BackupRef
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Unverified { get; set; }           // taken from the disc's manifest (scandisc) and not checked yet by 'verify'
 
+    // 'verify' found this copy damaged (since 0.10.0; older versions ignore both): it no longer counts as a copy - the
+    // file is pending again while on its source - but restore still tries it last. The next verify that reads it back
+    // intact, or a restage of the disc, removes the mark.
+    public DateTime? DamagedUtc { get; set; }
+    public string? Damage { get; set; }            // what verify found ("pack 312 differs from the catalog")
+
+    [JsonIgnore] public bool IsDamaged => DamagedUtc != null;
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Alias { get; set; }                // identical content stored on that disc for another file (dedup)
 

@@ -39,7 +39,9 @@
 | `… encrypted with another key` / `This disc belongs to another catalog.` | The disc was made by another catalog (or another key). Use that catalog, or `init --key-from <disc>` into a new folder. |
 | `Ignoring G:\: no disc.json there` | The disc has no `disc.json`: add `--disc <label>` (one mount at a time). |
 | `… is not a discloak disc (no disc.json)` (`scandisc`) | Only discs made by discloak can be read into a catalog. |
-| `DAMAGED  pack N …` (`verify`) | That pack does not match its hash (or does not decrypt). The files listed below it are the ones affected; restore them from another copy, and/or rebuild the disc with `restage … --from <the disc>` (the intact packs are reused). |
+| `DAMAGED  pack N …` (`verify`) | That pack does not match its hash (or does not decrypt), also when read again. The files listed below it are the ones affected. A disc not marked as burned yet, and not finalized: burn the pack again as a new session; an older disc: restore the files from another copy, and/or rebuild the disc with `restage … --from <the disc>` (the intact packs are reused). The damaged copies are marked in the catalog and no longer count: the files still on their source are pending again. See [Backing Up › If verify finds a damaged pack](Guide-Backing-Up.md#if-verify-finds-a-damaged-pack). |
+| `WARNING  … file copy(ies) … recorded as damaged read back intact now` (`verify`) | Copies an earlier verify found damaged passed this time; their marks are removed and they count again. If their packs were not burned again in between, the earlier failure was the reading, not the disc: a flaky drive, cable or connection - or a disc on the edge. Verify it again later, or in another drive. |
+| `RE-READ  pack N, chunk C read correctly on attempt 2 …` (`verify`, `restore`) | A read failed, or brought wrong bytes, and came right when tried again from the disc itself. The data is intact. A few now and then: a marginal spot. Many: suspect the drive, its cable or its connection (other devices on the same cables, a loose plug) - try another drive or port, then verify again. |
 | `PROBLEM  manifest.enc: …` (`verify`) | The disc's manifest is damaged or differs from the catalog. The files are still restorable with this catalog; only `scandisc` (rebuilding a catalog from the disc) needs it. Rebuild the disc with `restage … --from <the disc>` to get a good one. |
 | `PROBLEM  _catalog: …` (`verify`) | The catalog backup on the disc is damaged. "Repairable": `catalog backup restore` repairs it as it reads, or copy the folder and run `catalog backup verify <copy> --repair`. "Beyond repair": use the backup on another disc. |
 | `PROBLEM  packs.sha256 / disc.json / discloak.key / README.txt: …` (`verify`) | One of the disc's small files is damaged or missing. The catalog has what they hold; `restage … --from <the disc>` writes them again. Only `discloak.key` matters without the catalog: keep a disc whose `discloak.key` is intact (or the catalog backup). |
@@ -90,8 +92,18 @@ padding of both are counted by the plan itself), the disc's folders and small fi
 catalogued file). `stage` warns when it does not fit. The program folder (`_program\`, about 40 MB) does not need
 the reserve: the plan keeps room for it on every disc.
 
-**Which file system should I burn with?**
-UDF 2.50 (the usual choice for BD-R). discloak's file names are short and plain ASCII, so any burning program works.
+<a id="file-system"></a>**Which file system should I burn with?**
+One the disc supports: your burning program's default for the medium is usually right. Only BD-R XL discs (100 GB
+and more) need a specific one, UDF 2.50 or later. discloak's files have short, plain ASCII names and the packs are
+64 MiB each, so any common file system holds them. To add a session later ([appending](Guide-Appending.md), or
+burning a damaged pack again), the program must be able to continue the disc's file system in the new session.
+
+**`verify --deep` said a pack was damaged, but its SHA-256 (computed with another tool) matches `packs.sha256`. How?**
+Then the bytes on the disc are right, and the read during `verify` was not: the drive failed it, or wrong bytes
+arrived in memory (a faulty cable or port, interference, failing memory). Since 0.10.0 `verify` reads such a pack or
+chunk again from the disc itself before calling it damaged, and shows a read that came right as `RE-READ`. If a pack
+keeps failing under discloak but not elsewhere, check it alone: `verify <label> <drive> --packs N --deep --no-cache`,
+in another drive or on another port.
 
 **Why did `verify` run far faster than the drive can read?**
 Windows keeps what it read from a disc in spare memory until the disc is ejected, so a second `verify` gets part of

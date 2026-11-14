@@ -4,6 +4,34 @@ What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entr
 name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
 `discloak version` shows the version of an exe.
 
+## 0.10.0 - 2026-11-14
+
+- **verify records the copies it finds damaged** in the catalog (new optional fields `damagedUtc` and `damage` on a
+  copy; older versions ignore them). Without `--deep`: every file with data in a damaged pack; with it: only the files
+  that do not come back intact. A damaged copy no longer counts as a backup: a file still on its source is pending
+  again, so the next `stage` makes a new copy; `status` warns, `find` shows the mark, `restore` tries such a copy last.
+  A later verify that reads a marked copy back intact removes the mark with a warning (failing, then passing, points
+  to unreliable reads or a wearing disc); `restage` of the disc removes the marks too.
+- **verify reads again before it calls a pack damaged.** A read that fails, or a pack or chunk that comes back wrong,
+  is tried again twice, from the disc itself (past the Windows file cache): a drive or its cable can fail a read once
+  and get it right the next time. Such a read is shown as `RE-READ` - the data is intact, but it is a warning sign about
+  the disc, the drive or its connection - and counted in the summary. `--retries N` sets how often (0: never).
+  `restore` retries the same way.
+- `verify --packs 312,680-690` checks only those packs (with `--deep`: decrypts them, checks every file wholly in them
+  against its hash, and the part of a file that reaches beyond them) - for a pack that failed once, or one burned again.
+- `verify --mark-burned` marks the disc (or its staged session) as burned when everything checked out: every pack,
+  every file with `--deep`, and the disc's other files. Otherwise it says why not and leaves it staged.
+- After a damaged pack, verify says what to do: on a disc not marked as burned yet, burn only those packs again from
+  the staging folder as a new session (if the disc is not finalized; the pack paths and the check to run are printed);
+  on a burned disc, how to restore or rebuild it.
+- `verify --deep` prints a checked file as `OK       name (size)` or `DAMAGED  name (size): why`, lined up with the
+  disc's other files, without the progress in front of it (the status line still shows the progress).
+- Docs: the backing-up workflow leaves a new disc open until it has passed `verify`, and keeps the staging folder until
+  then; what a damaged pack means for the copies and the ways out; room in the reserve for burning a pack again.
+  Getting Started says the same. The file system to burn with: any the disc supports (only BD-R XL needs UDF 2.50 or
+  later), no longer UDF 2.50 everywhere.
+- Code: `System.Threading.Lock` for the locks that were plain objects.
+
 ## 0.9.1 - 2026-11-04
 
 The repository, ready to be public; the program itself is unchanged.
@@ -11,8 +39,7 @@ The repository, ready to be public; the program itself is unchanged.
 - `README.md` (what Discloak is, getting it, the first commands), `SECURITY.md` (how to report a vulnerability
   privately), `.gitattributes` (LF line endings everywhere but Windows scripts).
 - CONTRIBUTING: a section on pull requests, and how a version is released.
-- `tools
-elease.ps1 <tag>` builds a tagged version's release files from a fresh worktree of the tag: the exe with
+- `tools\release.ps1 <tag>` builds a tagged version's release files from a fresh worktree of the tag: the exe with
   its licenses, the source and the release notes (the version's changelog section; no checksum file: GitHub shows
   each file's SHA-256).
 - `tools\publish-wiki.ps1` publishes `docs\` to the [wiki](https://github.com/oustish/discloak/wiki): links between

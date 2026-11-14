@@ -145,19 +145,29 @@ Mark a staged disc, or its staged session, as burned.
 ```
 discloak burned <label> [--date yyyy-MM-dd]
 ```
+`verify … --mark-burned` does it after a verify that finds nothing wrong.
 
 ### verify
 Re-read a disc and compare it with the catalog.
 ```
-discloak verify <label> <mountedDiscPath> [--deep] [--no-cache]
+discloak verify <label> <mountedDiscPath> [--deep] [--packs 312,680-690] [--no-cache] [--retries N] [--mark-burned]
 ```
 Compares every pack's SHA-256 with the catalog (no password needed for that). `--deep` also decrypts every pack and
 checks every file against its hash, in the same single read. A damaged pack is named with the files that have data in
 it. Exit code 3: damaged or missing packs, or files that do not come back intact.
 
+The copies it finds damaged are **recorded in the catalog** (without `--deep`: every file with data in a damaged pack;
+with it: only the files that do not come back intact). They no longer count as backups: files still on their source
+are pending again, and `status` and `find` show the marks. A later verify that reads such a copy back intact removes
+the mark, with a warning. See [Backing Up › If verify finds a damaged pack](Guide-Backing-Up.md#if-verify-finds-a-damaged-pack)
+for what to do, before and after `burned`.
+
 | Option | |
 |---|---|
 | `--deep` | also decrypt every pack and check every file against its hash |
+| `--packs L` | only these packs: `312`, `312,683`, `300-310`. With `--deep`, every file whose data lies wholly in them is checked against its hash; a file that reaches beyond them only has its part in them decrypted (`OK … its data in pack(s) 312 (the file spans packs 300-380: not checked against its hash)`). The disc's other files are checked as always. For checking a pack again after burning it a second time, or a pack that failed once. |
+| `--retries N` | how often a read that fails, or a pack or chunk that comes back wrong, is tried again (default 2; `0`: never). Every retry reads from the disc itself, past the Windows file cache. A read that only came right on a retry is printed as `RE-READ`: the data is intact, but it is a warning sign about the disc, the drive or its cable. |
+| `--mark-burned` | if every pack, every file (`--deep`) and the disc's other files check out, mark the disc (or its staged session) as burned, as [`burned`](#burned) does, with today's date. Otherwise it says why not and leaves the disc staged. Not with `--packs`. |
 | `--no-cache` | read every byte from the disc itself. Without it, Windows may hand over what it still keeps in memory from an earlier read of this disc (since it was inserted; ejecting the disc empties that): the disc's own data, but not proof that it reads back now. Use it to re-check a disc that has stayed in the drive. It also keeps the 100 GB read from pushing other programs' data out of memory. |
 
 Before the packs, the disc's other files are checked, a line each:
@@ -178,8 +188,8 @@ only reads its manifests; its first `--deep` verify that finds them intact recor
 It starts by saying which disc it reads, from where, how many packs, bytes and files, and what it checks. While it
 reads, a status line shows the pack, the progress by bytes, the speed, the time left and the file whose data is
 being read (rewritten in place; not written when the output goes to a file). With `--deep` every file is printed as
-soon as it is checked (`OK` or `DAMAGED: why`). A damaged pack is printed as soon as it is read, and listed again
-at the end. Example (`--deep`; the last line is the status line):
+soon as it is checked (`OK` or `DAMAGED`, then why), lined up with the disc's other files. A damaged pack is printed as
+soon as it is read, and listed again at the end. Example (`--deep`; the last line is the status line):
 ```
 Verifying DISC-0001 in G:\: 1,485 pack(s), 99,658,266,840 bytes, 302 file(s)
   --deep: every pack is hashed and decrypted, and every file is checked against its hash
@@ -192,8 +202,10 @@ The disc's files:
   OK       README.txt
   OK       _catalog (7 file(s) intact, checked against their repair data)
 
-  [  1/302    6.2%    35.1 MB/s  ~44m 10s left] Video/2024-08 Holiday.mkv (6,182,453,120 bytes) OK
-  [pack   312/1,485   21.0%    35.2 MB/s  ~37m 02s left] Video/2019 Wedding.mkv
+  OK       Video/2024-08 Holiday.mkv (6,182,453,120 bytes)
+  RE-READ  pack 291, chunk 17 read correctly on attempt 2 (attempt 1: pack 291, chunk 17 cannot be read (...))
+  OK       Video/2019 Wedding.mkv (14,326,902,784 bytes)
+  [pack   312/1,485   21.0%    35.2 MB/s  ~37m 02s left] Video/2021 Trip.mkv
 ```
 
 ### discard

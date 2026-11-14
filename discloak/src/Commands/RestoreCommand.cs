@@ -63,7 +63,8 @@ public sealed class RestoreCommand : ICommand
         IEnumerable<BackupRef> Candidates(List<BackupRef> live, BackupRef piece) =>
             live.Where(b => Hashing.SameHash(b.Sha256, piece.Sha256) && b.Part == piece.Part && b.Parts == piece.Parts &&
                             (!b.IsPart || SplitLayout.PartSizeOf(b) == SplitLayout.PartSizeOf(piece)))
-                .OrderByDescending(b => mounts.ContainsKey(b.Disc)).ThenByDescending(b => b.BackedUpUtc != null).ThenBy(b => b.Alias);
+                .OrderByDescending(b => mounts.ContainsKey(b.Disc)).ThenBy(b => b.IsDamaged)   // a copy verify found damaged: last
+                .ThenByDescending(b => b.BackedUpUtc != null).ThenBy(b => b.Alias);
         foreach (var f in wanted)
         {
             var live = f.Backups.Where(x => !dead.Contains(x.Disc)).ToList();
@@ -92,7 +93,8 @@ public sealed class RestoreCommand : ICommand
         // the stored copy, read from its disc's packs into dst; returns the plaintext hash (InvalidDataException: damaged)
         string Fetch(BackupRef copy, string dst, string what)
         {
-            if (!readers.TryGetValue(copy.Disc, out var reader)) readers[copy.Disc] = reader = new PackReader(mounts[copy.Disc], c.Keys);
+            if (!readers.TryGetValue(copy.Disc, out var reader)) readers[copy.Disc] = reader = new PackReader(mounts[copy.Disc], c.Keys)
+                { Reread = note => meter.WriteLine($"RE-READ  {copy.Disc}: {note}") };
             using var output = new FileStream(dst, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20);
             using var stored = reader.Open(copy.At, copy.StoredSize);
             return StoredForm.Read(stored, copy.Compression, copy.Codec, output, Interrupt.Token,

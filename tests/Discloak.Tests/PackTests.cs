@@ -122,6 +122,114 @@ public class PackTests : IDisposable
         Assert.Contains("missing", seen[2].Problem);
     }
 
+    /// <summary>A file read that goes wrong at byte `at`: an IOException, or (flip) one bit changed, as a bad cable could.</summary>
+    sealed class Faulty(Stream inner, long at, bool flip) : Stream
+    {
+        public override int Read(Span<byte> buffer)
+        {
+            long start = inner.Position;
+            int n = inner.Read(buffer);
+            if (at >= start && at < start + n)
+            {
+                if (!flip) throw new IOException("The request could not be performed because of an I/O device error.");
+                buffer[(int)(at - start)] ^= 1;
+            }
+            return n;
+        }
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override long Length => inner.Length;
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) inner.Dispose(); }
+    }
+
+    /// <summary>Opens pack files so that the first `bad` opens of pack 1 go wrong at byte `at`; counts the opens.</summary>
+    static Func<string, bool, Stream> FailingFirst(int bad, long at, bool flip, List<bool> opens) => (path, noCache) =>
+    {
+        bool first = path.EndsWith(DiscFormat.PackPath(1).Replace('/', Path.DirectorySeparatorChar)) || path.EndsWith(DiscFormat.PackPath(1));
+        if (first) opens.Add(noCache);
+        var stream = DiscRead.Open(path, noCache);
+        return first && opens.Count <= bad ? new Faulty(stream, at, flip) : stream;
+    };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_chunk_that_reads_wrong_once_is_read_again_from_the_disc_and_counts_as_intact(bool flip)
+    {
+        var data = Random(2 * TestKeys.ChunkSize, 1);
+        var at = WritePacks(tmp.Path, data);
+        string expected = Hashing.HashFile(tmp.File(DiscFormat.PackPath(1)));
+        long inChunk1 = DiscFormat.HeaderSize + TestKeys.ChunkSize + DiscFormat.TagSize + 100;
+
+        var seen = new List<(int Pack, string? Sha, string? Problem)>();
+        var notes = new List<string>();
+        var opens = new List<bool>();
+        using (var reader = new PackReader(tmp.Path, Ring, wholePacks: true)
+               { PackRead = (p, sha, problem) => seen.Add((p, sha, problem)), Reread = notes.Add, OpenFile = FailingFirst(1, inChunk1, flip, opens) })
+        {
+            Assert.Equal(data, ReadBack(reader, at[0], data.Length));
+            reader.ReadThrough(1);
+        }
+        Assert.Equal((1, expected, (string?)null), Assert.Single(seen));   // the hash of the right bytes, no problem
+        Assert.Contains("pack 1, chunk 1 read correctly on attempt 2 (attempt 1: pack 1, chunk 1 " + (flip ? "is damaged)" : "cannot be read ("), Assert.Single(notes));
+        Assert.Equal([false, true], opens);                                 // the second read goes past the cache
+
+        // the reader for restore retries the same way
+        opens.Clear();
+        notes.Clear();
+        using (var reader = new PackReader(tmp.Path, Ring) { Reread = notes.Add, OpenFile = FailingFirst(1, inChunk1, flip, opens) })
+            Assert.Equal(data, ReadBack(reader, at[0], data.Length));
+        Assert.StartsWith("pack 1, chunk 1 read correctly on attempt 2", Assert.Single(notes));
+        Assert.Equal([false, true], opens);
+    }
+
+    [Fact]
+    public void A_chunk_that_never_reads_right_is_damaged_after_the_retries_and_none_are_made_with_zero()
+    {
+        var data = Random(2 * TestKeys.ChunkSize, 1);
+        WritePacks(tmp.Path, data);
+        long inChunk0 = DiscFormat.HeaderSize + 100;
+        foreach (int retries in new[] { 0, 2 })
+        {
+            var seen = new List<(int Pack, string? Sha, string? Problem)>();
+            var opens = new List<bool>();
+            using var reader = new PackReader(tmp.Path, Ring, wholePacks: true)
+                { PackRead = (p, sha, problem) => seen.Add((p, sha, problem)), Retries = retries, OpenFile = FailingFirst(99, inChunk0, true, opens) };
+            reader.ReadThrough(1);
+            Assert.Equal("pack 1, chunk 0 is damaged", Assert.Single(seen).Problem);
+            Assert.Equal(1 + retries, opens.Count);
+        }
+    }
+
+    [Fact]
+    public void A_whole_pack_hash_is_taken_again_when_the_read_fails_or_differs()
+    {
+        WritePacks(tmp.Path, Random(1000, 1));
+        string path = tmp.File(DiscFormat.PackPath(1));
+        string expected = Hashing.HashFile(path);
+        foreach (bool flip in new[] { false, true })
+        {
+            var notes = new List<string>();
+            var opens = new List<bool>();
+            Assert.Equal((expected, (string?)null), PackReader.HashPack(path, 1, expected, noCache: false, retries: 2, notes.Add, FailingFirst(1, 5000, flip, opens)));
+            Assert.StartsWith("pack 1 read correctly on attempt 2 (attempt 1: pack 1 " + (flip ? "differs from the catalog" : "cannot be read"), Assert.Single(notes));
+            Assert.Equal([false, true], opens);
+
+            opens.Clear();
+            var (sha, problem) = PackReader.HashPack(path, 1, expected, noCache: false, retries: 2, null, FailingFirst(99, 5000, flip, opens));
+            Assert.Equal(flip ? "pack 1 differs from the catalog" : "pack 1 cannot be read", problem![..(flip ? 31 : 21)]);
+            Assert.Equal(3, opens.Count);
+            Assert.True(flip ? sha != null && sha != expected : sha == null);
+        }
+    }
+
     public static IEnumerable<object[]> Contents() =>
     [
         ["empty", Array.Empty<byte>()],

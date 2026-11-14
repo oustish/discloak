@@ -46,7 +46,7 @@ discloak blanks add 10 --size 96882130944 --reserve 300MB --cost 45
 discloak scan D:\Photos --name Photos                   # index (hash) a folder
 discloak plan                                           # what would go where (changes nothing)
 discloak stage E:\Staging --with-catalog                # write the next disc folder: E:\Staging\DISC-0001
-   ... burn E:\Staging\DISC-0001 with your burning program (UDF 2.50) ...
+   ... burn E:\Staging\DISC-0001 with your burning program (do not finalize it yet) ...
 discloak verify DISC-0001 G:\                           # read the burned disc back and compare (--deep: decrypt too)
 discloak burned DISC-0001                               # record it as burned
 discloak restore D:\Recovered "holiday" --mount G:\     # later: get files back

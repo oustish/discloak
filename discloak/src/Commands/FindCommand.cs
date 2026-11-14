@@ -36,7 +36,8 @@ public sealed class FindCommand : ICommand
                 string via = b.Alias ? " - the copy stored for an identical file" : "";
                 string part = b.IsPart ? $" [part {b.Part}/{b.Parts}]" : "";
                 string unv = b.Unverified ? " [read from the disc's manifest, not checked yet - run 'verify']" : "";
-                Console.WriteLine($"    {b.Disc} ({d?.State ?? "?"}, {when}) {ver}{via}{part}{unv}");
+                string bad = b.IsDamaged ? $" [DAMAGED, found by verify on {b.DamagedUtc:yyyy-MM-dd}: {b.Damage} - does not count as a copy]" : "";
+                Console.WriteLine($"    {b.Disc} ({d?.State ?? "?"}, {when}) {ver}{via}{part}{unv}{bad}");
             }
         }
         Console.WriteLine($"\n{hits.Count} match(es).");

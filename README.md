@@ -44,7 +44,7 @@ discloak init --recovery-key                               # once: a new encrypt
 discloak blanks add 10 --size 96882130944 --reserve 300MB  # the blank discs you have (exact bytes)
 discloak scan D:\Photos --name Photos                      # index a folder
 discloak stage E:\Staging --with-catalog                   # the next disc's folder: E:\Staging\DISC-0001
-   ... burn E:\Staging\DISC-0001 with your burning program (UDF 2.50) ...
+   ... burn E:\Staging\DISC-0001 with your burning program (do not finalize it yet) ...
 discloak verify DISC-0001 G:\ --deep                       # read the burned disc back and check every file
 discloak burned DISC-0001
 discloak restore D:\Recovered "holiday" --mount G:\        # later: get files back
