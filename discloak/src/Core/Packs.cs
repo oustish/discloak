@@ -135,6 +135,9 @@ public sealed class PackWriter : IDisposable
 /// only the chunks a range needs. A damaged chunk, or one the drive cannot read, fails only the ranges that touch it.
 /// wholePacks (verify --deep): every pack is read once, from start to end, hashed, and all of its chunks decrypted;
 /// PackRead reports each pack (its hash, or null if it could not be read completely).
+/// A chunk (or a pack's header) that cannot be read, or does not decrypt, is read again up to Retries times, from the
+/// disc itself (past the Windows file cache): a drive or its connection can fail a read once, or hand over wrong bytes,
+/// and get it right the next time. Reread names every read that only came right on a later attempt.
 /// </summary>
 public sealed class PackReader : IDisposable
 {
@@ -146,7 +149,7 @@ public sealed class PackReader : IDisposable
     int headerPack;
     AesGcm? aes;
     byte[] prefix = [];
-    FileStream? file;
+    Stream? file;
     // wholePacks: the highest pack read and reported so far, and the pack whose plaintext is in memory
     int loaded, inMemory;
     byte[]? loadedPlain;
@@ -164,6 +167,19 @@ public sealed class PackReader : IDisposable
     /// <summary>wholePacks: called for every pack as it is read: (pack, SHA-256 of the file or null, problem or null).</summary>
     public Action<int, string?, string?>? PackRead { get; init; }
 
+    /// <summary>How often a failed read is tried again (0: never).</summary>
+    public int Retries { get; init; } = DefaultRetries;
+    public const int DefaultRetries = 2;
+
+    /// <summary>A read that came right only on a later attempt (what was wrong the first time).</summary>
+    public Action<string>? Reread { get; init; }
+
+    /// <summary>Opens a pack file (path, noCache); tests put a stream there that fails on purpose.</summary>
+    public Func<string, bool, Stream> OpenFile { get; init; } = DiscRead.Open;
+
+    /// <summary>wholePacks: the highest pack read and reported so far.</summary>
+    public int Loaded => loaded;
+
     /// <summary>The stored bytes [at, at + length) as a stream.</summary>
     public Stream Open(long at, long length) => new RangeStream(this, at, length);
 
@@ -171,6 +187,41 @@ public sealed class PackReader : IDisposable
     public void ReadThrough(int last)
     {
         while (loaded < last) Load(loaded + 1);
+    }
+
+    /// <summary>wholePacks: reads and reports pack `pack` alone, skipping the packs before it (verify --packs).</summary>
+    public void ReadPack(int pack)
+    {
+        if (pack > loaded) Load(pack);
+    }
+
+    /// <summary>
+    /// SHA-256 of a whole pack file, nothing decrypted (verify without --deep). A read that fails, or gives another hash
+    /// than `expected`, is tried again up to `retries` times from the disc itself. Returns the hash of the last read
+    /// (null if it failed) and what is wrong (null: the hash is the expected one, or nothing was expected).
+    /// </summary>
+    public static (string? Sha, string? Problem) HashPack(string path, int pack, string? expected, bool noCache, int retries,
+                                                          Action<string>? reread = null, Func<string, bool, Stream>? open = null)
+    {
+        open ??= DiscRead.Open;
+        string? first = null;
+        for (int attempt = 0; ; attempt++)
+        {
+            string? sha = null, problem;
+            try
+            {
+                using (var input = open(path, noCache || attempt > 0)) sha = Hashing.Hash(input, Interrupt.Token);
+                problem = expected == null || Hashing.SameHash(sha, expected) ? null : $"pack {pack} differs from the catalog";
+            }
+            catch (IOException ex) { problem = $"pack {pack} cannot be read ({ex.Message})"; }
+            if (problem == null)
+            {
+                if (first != null) reread?.Invoke($"pack {pack} read correctly on attempt {attempt + 1} (attempt 1: {first})");
+                return (sha, null);
+            }
+            first ??= problem;
+            if (attempt >= retries) return (sha, problem);
+        }
     }
 
     /// <summary>Plaintext of chunk `chunk` of pack `pack`. InvalidDataException if it is missing, damaged or unreadable.</summary>
@@ -187,16 +238,79 @@ public sealed class PackReader : IDisposable
         cachedChunk = -1;
         OpenPack(pack);
         var sealedChunk = new byte[DiscFormat.ChunkSize + DiscFormat.TagSize];
-        try
-        {
-            file!.Position = DiscFormat.HeaderSize + (long)chunk * sealedChunk.Length;
-            if (file.ReadAtLeast(sealedChunk, sealedChunk.Length, throwOnEndOfStream: false) != sealedChunk.Length)
-                throw new InvalidDataException($"pack {pack} is cut short");
-        }
-        catch (IOException ex) { throw new InvalidDataException($"pack {pack}, chunk {chunk} cannot be read ({ex.Message})"); }
-        Decrypt(pack, chunk, sealedChunk, cached);
+        if (ReadChunk(pack, chunk, file!, sealedChunk, cached, out _) is { } wrong) throw new InvalidDataException(wrong);
         (cachedPack, cachedChunk) = (pack, chunk);
         return cached;
+    }
+
+    string PathOf(int pack) => Path.Combine(mount, DiscFormat.PackPath(pack));
+
+    static void ReadAt(Stream input, long offset, byte[] buffer, int pack)
+    {
+        input.Position = offset;
+        if (input.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false) != buffer.Length) throw new InvalidDataException($"pack {pack} is cut short");
+    }
+
+    /// <summary>
+    /// Reads sealed chunk `chunk` of pack `pack` (the first attempt from `input`, any further one from the disc itself)
+    /// and decrypts it into `output`. Returns null, or what was wrong with the last attempt; `read`: its bytes are in
+    /// sealedChunk (they were read, whether they decrypt or not).
+    /// </summary>
+    string? ReadChunk(int pack, int chunk, Stream input, byte[] sealedChunk, Span<byte> output, out bool read)
+    {
+        long offset = DiscFormat.HeaderSize + (long)chunk * sealedChunk.Length;
+        string? first = null;
+        for (int attempt = 0; ; attempt++)
+        {
+            string problem;
+            read = false;
+            try
+            {
+                if (attempt == 0) ReadAt(input, offset, sealedChunk, pack);
+                else
+                {
+                    using var again = OpenFile(PathOf(pack), true);
+                    ReadAt(again, offset, sealedChunk, pack);
+                }
+                read = true;
+                Decrypt(pack, chunk, sealedChunk, output);
+                if (first != null) Reread?.Invoke($"pack {pack}, chunk {chunk} read correctly on attempt {attempt + 1} (attempt 1: {first})");
+                return null;
+            }
+            catch (IOException ex) { problem = $"pack {pack}, chunk {chunk} cannot be read ({ex.Message})"; }
+            catch (InvalidDataException ex) { problem = ex.Message; }
+            first ??= problem;
+            if (attempt >= Retries) return problem;
+            Interrupt.Token.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>Reads and checks a pack's header (retried like a chunk); adds it to `hash` once it is right.</summary>
+    void ReadHeader(int pack, Stream input, IncrementalHash? hash)
+    {
+        var header = new byte[DiscFormat.HeaderSize];
+        string? first = null;
+        for (int attempt = 0; ; attempt++)
+        {
+            string problem;
+            try
+            {
+                if (attempt == 0) ReadAt(input, 0, header, pack);
+                else
+                {
+                    using var again = OpenFile(PathOf(pack), true);
+                    ReadAt(again, 0, header, pack);
+                }
+                UseHeader(pack, header);
+                if (first != null) Reread?.Invoke($"pack {pack}, its header read correctly on attempt {attempt + 1} (attempt 1: {first})");
+                hash?.AppendData(header);
+                return;
+            }
+            catch (IOException ex) { problem = $"pack {pack} cannot be read ({ex.Message})"; }
+            catch (InvalidDataException ex) { problem = ex.Message; }
+            first ??= problem;
+            if (attempt >= Retries) throw new InvalidDataException(problem);
+        }
     }
 
     void OpenPack(int pack)
@@ -211,17 +325,21 @@ public sealed class PackReader : IDisposable
         if (!File.Exists(path)) throw new InvalidDataException($"pack {pack} is missing ({DiscFormat.PackPath(pack)})");
         try
         {
-            file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.RandomAccess);
+            file = OpenFile(path, false);
             if (file.Length != DiscFormat.PackFileSize) throw new InvalidDataException($"pack {pack} has the wrong size ({file.Length:N0} bytes)");
-            var header = new byte[DiscFormat.HeaderSize];
-            if (file.ReadAtLeast(header, header.Length, throwOnEndOfStream: false) != header.Length) throw new InvalidDataException($"pack {pack} is cut short");
-            UseHeader(pack, header);
+            ReadHeader(pack, file, null);
         }
         catch (IOException ex)
         {
             file?.Dispose();
             file = null;
             throw new InvalidDataException($"pack {pack} cannot be read ({ex.Message})");
+        }
+        catch (InvalidDataException)
+        {
+            file?.Dispose();
+            file = null;
+            throw;
         }
         headerPack = pack;
     }
@@ -258,13 +376,10 @@ public sealed class PackReader : IDisposable
         try
         {
             if (!File.Exists(path)) throw new InvalidDataException($"pack {pack} is missing ({DiscFormat.PackPath(pack)})");
-            using var input = DiscRead.Open(path, noCache);
+            using var input = OpenFile(path, noCache);
             if (input.Length != DiscFormat.PackFileSize) throw new InvalidDataException($"pack {pack} has the wrong size ({input.Length:N0} bytes)");
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var header = new byte[DiscFormat.HeaderSize];
-            if (input.ReadAtLeast(header, header.Length, throwOnEndOfStream: false) != header.Length) throw new InvalidDataException($"pack {pack} is cut short");
-            hash.AppendData(header);
-            UseHeader(pack, header);
+            ReadHeader(pack, input, hash);
             headerPack = 0;   // the chunk reader opens its own
             var sealedChunk = new byte[DiscFormat.ChunkSize + DiscFormat.TagSize];
             bool complete = true;
@@ -272,24 +387,14 @@ public sealed class PackReader : IDisposable
             {
                 Interrupt.Token.ThrowIfCancellationRequested();
                 var target = loadedPlain.AsSpan(c * DiscFormat.ChunkSize, DiscFormat.ChunkSize);
-                try
+                // the hash takes the bytes of the last attempt: right bytes that do not decrypt (another key) still match
+                string? wrong = ReadChunk(pack, c, input, sealedChunk, target, out bool read);
+                if (read) hash.AppendData(sealedChunk);
+                else complete = false;
+                if (wrong != null)
                 {
-                    input.Position = DiscFormat.HeaderSize + (long)c * sealedChunk.Length;
-                    if (input.ReadAtLeast(sealedChunk, sealedChunk.Length, throwOnEndOfStream: false) != sealedChunk.Length)
-                        throw new InvalidDataException($"pack {pack} is cut short");
-                    hash.AppendData(sealedChunk);
-                    Decrypt(pack, c, sealedChunk, target);
-                }
-                catch (IOException ex)
-                {
-                    complete = false;
-                    loadedProblems[c] = $"pack {pack}, chunk {c} cannot be read ({ex.Message})";
-                    problem ??= loadedProblems[c];
-                }
-                catch (InvalidDataException ex)
-                {
-                    loadedProblems[c] = ex.Message;
-                    problem ??= ex.Message;
+                    loadedProblems[c] = wrong;
+                    problem ??= wrong;
                 }
             }
             if (complete) sha = Convert.ToHexString(hash.GetHashAndReset());

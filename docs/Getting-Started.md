@@ -121,14 +121,20 @@ This writes `E:\Staging\DISC-0001\`: the files in encrypted packs of 64 MiB (`da
 their names, sizes or number), an encrypted manifest, `packs.sha256`, `disc.json`, `discloak.key`, `README.txt` and (with
 `--with-catalog`) `_catalog\`, a catalog backup.
 
-1. Burn the **contents** of `E:\Staging\DISC-0001` to a blank disc with your burning program (UDF 2.50 file system).
+1. Burn the **contents** of `E:\Staging\DISC-0001` to a blank disc with your burning program, with a file system
+   the disc supports (the program's default for the medium is usually right; see
+   [Troubleshooting](Troubleshooting.md#file-system)).
+   **Do not finalize (close) the disc yet**: leave it open until `verify` passes. Then, if a pack fails, it can be
+   burned again on its own as a new session ([Backing Up](Guide-Backing-Up.md#if-verify-finds-a-damaged-pack)).
 2. Write the label `DISC-0001` on the disc.
 3. With the burned disc in drive `G:`:
    ```
-   discloak verify DISC-0001 G:\
+   discloak verify DISC-0001 G:\ --deep
    discloak burned DISC-0001
    ```
-4. Delete the staging folder once the disc is verified.
+   (or `discloak verify DISC-0001 G:\ --deep --mark-burned`: it marks the disc as burned only if everything checks out)
+4. Once the disc is verified: finalize it if you want (or leave it open to [add more later](Guide-Appending.md)), and
+   delete the staging folder.
 
 That is the whole cycle. From here on, see [Backing Up](Guide-Backing-Up.md) for the routine and
 [Restoring Files](Guide-Restoring.md) for getting files back.

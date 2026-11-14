@@ -117,7 +117,9 @@ With [several copies](Guide-Copies.md) nothing is lost yet: `restore` takes the 
    discloak verify DISC-0005 G:\
    ```
    `DAMAGED pack N` lines name the damaged packs, and below them the files that have data in them (exit code 3).
-   No password is needed for this; `--deep` also decrypts and checks every file.
+   No password is needed for this; `--deep` also decrypts and checks every file. The copies it finds damaged
+   are marked in the catalog and no longer count: files still on their source are pending again
+   ([What verify records](Guide-Backing-Up.md#damaged-copies)).
 2. Save what can be saved first, if the files no longer exist elsewhere:
    ```
    discloak restore D:\Rescue "*" --mount G:\

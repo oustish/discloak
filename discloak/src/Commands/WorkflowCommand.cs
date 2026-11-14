@@ -38,7 +38,9 @@ public sealed class WorkflowCommand : ICommand
 
             4. Prepare a disc folder (the files go into encrypted 64 MiB packs: no names, sizes or count show)
                  discloak stage E:\Staging --max-discs 1 --min-fill 0.9 --with-catalog
-               Burn the folder E:\Staging\DISC-0001 with your burning software (UDF 2.50 file system).
+               Burn the folder E:\Staging\DISC-0001 with your burning software (a file system the disc supports;
+               BD-R XL needs UDF 2.50 or later). Do not finalize (close) the disc until 'verify' has passed: a
+               pack that fails can then be burned again on its own, as a new session.
 
             5. Check the burned disc and record it
                  discloak verify DISC-0001 G:\                      the packs' hashes; --deep also decrypts and checks every file

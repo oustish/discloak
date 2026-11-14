@@ -30,7 +30,7 @@ public sealed class AgentServer : IDisposable
     readonly string pipeName;
     readonly Action<string> log;
     readonly Dictionary<string, Entry> entries = new(StringComparer.OrdinalIgnoreCase);
-    readonly object gate = new();
+    readonly Lock gate = new();
     readonly CancellationTokenSource stop = new();
     DateTime? startedUtc, lastSweepUtc;   // by Clock, from the first sweep
     bool hadKeys;

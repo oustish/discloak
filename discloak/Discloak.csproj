@@ -9,7 +9,7 @@
     <RootNamespace>Discloak</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- major.minor.patch, raised by hand in the commit that makes the change: see CONTRIBUTING.md -->
-    <Version>0.9.1</Version>
+    <Version>0.10.0</Version>
     <Authors>oustish</Authors>
     <Copyright>Copyright 2026 oustish (https://github.com/oustish)</Copyright>
     <!-- DiscloakBuildInfo below appends the short commit, uncommitted changes and the build time instead of the full commit -->

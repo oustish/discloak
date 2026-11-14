@@ -5,7 +5,7 @@ public sealed class VerifyCommand : ICommand
     public string Name => "verify";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Re-read a disc and compare it with the catalog";
-    public string Usage => "verify <label> <mountedDiscPath> [--deep] [--no-cache]";
+    public string Usage => "verify <label> <mountedDiscPath> [--deep] [--packs 312,680-690] [--no-cache] [--retries N] [--mark-burned]";
     public bool Interruptible => true;
     public string Details => """
         Reads every pack of the disc and compares its SHA-256 with the catalog - nothing is decrypted, so no password
@@ -18,15 +18,29 @@ public sealed class VerifyCommand : ICommand
         its first --deep verify that finds them intact.
         A status line shows the pack being read, the progress by bytes, speed and time left, and the file whose data
         is being read (rewritten in place, not written when the output is redirected). --deep also prints every file
-        as soon as it is checked. A damaged pack is reported as soon as it is read.
-        A damaged pack is named with the files that have data in it; those files can be restored from another copy,
-        or the disc rebuilt with 'restage' (which reuses the intact packs).
+        as soon as it is checked (OK or DAMAGED). A damaged pack is reported as soon as it is read.
+        A read that fails, or a pack or chunk that comes back wrong, is read again from the disc itself (past the
+        Windows file cache) before it counts as damaged: a drive, or its cable, can fail once and read right the next
+        time. Such a read is printed as RE-READ - a warning sign about the disc, the drive or its connection.
+        A damaged pack is named with the files that have data in it. Their copies on this disc are recorded as damaged
+        in the catalog (with --deep: only the files that do not come back intact): they no longer count as backups, so
+        files still on their source are pending again, and restore tries such a copy last. A later verify that reads a
+        marked copy back intact removes the mark, with a warning (failing, then passing, points to unreliable reads).
+        On a disc that is not marked as burned yet, the damaged packs can be burned again from the staging folder as a
+        new session, if the disc is not finalized; otherwise the files can be restored from another copy, or the disc
+        rebuilt with 'restage' (which reuses the intact packs).
         Copies recorded by 'scandisc' are marked 'unverified' until this has checked their packs.
-          --no-cache   read every byte from the disc itself. Without it, Windows may hand over what it still keeps in
-                       memory from an earlier read of the disc since it was inserted (ejecting the disc empties
-                       that): still the disc's data, but not proof that it reads back now - which matters when a
-                       disc stays in the drive for days. With it, the 100 GB read also do not push out what
-                       Windows keeps in memory for other programs.
+          --packs L      only these packs: "312", "312,683", "300-310". With --deep, every file whose data lies
+                         wholly in them is checked against its hash; a file that reaches beyond them only has its
+                         part in them decrypted. The disc's other files are checked as always.
+          --no-cache     read every byte from the disc itself. Without it, Windows may hand over what it still keeps in
+                         memory from an earlier read of the disc since it was inserted (ejecting the disc empties
+                         that): still the disc's data, but not proof that it reads back now - which matters when a
+                         disc stays in the drive for days. With it, the 100 GB read also do not push out what
+                         Windows keeps in memory for other programs.
+          --retries N    how often a failed read is tried again (default 2; 0: never).
+          --mark-burned  if every pack, file and the disc's other files check out, mark the disc (or its staged
+                         session) as burned, as 'burned' does - today's date. Not with --packs.
         Ctrl+C stops after the pack being read and reports what was checked so far.
         """;
 
@@ -34,8 +48,11 @@ public sealed class VerifyCommand : ICommand
     {
         var disc = c.Arc.FindDisc(c.Arg(0, Usage));
         string mount = Path.GetFullPath(c.Arg(1, Usage));
-        bool deep = c.Opt.Has("deep"), noCache = c.Opt.Has("no-cache");
+        bool deep = c.Opt.Has("deep"), noCache = c.Opt.Has("no-cache"), markBurned = c.Opt.Has("mark-burned");
+        int retries = c.Opt.GetInt("retries", PackReader.DefaultRetries);
+        if (retries < 0) throw new UserException("--retries needs 0 or more.");
         if (!Directory.Exists(mount)) throw new UserException($"Not a folder: {mount}");
+        if (markBurned) BurnedCommand.CheckCanMark(disc);
         if (DiscFiles.ReadInfo(mount) is { } info)
         {
             if (!info.Label.Equals(disc.Label, StringComparison.OrdinalIgnoreCase))
@@ -43,31 +60,39 @@ public sealed class VerifyCommand : ICommand
             if (deep && info.Unreadable() is { } why) throw new UserException($"{disc.Label} cannot be decrypted: {why}.");
         }
         var copies = c.Arc.CopiesOn(disc.Label);
-        int packs = Math.Max(disc.Packs.Count, copies.Count == 0 ? 0 : DiscFormat.PackOf(copies[^1].Copy.End - 1));
-        if (packs == 0) { Console.WriteLine($"{disc.Label} has no packs in the catalog."); return 0; }
+        int discPacks = Math.Max(disc.Packs.Count, copies.Count == 0 ? 0 : DiscFormat.PackOf(copies[^1].Copy.End - 1));
+        if (discPacks == 0) { Console.WriteLine($"{disc.Label} has no packs in the catalog."); return 0; }
         if (!deep && disc.Packs.Count == 0)
             throw new UserException($"The catalog has no pack hashes for {disc.Label}; use --deep (decrypts and checks every file).");
+        SortedSet<int>? only = c.Opt.Get("packs") is { } list ? ParsePacks(list, deep ? discPacks : disc.Packs.Count) : null;
+        if (only != null && markBurned) throw new UserException("--mark-burned needs the whole disc checked: leave out --packs.");
+        int packs = only?.Count ?? discPacks;   // the packs this run reads
 
-        long discBytes = (long)packs * DiscFormat.PackFileSize;
-        Console.WriteLine($"Verifying {disc.Label} in {mount}: {packs:N0} pack(s), {SizeText.Bytes(discBytes)} bytes, {copies.Count:N0} file(s)");
+        // the files to check: all, or (--packs) those with data in the packs given
+        var toCheck = only == null ? copies
+            : copies.Where(x => x.Copy.StoredSize > 0 &&
+                                only.GetViewBetween(DiscFormat.PackOf(x.Copy.At), DiscFormat.PackOf(x.Copy.End - 1)).Count > 0).ToList();
+
+        Console.WriteLine($"Verifying {disc.Label} in {mount}: {discPacks:N0} pack(s), {SizeText.Bytes((long)discPacks * DiscFormat.PackFileSize)} bytes, {copies.Count:N0} file(s)");
         Console.WriteLine(deep
             ? "  --deep: every pack is hashed and decrypted, and every file is checked against its hash"
             : "  every pack's SHA-256 is compared with the catalog; nothing is decrypted (--deep also checks every file)");
+        if (only != null) Console.WriteLine($"  --packs: only pack(s) {Ranges(only)}, {toCheck.Count:N0} file(s) with data in them");
         if (noCache) Console.WriteLine("  --no-cache: every byte is read from the disc itself, none from what Windows keeps in memory");
         var (fileProblems, recorded) = CheckDiscFiles(c, disc, mount, deep, noCache, copies);
 
         // progress: the packs are read in order, all of the same size
-        var meter = new ProgressMeter(discBytes);
-        int readPacks = 0;
+        var meter = new ProgressMeter((long)packs * DiscFormat.PackFileSize);
+        int readPacks = 0, rereads = 0;
         string reading = "";   // the file whose data is being read
 
         var badPacks = new SortedDictionary<int, string>();   // pack -> what is wrong with it
-        int checkedPacks = 0, unknown = 0;
+        int unknown = 0;
+        var okPacks = new HashSet<int>();   // read back as the catalog has them (or, --deep without a hash, decrypted whole)
         void Judge(int pack, string? sha, string? problem)
         {
             readPacks++;
             meter.Done = (long)readPacks * DiscFormat.PackFileSize;
-            checkedPacks = Math.Max(checkedPacks, pack);
             string? expected = pack <= disc.Packs.Count ? disc.Packs[pack - 1] : null;
             string? bad = null;
             if (problem != null && sha == null) bad = problem;
@@ -77,67 +102,108 @@ public sealed class VerifyCommand : ICommand
             if (bad != null)
             {
                 badPacks[pack] = bad;
-                meter.WriteLine($"DAMAGED  {bad}");
+                meter.WriteLine($"  DAMAGED  {bad}");
             }
+            else if (problem == null && (expected != null || deep)) okPacks.Add(pack);
             meter.Show($"pack {StatusLine.Count(readPacks, packs)}", reading);
         }
+        void Reread(string note)
+        {
+            rereads++;
+            meter.WriteLine($"  RE-READ  {note}");
+        }
 
-        int badFiles = 0;
+        int badFiles = 0, partly = 0;
         var damagedFiles = new List<string>();
+        var damageAt = new Dictionary<long, string>();   // copies (by place) found damaged, and why
+        var intactAt = new HashSet<long>();              // copies read back intact as a whole
         if (!deep)
         {
             int first = 0;   // the first copy that does not end before the pack being read
-            for (int p = 1; p <= disc.Packs.Count && !Interrupt.Requested; p++)
+            foreach (int p in only ?? Enumerable.Range(1, disc.Packs.Count))
             {
+                if (Interrupt.Requested) break;
                 reading = InPack(copies, p, ref first);
                 string path = Path.Combine(mount, DiscFormat.PackPath(p));
                 if (!File.Exists(path)) { Judge(p, null, $"pack {p} is missing"); continue; }
                 try
                 {
-                    string sha;
-                    using (var input = DiscRead.Open(path, noCache)) sha = Hashing.Hash(input, Interrupt.Token);
-                    Judge(p, sha, null);
+                    var (sha, problem) = PackReader.HashPack(path, p, disc.Packs[p - 1], noCache, retries, Reread);
+                    Judge(p, sha, problem);
                 }
                 catch (OperationCanceledException) { break; }
-                catch (IOException ex) { Judge(p, null, $"pack {p} cannot be read ({ex.Message})"); }
             }
         }
         else
         {
             // every pack read once, in order: hashed and decrypted; the files are checked as their packs come by
-            using var reader = new PackReader(mount, c.Keys, wholePacks: true, noCache) { PackRead = Judge };
+            using var reader = new PackReader(mount, c.Keys, wholePacks: true, noCache) { PackRead = Judge, Retries = retries, Reread = Reread };
+            void ReadUpTo(int pack)   // --packs: the packs given, up to `pack`, skipping the others
+            {
+                if (only != null && pack > reader.Loaded)
+                    foreach (int p in only.GetViewBetween(reader.Loaded + 1, pack)) reader.ReadPack(p);
+            }
             int done = 0;
             Console.WriteLine();
             try
             {
-                foreach (var (file, copy) in copies)
+                foreach (var (file, copy) in toCheck)
                 {
                     if (Interrupt.Requested) break;
                     string name = Describe(file, copy);
                     reading = name;
+                    int firstPack = DiscFormat.PackOf(copy.At), lastPack = DiscFormat.PackOf(Math.Max(copy.At, copy.End - 1));
+                    bool whole = only == null || copy.StoredSize == 0 || only.GetViewBetween(firstPack, lastPack).Count == lastPack - firstPack + 1;
                     string? damage = null;
                     try
                     {
-                        using var stored = reader.Open(copy.At, copy.StoredSize);
-                        string got = StoredForm.Read(stored, copy.Compression, copy.Codec, Stream.Null, Interrupt.Token);
-                        if (!Hashing.SameHash(got, copy.ContentSha256)) damage = "decrypts, but the content differs from the catalog";
+                        if (whole)
+                        {
+                            ReadUpTo(firstPack);
+                            using var stored = reader.Open(copy.At, copy.StoredSize);
+                            string got = StoredForm.Read(stored, copy.Compression, copy.Codec, Stream.Null, Interrupt.Token);
+                            if (!Hashing.SameHash(got, copy.ContentSha256)) damage = "decrypts, but the content differs from the catalog";
+                        }
+                        else   // only its part in the packs given: that it decrypts
+                            foreach (int p in only!.GetViewBetween(firstPack, lastPack))
+                            {
+                                ReadUpTo(p);
+                                long from = Math.Max(copy.At, (p - 1L) * DiscFormat.PackData), to = Math.Min(copy.End, p * DiscFormat.PackData);
+                                using var part = reader.Open(from, to - from);
+                                part.CopyTo(Stream.Null);
+                            }
                     }
                     catch (InvalidDataException ex) { damage = ex.Message; }
                     done++;
-                    if (damage != null) { badFiles++; damagedFiles.Add($"{name}  ({damage})"); }
-                    meter.WriteLine($"  [{StatusLine.Count(done, copies.Count)}  {meter.Rate()}] {name} ({SizeText.Bytes(copy.Length)} bytes) " +
-                                    (damage == null ? "OK" : $"DAMAGED: {damage}"));
+                    if (!whole) partly++;
+                    string what = $"{name} ({SizeText.Bytes(copy.Length)} bytes)" +
+                                  (whole ? "" : $", its data in pack(s) {Ranges(only!.GetViewBetween(firstPack, lastPack))} (the file spans packs {firstPack}-{lastPack}: not checked against its hash)");
+                    if (damage != null) { badFiles++; damagedFiles.Add($"{what}  ({damage})"); damageAt[copy.At] = damage; }
+                    else if (whole) intactAt.Add(copy.At);
+                    meter.WriteLine(damage == null ? $"  OK       {what}" : $"  DAMAGED  {what}: {damage}");
                 }
                 reading = "packs that hold no file (padding)";
-                if (!Interrupt.Requested) reader.ReadThrough(packs);   // they are checked too
+                if (!Interrupt.Requested)   // they are checked too
+                {
+                    if (only == null) reader.ReadThrough(packs);
+                    else ReadUpTo(only.Max);
+                }
             }
             catch (OperationCanceledException) { }
         }
         meter.Clear();
 
-        if (!deep)   // name the files that have data in a damaged pack
-            foreach (var (file, copy) in copies.Where(x => badPacks.Keys.Any(p => Overlaps(x.Copy, p))))
-                damagedFiles.Add(Describe(file, copy));
+        if (!deep)   // the files that have data in a damaged pack; those whose packs all read back right are intact
+            foreach (var (file, copy) in copies.Where(x => x.Copy.StoredSize > 0))
+            {
+                var inPacks = Enumerable.Range(DiscFormat.PackOf(copy.At), DiscFormat.PackOf(copy.End - 1) - DiscFormat.PackOf(copy.At) + 1);
+                if (inPacks.FirstOrDefault(badPacks.ContainsKey) is int bad and > 0)
+                {
+                    damagedFiles.Add(Describe(file, copy));
+                    damageAt[copy.At] = badPacks[bad];
+                }
+                else if (inPacks.All(okPacks.Contains)) intactAt.Add(copy.At);
+            }
         if (badPacks.Count > 0)
             Console.WriteLine($"\nDamaged pack(s): {string.Join(", ", badPacks.Keys.Take(50))}" + (badPacks.Count > 50 ? $" and {badPacks.Count - 50:N0} more" : ""));
         if (damagedFiles.Count > 0)
@@ -147,29 +213,153 @@ public sealed class VerifyCommand : ICommand
             if (damagedFiles.Count > 50) Console.WriteLine($"  ... and {damagedFiles.Count - 50:N0} more");
         }
 
-        bool complete = !Interrupt.Requested && checkedPacks >= packs;
-        int ok = checkedPacks - badPacks.Count - unknown;
-        Console.WriteLine($"\n{disc.Label}: {ok:N0} of {packs:N0} pack(s) OK, {badPacks.Count:N0} damaged" +
+        bool complete = !Interrupt.Requested && readPacks >= packs;
+        int ok = readPacks - badPacks.Count - unknown;
+        Console.WriteLine($"\n{disc.Label}: {ok:N0} of {packs:N0} pack(s){(only != null ? " given" : "")} OK, {badPacks.Count:N0} damaged" +
                           (unknown > 0 ? $", {unknown:N0} without a hash in the catalog" : "") +
-                          (deep ? $"; {copies.Count - badFiles:N0} of {copies.Count:N0} file(s) checked intact" : "") +
+                          (deep ? $"; {toCheck.Count - badFiles:N0} of {toCheck.Count:N0} file(s) checked intact" +
+                                  (partly > 0 ? $" ({partly:N0} of them only their part in these packs)" : "") : "") +
+                          (rereads > 0 ? $"; {rereads:N0} read(s) right only when tried again" : "") +
                           (fileProblems == 0 ? "; the disc's other files OK" : $"; {fileProblems:N0} of the disc's other files with a problem (see above)") +
                           $" (read in {StatusLine.Duration(meter.Elapsed)}).");
+        if (rereads > 0)
+            Console.WriteLine("RE-READ: those reads failed or came back wrong at first, then read right. The data is intact, but the " +
+                              "disc may be wearing, or the drive or its connection is unreliable: verify it again later, or in another drive.");
+        if (badPacks.Count > 0 && !Interrupt.Requested) Advise(disc, mount, badPacks.Keys);
 
         // copies taken from the disc's manifest (scandisc) are verified once their packs check out
-        bool changed = recorded;
-        if (complete && badPacks.Count == 0 && (deep ? badFiles == 0 : unknown == 0))
+        bool changed = recorded | RecordDamage(c, disc, damageAt, intactAt);
+        bool clean = only == null && complete && badPacks.Count == 0 && (deep ? badFiles == 0 : unknown == 0);
+        if (clean)
             foreach (var b in c.Cat.Files.SelectMany(f => f.Backups).Where(b => b.Disc == disc.Label && b.Unverified))
             {
                 b.Unverified = false;
                 changed = true;
             }
+        if (markBurned)
+        {
+            if (!clean || fileProblems > 0)
+                Console.WriteLine($"Not marked as burned (--mark-burned): {(Interrupt.Requested ? "the check was stopped" : "not everything checked out")}.");
+            else
+            {
+                var (marked, message) = BurnedCommand.Mark(c, disc, DateTime.UtcNow);
+                changed |= marked;
+                Console.WriteLine(message);
+            }
+        }
         if (changed) c.Cat.Save();   // a plain re-check changes nothing and should not use up a history slot
         if (Interrupt.Requested)
         {
-            Console.WriteLine($"Stopped by Ctrl+C: {packs - checkedPacks:N0} of {packs:N0} pack(s) were not checked.");
+            Console.WriteLine($"Stopped by Ctrl+C: {packs - readPacks:N0} of {packs:N0} pack(s) were not checked.");
             return Interrupt.ExitCode;
         }
         return badPacks.Count + badFiles + fileProblems == 0 ? 0 : 3;
+    }
+
+    /// <summary>What can be done about damaged packs: burn them again (a disc not marked as burned yet), or rebuild.</summary>
+    static void Advise(DiscRecord disc, string mount, IEnumerable<int> bad)
+    {
+        var packs = bad.ToList();
+        if (disc.State == "staged" || disc.PendingAppend != null)
+        {
+            Console.WriteLine($"""
+
+                {disc.Label} is not marked as burned yet. If the disc is not finalized and has room left, burn only the
+                damaged pack(s) again from its staging folder, as a new session that continues the file system:
+                """);
+            foreach (int p in packs.Take(20)) Console.WriteLine("  " + DiscFormat.PackPath(p).Replace('/', Path.DirectorySeparatorChar));
+            if (packs.Count > 20) Console.WriteLine($"  ... and {packs.Count - 20:N0} more");
+            Console.WriteLine($"""
+                (check the folder's copies first: discloak verify {disc.Label} <stagingFolder>\{disc.Label} --packs {Ranges(packs)})
+                then check the disc again: discloak verify {disc.Label} {mount} --packs {Ranges(packs)} --deep
+                Or burn the whole folder onto a new disc.
+                """);
+        }
+        else
+            Console.WriteLine($"""
+
+                Restore these files from another copy if they have one; 'restage {disc.Label} <dir> --from {mount}'
+                rebuilds the disc onto a new blank, reusing its intact packs.
+                """);
+    }
+
+    /// <summary>
+    /// Records on the catalog's copies what this verify found: a damaged copy is marked (it stops counting as a
+    /// backup, so the file is pending again while on its source); a copy marked damaged that read back intact as a
+    /// whole loses the mark, with a warning - a copy that fails and then passes points to unreliable reads or a
+    /// wearing disc. Aliases (other files with the same stored copy) share its place, and its mark. Returns whether
+    /// anything changed.
+    /// </summary>
+    static bool RecordDamage(Ctx c, DiscRecord disc, Dictionary<long, string> damageAt, HashSet<long> intactAt)
+    {
+        var now = DateTime.UtcNow;
+        var marked = new HashSet<long>();
+        var cleared = new List<string>();
+        bool changed = false;
+        foreach (var f in c.Cat.Files)
+            foreach (var b in f.Backups.Where(b => b.Disc == disc.Label))
+            {
+                if (damageAt.TryGetValue(b.At, out string? why))
+                {
+                    if (!b.IsDamaged) { b.DamagedUtc = now; marked.Add(b.At); changed = true; }
+                    if (b.Damage != why) { b.Damage = why; changed = true; }
+                }
+                else if (b.IsDamaged && intactAt.Contains(b.At))
+                {
+                    cleared.Add($"{Describe(f, b)}  (recorded as damaged on {b.DamagedUtc:yyyy-MM-dd}: {b.Damage})");
+                    b.DamagedUtc = null;
+                    b.Damage = null;
+                    changed = true;
+                }
+            }
+        if (damageAt.Count > 0)
+            Console.WriteLine(marked.Count > 0
+                ? $"\nRecorded in the catalog: {marked.Count:N0} file copy(ies) on {disc.Label} are damaged" +
+                  (marked.Count < damageAt.Count ? $" ({damageAt.Count - marked.Count:N0} more already were)" : "") +
+                  ". They no longer count as backups: files still on their source are pending again ('plan', 'stage'), " +
+                  "and restore tries these copies last. A verify that reads one back intact removes its mark."
+                : $"\n{damageAt.Count:N0} file copy(ies) on {disc.Label} stay recorded as damaged (they do not count as backups).");
+        if (cleared.Count > 0)
+        {
+            Console.WriteLine($"\nWARNING  {cleared.Count:N0} file copy(ies) on {disc.Label} recorded as damaged read back intact now. " +
+                              "The mark is removed: they count as backups again.");
+            foreach (string line in cleared.Take(50)) Console.WriteLine("  " + line);
+            if (cleared.Count > 50) Console.WriteLine($"  ... and {cleared.Count - 50:N0} more");
+            Console.WriteLine("A copy that failed before and passes now points to unreliable reads - the drive, its cable or its connection - " +
+                              "or to a disc that is wearing (unless its packs were burned again since). Verify it again in a while, or in another drive.");
+        }
+        return changed;
+    }
+
+    /// <summary>--packs: "312", "312,683", "300-310" (1 to `packs`).</summary>
+    public static SortedSet<int> ParsePacks(string text, int packs)
+    {
+        var set = new SortedSet<int>();
+        foreach (string part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var ends = part.Split('-', 2, StringSplitOptions.TrimEntries);
+            if (!int.TryParse(ends[0], out int from) || !int.TryParse(ends[^1], out int to) || from < 1 || to < from)
+                throw new UserException($"--packs: '{part}' is not a pack number or a range (312, 300-310).");
+            if (to > packs) throw new UserException($"--packs: the disc has {packs:N0} pack(s), there is no pack {to:N0}.");
+            for (int p = from; p <= to; p++) set.Add(p);
+        }
+        if (set.Count == 0) throw new UserException("--packs: no pack given (312, 312,683 or 300-310).");
+        return set;
+    }
+
+    /// <summary>"300-310,312" (sorted, runs joined).</summary>
+    public static string Ranges(IEnumerable<int> packs)
+    {
+        var runs = new List<string>();
+        int start = -1, end = -1;
+        foreach (int p in packs.Order())
+        {
+            if (p == end + 1) { end = p; continue; }
+            if (start > 0) runs.Add(start == end ? $"{start}" : $"{start}-{end}");
+            start = end = p;
+        }
+        if (start > 0) runs.Add(start == end ? $"{start}" : $"{start}-{end}");
+        return string.Join(",", runs);
     }
 
     /// <summary>
@@ -382,9 +572,6 @@ public sealed class VerifyCommand : ICommand
         if (inPack.Count == 0) return "no file data (padding)";
         return Describe(inPack[0].File, inPack[0].Copy) + (inPack.Count > 1 ? $" +{inPack.Count - 1:N0} more" : "");
     }
-
-    static bool Overlaps(BackupRef copy, int pack) =>
-        copy.StoredSize > 0 && DiscFormat.PackOf(copy.At) <= pack && DiscFormat.PackOf(copy.End - 1) >= pack;
 
     static string Describe(FileRecord f, BackupRef copy) =>
         $"{f.RootName}/{f.RelPath}" + (copy.IsPart ? $" (part {copy.Part}/{copy.Parts})" : "") +

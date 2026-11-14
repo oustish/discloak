@@ -67,6 +67,11 @@ count all of it.
 `.enc` files (compressed, roughly 100-150 bytes per catalogued file) plus 25% repair data. If those come out larger
 than the reserve, `stage` warns that the folder will not fit. Raise it with `discloak blanks reserve 500MB`.
 
+The reserve can also keep room to **burn a damaged pack again**: a new disc that is left open until it has passed
+`verify` can take a pack that failed as a small second session ([Backing Up › If verify finds a damaged
+pack](Guide-Backing-Up.md#if-verify-finds-a-damaged-pack)). That takes 64 MiB per pack plus what a session costs on
+the medium (a few MB, depending on the burning program): a reserve 200 MB larger keeps room for about two packs.
+
 ## Encryption, the password and the master key
 
 - A random **master key** encrypts the catalog and everything on discs (AES-256-GCM). On a disc, the files are in

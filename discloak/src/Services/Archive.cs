@@ -12,6 +12,9 @@ public sealed class Archive
     public HashSet<string> DeadDiscs() =>
         cat.Discs.Where(d => d.State is "lost" or "destroyed").Select(d => d.Label).ToHashSet();
 
+    /// <summary>A copy that counts: on a disc that is not lost or destroyed, and not found damaged by verify.</summary>
+    public static bool Counts(BackupRef b, HashSet<string> dead) => !b.IsDamaged && !dead.Contains(b.Disc);
+
     static readonly Regex LabelNumber = new(@"(\d+)$", RegexOptions.CultureInvariant);
 
     /// <summary>The highest number at the end of a disc label in the catalog (DISC-0007: 7), whatever its prefix; 0 if none.</summary>
@@ -79,11 +82,11 @@ public sealed class Archive
 
     // ---- dedup ----------------------------------------------------------------------------
 
-    /// <summary>content hash -> every copy (whole or part) on a live disc, from any file</summary>
-    public ILookup<string, BackupRef> LiveCopies()
+    /// <summary>content hash -> every copy (whole or part) that counts (Counts: live disc, not damaged), from any file</summary>
+    public ILookup<string, BackupRef> LiveCopies(bool withDamaged = false)
     {
         var dead = DeadDiscs();
-        return cat.Files.SelectMany(f => f.Backups).Where(b => !dead.Contains(b.Disc))
+        return cat.Files.SelectMany(f => f.Backups).Where(b => withDamaged ? !dead.Contains(b.Disc) : Counts(b, dead))
                   .ToLookup(b => b.Sha256, StringComparer.OrdinalIgnoreCase);
     }
 
@@ -94,7 +97,7 @@ public sealed class Archive
     public static List<BackupRef>? CompleteCopy(IEnumerable<BackupRef> refs, string sha)
     {
         var same = refs.Where(b => Hashing.SameHash(b.Sha256, sha))
-                       .OrderByDescending(b => b.BackedUpUtc != null).ThenBy(b => b.Alias).ToList();
+                       .OrderBy(b => b.IsDamaged).ThenByDescending(b => b.BackedUpUtc != null).ThenBy(b => b.Alias).ToList();
         var whole = same.FirstOrDefault(b => !b.IsPart);
         if (whole != null) return [whole];
         return PartSets(same).FirstOrDefault(set => set.Count == set[0].Parts);
@@ -108,12 +111,12 @@ public sealed class Archive
             .OrderByDescending(set => set.Count);
 
     public bool HasLiveCopyOfCurrent(FileRecord f, HashSet<string> dead) =>
-        CompleteCopy(f.Backups.Where(b => !dead.Contains(b.Disc)), f.Sha256) != null;
+        CompleteCopy(f.Backups.Where(b => Counts(b, dead)), f.Sha256) != null;
 
     /// <summary>Some version of the file (current or older) can still be restored completely from live discs.</summary>
     public static bool HasAnyLiveCopy(FileRecord f, HashSet<string> dead)
     {
-        var live = f.Backups.Where(b => !dead.Contains(b.Disc)).ToList();
+        var live = f.Backups.Where(b => Counts(b, dead)).ToList();
         return live.Select(b => b.Sha256).Distinct(StringComparer.OrdinalIgnoreCase).Any(v => CompleteCopy(live, v) != null);
     }
 
@@ -155,6 +158,7 @@ public sealed class Archive
     public PlanResult MakePlan(bool split = false, IReadOnlyList<BlankDisc>? into = null, long programSpace = 0)
     {
         var live = LiveCopies();
+        var onDiscs = into != null ? LiveCopies(withDamaged: true) : live;   // a damaged copy still takes up its disc
         var wanted = WantedCopies();
         var pendingFiles = cat.Files
             .Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0)
@@ -200,7 +204,7 @@ public sealed class Archive
         // copies of one content never share a disc (nor go onto a disc that holds it already); with one copy wanted
         // there is nothing to keep apart
         string? GroupOf(Piece p) => wanted(p.File.Sha256) > 1 || into != null ? p.File.Sha256 : null;
-        bool Holds(BlankDisc disc, string sha) => live[sha].Any(b => b.Disc.Equals(disc.Id, StringComparison.OrdinalIgnoreCase));
+        bool Holds(BlankDisc disc, string sha) => onDiscs[sha].Any(b => b.Disc.Equals(disc.Id, StringComparison.OrdinalIgnoreCase));
 
         var tooBigSet = tooBig.ToHashSet();
         var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), into ?? cat.Blanks, sizeOf,
@@ -260,13 +264,13 @@ public sealed class Archive
 
     /// <summary>Burned copies on live discs (staged ones do not count yet) of the file's current content.</summary>
     public static int BurnedCopies(FileRecord f, HashSet<string> dead) =>
-        CompleteCopies(f.Backups.Where(b => b.BackedUpUtc != null && !dead.Contains(b.Disc)).ToList(), f.Sha256);
+        CompleteCopies(f.Backups.Where(b => b.BackedUpUtc != null && Counts(b, dead)).ToList(), f.Sha256);
 
     /// <summary>Files on a source with fewer burned copies than their location wants (current content; ignored files not).</summary>
     public List<FileRecord> TooFewCopies()
     {
         var dead = DeadDiscs();
-        var burned = cat.Files.SelectMany(f => f.Backups).Where(b => b.BackedUpUtc != null && !dead.Contains(b.Disc))
+        var burned = cat.Files.SelectMany(f => f.Backups).Where(b => b.BackedUpUtc != null && Counts(b, dead))
                         .ToLookup(b => b.Sha256, StringComparer.OrdinalIgnoreCase);
         return cat.Files.Where(f => f.MissingSinceUtc == null && !f.Ignored && f.Sha256.Length > 0 &&
                                     CompleteCopies(burned[f.Sha256], f.Sha256) < cat.Settings.CopiesFor(f.RootName))

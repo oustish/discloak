@@ -10,7 +10,7 @@ public static class Interrupt
 {
     public const int ExitCode = 130;   // the usual code for "stopped by Ctrl+C"
 
-    static readonly object gate = new();
+    static readonly Lock gate = new();
     static bool installed, cooperative, exitPending;
     static int critical;
     static string command = "";
