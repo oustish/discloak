@@ -171,16 +171,24 @@ discloak burned <label> [--date yyyy-MM-dd]
 ### verify
 Re-read a disc and compare it with the catalog.
 ```
-discloak verify <label> <mountedDiscPath> [--deep] [--packs 312,680-690] [--no-cache] [--retries N] [--mark-burned]
+discloak verify <label> <mountedDiscPath> [--deep] [--packs 312,680-690] [--files <text>] [--no-cache] [--retries N] [--mark-burned] [--as-disc]
 ```
+**A disc, or a folder.** What verify finds is recorded in the catalog (damage marks set and cleared, `unverified`
+cleared, `--mark-burned`) only when it reads a **disc in an optical drive**. A folder anywhere else - the staging folder,
+a copy of a disc on another drive - is checked the same way and its damage reported, but nothing is recorded: it says
+nothing about the disc. The second line of the output says which it is (`a disc in an optical drive: what verify finds
+is recorded in the catalog`, or `a folder on a fixed drive (E:\), not a disc in an optical drive: nothing is
+recorded`). A mounted disc image (ISO) counts as a disc, as Windows shows it in an optical drive.
 Compares every pack's SHA-256 with the catalog (no password needed for that). `--deep` also decrypts every pack and
 checks every file against its hash, in the same single read. A damaged pack is named with the files that have data in
 it. Exit code 3: damaged or missing packs, or files that do not come back intact.
 
 The copies it finds damaged are **recorded in the catalog** (without `--deep`: every file with data in a damaged pack;
 with it: only the files that do not come back intact). They no longer count as backups: files still on their source
-are pending again, and `status` and `find` show the marks. A later verify that reads such a copy back intact removes
-the mark, with a warning. See [Backing Up › If verify finds a damaged pack](Guide-Backing-Up.md#if-verify-finds-a-damaged-pack)
+are pending again, and `status` and `find` show the marks. A later verify that reads the packs that were wrong back as
+the catalog has them (`--packs` of just those is enough), or `--deep` that reads the whole file back intact, removes
+the mark, with a warning. Damage `--deep` finds in packs that read back exactly as staged was already in what was
+staged: only `--deep` clears that ([What verify records](Guide-Backing-Up.md#damaged-copies)). See [Backing Up › If verify finds a damaged pack](Guide-Backing-Up.md#if-verify-finds-a-damaged-pack)
 for what to do, before and after `burned`.
 
 | Option | |
@@ -188,7 +196,9 @@ for what to do, before and after `burned`.
 | `--deep` | also decrypt every pack and check every file against its hash |
 | `--packs L` | only these packs: `312`, `312,683`, `300-310`. With `--deep`, every file whose data lies wholly in them is checked against its hash; a file that reaches beyond them only has its part in them decrypted (`OK … its data in pack(s) 312 (the file spans packs 300-380: not checked against its hash)`). The disc's other files are checked as always. For checking a pack again after burning it a second time, or a pack that failed once. |
 | `--retries N` | how often a read that fails, or a pack or chunk that comes back wrong, is tried again (default 2; `0`: never). Every retry reads from the disc itself, past the Windows file cache. A read that only came right on a retry is printed as `RE-READ`: the data is intact, but it is a warning sign about the disc, the drive or its cable. |
-| `--mark-burned` | if every pack, every file (`--deep`) and the disc's other files check out, mark the disc (or its staged session) as burned, as [`burned`](#burned) does, with today's date. Otherwise it says why not and leaves the disc staged. Not with `--packs`. |
+| `--files T` | only the packs of the files matching `T` on this disc (matched as `find` and `restore` match: part of the path, a hash prefix, or `*`). With `--deep` each matching file is checked whole against its hash - the quickest full check of particular files. With `--packs`: the packs of both. [`find`](#find) shows each copy's packs. |
+| `--mark-burned` | if every pack, every file (`--deep`) and the disc's other files check out, mark the disc (or its staged session) as burned, as [`burned`](#burned) does, with today's date. Otherwise it says why not and leaves the disc staged. Only for a disc in an optical drive; not with `--packs` or `--files`. |
+| `--as-disc` | the folder is the disc, although its drive does not say it is an optical drive: what verify finds is recorded |
 | `--no-cache` | read every byte from the disc itself. Without it, Windows may hand over what it still keeps in memory from an earlier read of this disc (since it was inserted; ejecting the disc empties that): the disc's own data, but not proof that it reads back now. Use it to re-check a disc that has stayed in the drive. It also keeps the 100 GB read from pushing other programs' data out of memory. |
 
 Before the packs, the disc's other files are checked, a line each:
@@ -270,6 +280,9 @@ Where a file is backed up: part of a path, or the start of a SHA-256.
 ```
 discloak find <text|hashPrefix|*>
 ```
+Each copy is shown with its disc, the disc's state, the burn date and the packs that hold it
+(`DISC-0009 (burned, 2026-11-10, packs 300-380) current version`): for `verify --packs`, or re-burning a pack. A copy
+`verify` found damaged is marked `[DAMAGED, …]`.
 
 ### discs
 Every disc: state, files, packs, sessions, cost, the discloak build that staged it (its latest session), notes, free space.

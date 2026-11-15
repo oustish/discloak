@@ -4,6 +4,25 @@ What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entr
 name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
 `discloak version` shows the version of an exe.
 
+## 0.12.0 - 2026-11-15
+
+- A damage mark records the packs that read back wrong (new optional field `damagedPacks`), and goes once **those
+  packs** read back with the catalog's hash: `verify --packs 312` is enough, also for a file that spans many packs.
+  Before, every pack of the copy had to be read again in the same run.
+- Damage already in what was staged is told apart (new optional field `damagedAsStaged`): `--deep` finds a file
+  damaged although its packs read back exactly as they were written. Reading the packs again cannot clear such a mark
+  (before, a plain verify did); only `--deep` reading the whole file intact does. verify says what helps: stage again
+  (`discard` a disc not burned yet), or `restage` without `--from` - not burning the packs again, nor `restage --from`,
+  which would copy the same bytes back. `find` shows it as `already in what was staged`.
+- **verify tells a disc from a folder.** What it finds is recorded in the catalog (damage marks, `unverified`,
+  `--mark-burned`) only for a disc in an optical drive. A folder anywhere else - the staging folder, a copy of a disc -
+  is checked and its damage reported, but nothing is recorded: before, checking the staging folder could clear a damage
+  mark of the disc, and `--mark-burned` on it marked a disc as burned that was not. The output says which it is.
+  `--as-disc` takes a folder as the disc (a drive that does not report itself as optical).
+- `verify --files <text>` reads only the packs of the matching files on that disc (matched as `find` and `restore`
+  match); with `--deep` each is checked whole against its hash.
+- `find` shows the packs that hold each copy (`packs 300-380`).
+
 ## 0.11.0 - 2026-11-14
 
 - `stage refresh <folder>` brings staged disc folders (not burned yet) up to date, for running just before burning:

@@ -167,6 +167,8 @@ public sealed class RestageCommand : ICommand
             b.BackedUpUtc = null;
             b.DamagedUtc = null;          // rebuilt (or copied with its hash checked): no longer damaged
             b.Damage = null;
+            b.DamagedPacks = null;
+            b.DamagedAsStaged = false;
         }
 
         var manifest = onDisc.Select(x => ManifestLine.For(x.Copy, x.File)).ToList();

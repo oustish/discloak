@@ -43,7 +43,9 @@ The regular cycle: **scan → plan → stage → burn → verify → burned**. R
    ```
    discloak verify DISC-0001 G:\ --deep
    ```
-   Every pack is read and its hash compared with the catalog. `--deep` also decrypts every pack and checks every
+   Every pack is read and its hash compared with the catalog. Verify the disc **in its drive**: only then is what
+   verify finds recorded in the catalog (a folder, such as the staging folder, is checked but nothing is recorded).
+   To check particular files: `discloak verify DISC-0001 G:\ --files holiday --deep` reads only their packs. `--deep` also decrypts every pack and checks every
    file against its hash, in the same single read (proves the content can be restored; without it, no password is
    needed). The disc's other files are checked first: its manifest, `packs.sha256`, `disc.json`, `discloak.key` and
    the catalog backup in `_catalog\` (against its repair data). A status line shows the progress, speed and time left.
@@ -81,15 +83,25 @@ damage may lie in another file's part of the pack). A marked copy:
   copy of it (on another disc), and `status`, `copies` and `find` count it as missing;
 - stays in the catalog: `find` shows it (`[DAMAGED, found by verify on …]`), `status` warns about it, and `restore`
   still tries it, after every other copy (the damage may cost only a part of it);
-- loses the mark when a later `verify` reads it back intact as a whole (also `verify --packs` of its packs), with a
-  `WARNING`: a copy that fails and then passes points to unreliable reads - the drive, its cable or connection - or to
-  a disc that is wearing, unless its packs were burned again in between. `restage` of the disc removes the marks too.
+- records the packs that read back wrong, and loses the mark once **those packs** read back exactly as the catalog
+  has them - a plain `verify`, or just `verify --packs 312`, is enough: a pack whose SHA-256 matches holds exactly the
+  bytes that were staged. A `--deep` check of the whole file clears it too. It goes with a `WARNING`: a copy that
+  fails and then passes points to unreliable reads - the drive, its cable or connection - or to a disc that is
+  wearing, unless its packs were burned again in between. `restage` of the disc removes the marks too.
+
+One kind of damage is different: **damage already in what was staged**. `--deep` finds a file damaged although every
+one of its packs reads back exactly as staged (their hashes match): what was written was already wrong (a memory error
+while staging, for example). Reading the packs again cannot change that, so only a `--deep` check of the whole file
+clears such a mark, and burning the packs again, or `restage --from` (which reuses packs whose hash matches), would
+bring the damage back. `verify` says so: on a disc not burned yet, `discard` it and stage again; on a burned disc,
+the files still on their source are pending again already, and `restage <label> <dir>` without `--from` rebuilds
+every pack from the source files. `find` shows such a copy as `already in what was staged`.
 
 ### A new disc, not marked as burned yet
 
 Keep the staging folder, and do not finalize the disc. If the disc has room left:
 
-1. Check the folder's copy of the pack (it is the one the catalog has):
+1. Check the folder's copy of the pack (it is the one the catalog has; a folder's check records nothing):
    ```
    discloak verify DISC-0001 E:\Staging\DISC-0001 --packs 312
    ```
