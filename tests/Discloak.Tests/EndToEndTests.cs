@@ -14,9 +14,13 @@ public class EndToEndTests : IDisposable
 
     static EndToEndTests() => Environment.SetEnvironmentVariable(PasswordVar, "Correct-Horse-42!");
 
+    /// <summary>The tests' disc folders stand for discs in a drive (verify --as-disc); false: verify sees them as folders.</summary>
+    bool foldersAreDiscs = true;
+
     int Discloak(params string[] args)
     {
         TestKeys.Init(tmp.File("cat"));
+        if (foldersAreDiscs && args[0] == "verify") args = [.. args, "--as-disc"];
         return Program.Main([.. args, "--catalog", tmp.File("cat"), "--password-env", PasswordVar, "--yes"]);
     }
 
@@ -268,7 +272,7 @@ public class EndToEndTests : IDisposable
 
         var (code, text) = Run("verify", "DISC-0001", disc, "--packs", "3");
         Assert.Equal(0, code);
-        Assert.Contains("--packs: only pack(s) 3, 2 file(s) with data in them", text);
+        Assert.Contains("  only pack(s) 3, 2 file(s) with data in them", text);
         Assert.Contains("DISC-0001: 1 of 1 pack(s) given OK, 0 damaged", text);
 
         (code, text) = Run("verify", "DISC-0001", disc, "--packs", "3", "--deep");
@@ -328,6 +332,122 @@ public class EndToEndTests : IDisposable
         Assert.Contains("Restore these files from another copy if they have one", text);
         Assert.DoesNotContain("not marked as burned yet", text);
         restore();
+    }
+
+    [Fact]
+    public void Verify_files_reads_only_the_packs_of_the_matching_files_and_find_shows_them()
+    {
+        string disc = ThreePackDisc();   // a.bin in packs 1-2, c.bin in 2-3, b.bin in 3
+        Assert.Contains("DISC-0001 (staged, not burned yet, packs 1-2)", Run("find", "a.bin").Text);
+        Assert.Contains("DISC-0001 (staged, not burned yet, pack 3)", Run("find", "b.bin").Text);
+
+        var (code, text) = Run("verify", "DISC-0001", disc, "--files", "a.bin", "--deep");
+        Assert.Equal(0, code);
+        Assert.Contains("--files a.bin: 1 file(s) on this disc", text);
+        Assert.Contains("only pack(s) 1-2, 2 file(s) with data in them", text);
+        Assert.Contains("\n  OK       S/a.bin (100,000 bytes)\n", text.ReplaceLineEndings("\n"));   // whole: checked against its hash
+        Assert.Contains("DISC-0001: 2 of 2 pack(s) given OK", text);
+        Assert.Contains("only pack(s) 1-3", Run("verify", "DISC-0001", disc, "--files", "a.bin", "--packs", "3").Text);   // both
+
+        var restore = DamageB(disc);
+        Assert.Equal(0, Discloak("verify", "DISC-0001", disc, "--files", "a.bin"));   // pack 3 is not read
+        Assert.Equal(3, Discloak("verify", "DISC-0001", disc, "--files", "b.bin"));
+        restore();
+        Assert.NotEqual(0, Discloak("verify", "DISC-0001", disc, "--files", "nothing-like-it"));
+        Assert.NotEqual(0, Discloak("verify", "DISC-0001", disc, "--files", "a.bin", "--mark-burned"));
+    }
+
+    [Fact]
+    public void Verify_of_a_folder_that_is_not_in_an_optical_drive_checks_but_records_nothing()
+    {
+        string disc = ThreePackDisc();
+        foldersAreDiscs = false;          // the temp folder is on a fixed drive
+        BackupRef CopyOf(string name) => TestKeys.Load(tmp.File("cat")).Files.Single(f => f.RelPath == name).Backups.Single();
+
+        var restore = DamageB(disc);
+        var (code, text) = Run("verify", "DISC-0001", disc);
+        Assert.Equal(3, code);                                          // the damage is found and reported
+        Assert.Contains("a folder on a fixed drive", text);
+        Assert.Contains("nothing is recorded in the catalog (--as-disc if it is the disc)", text);
+        Assert.Contains("Nothing was recorded in the catalog: this is a folder, not the disc.", text);
+        Assert.Contains("This folder is damaged: do not burn it as it is. 'discard DISC-0001' and stage again.", text);
+        Assert.DoesNotContain("Recorded in the catalog", text);
+        Assert.Null(CopyOf("b.bin").DamagedUtc);
+        Assert.NotEqual(0, Discloak("verify", "DISC-0001", disc, "--mark-burned"));   // refused for a folder
+        Assert.Equal("staged", TestKeys.Load(tmp.File("cat")).Discs.Single().State);
+
+        // the same folder taken as the disc: recorded, and a pass of the folder does not clear it
+        Assert.Contains("Recorded in the catalog", Run("verify", "DISC-0001", disc, "--as-disc").Text);
+        restore();
+        Assert.Equal(0, Discloak("verify", "DISC-0001", disc));
+        Assert.NotNull(CopyOf("b.bin").DamagedUtc);
+        Assert.Equal(0, Discloak("verify", "DISC-0001", disc, "--as-disc", "--mark-burned"));
+        Assert.Null(CopyOf("b.bin").DamagedUtc);
+        Assert.Equal("burned", TestKeys.Load(tmp.File("cat")).Discs.Single().State);
+    }
+
+    [Fact]
+    public void A_damage_mark_records_its_packs_and_goes_once_those_packs_read_back_right()
+    {
+        string disc = ThreePackDisc();
+        BackupRef CopyOf(string name) => TestKeys.Load(tmp.File("cat")).Files.Single(f => f.RelPath == name).Backups.Single();
+        var restore = DamageB(disc);
+        Assert.Equal(3, Discloak("verify", "DISC-0001", disc));
+        Assert.Equal([3], CopyOf("c.bin").DamagedPacks!);           // c spans packs 2-3; pack 3 read back wrong
+        Assert.False(CopyOf("c.bin").DamagedAsStaged);
+        restore();
+
+        // only pack 3 is read again: enough for c too, although its data starts in pack 2
+        var (code, text) = Run("verify", "DISC-0001", disc, "--packs", "3");
+        Assert.Equal(0, code);
+        Assert.Contains("WARNING  2 file copy(ies) on DISC-0001 recorded as damaged read back intact now", text);
+        Assert.Null(CopyOf("c.bin").DamagedUtc);
+        Assert.Null(CopyOf("c.bin").DamagedPacks);
+    }
+
+    [Fact]
+    public void Damage_already_in_what_was_staged_is_not_cleared_by_reading_the_packs_again()
+    {
+        string disc = ThreePackDisc();
+        BackupRef CopyOf(string name) => TestKeys.Load(tmp.File("cat")).Files.Single(f => f.RelPath == name).Backups.Single();
+        // as if b's chunk had been written wrong when it was staged: the catalog has the hash of the bad pack
+        DamageB(disc);
+        string pack3 = Path.Combine(disc, DiscFormat.PackPath(3));
+        var cat = TestKeys.Load(tmp.File("cat"));
+        string old = cat.Discs[0].Packs[2], bad = Hashing.HashFile(pack3);
+        cat.Discs[0].Packs[2] = bad;
+        cat.Save();
+        string list = Path.Combine(disc, DiscFiles.PackListName);
+        File.WriteAllText(list, File.ReadAllText(list).Replace(old.ToLowerInvariant(), bad.ToLowerInvariant()));
+
+        Assert.Equal(0, Discloak("verify", "DISC-0001", disc));     // the packs are as staged: a plain verify sees nothing
+        var (code, text) = Run("verify", "DISC-0001", disc, "--deep");
+        Assert.Equal(3, code);
+        Assert.Contains("  DAMAGED  S/b.bin (30,000 bytes): pack 3, chunk 4 is damaged", text);
+        Assert.True(CopyOf("b.bin").DamagedAsStaged);
+        Assert.Equal([3], CopyOf("b.bin").DamagedPacks!);
+        Assert.Null(CopyOf("c.bin").DamagedUtc);                      // its part of pack 3 decrypts
+        Assert.Contains("Some damage was already in what was staged", text);
+        Assert.Contains("'discard DISC-0001' and stage again", text);
+        Assert.DoesNotContain("burn only the", text);                  // burning pack 3 again would not help
+        Assert.Contains("already in what was staged", Run("find", "b.bin").Text);
+
+        // reading the packs again does not clear it
+        foreach (string[] more in new[] { Array.Empty<string>(), ["--packs", "3"] })
+        {
+            text = Run(["verify", "DISC-0001", disc, .. more]).Text;
+            Assert.Contains("1 file copy(ies) on DISC-0001 stay recorded as damaged although their packs read back as staged", text);
+            Assert.True(CopyOf("b.bin").DamagedAsStaged);
+        }
+
+        // on a burned disc: rebuild without --from, from the sources
+        Assert.Equal(0, Discloak("burned", "DISC-0001"));
+        text = Run("verify", "DISC-0001", disc, "--deep").Text;
+        Assert.Contains("'restage DISC-0001 <dir>' without --from", text);
+        Assert.Equal(0, Discloak("restage", "DISC-0001", tmp.File("re")));
+        Assert.False(CopyOf("b.bin").IsDamaged);
+        Assert.False(CopyOf("b.bin").DamagedAsStaged);
+        Assert.Equal(0, Discloak("verify", "DISC-0001", Path.Combine(tmp.File("re"), "DISC-0001"), "--deep"));
     }
 
     [Fact]

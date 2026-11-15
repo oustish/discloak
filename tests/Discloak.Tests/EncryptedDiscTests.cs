@@ -23,6 +23,7 @@ public class EncryptedDiscTests : IDisposable
     {
         if (!(args.Length > 1 && args[0] == "catalog" && args[1] == "backup") && args[0] != "init")
             TestKeys.Init(tmp.File(catalog));   // a backup restores into, and init makes, an empty folder
+        if (args[0] == "verify") args = [.. args, "--as-disc"];   // the tests' disc folders stand for discs in a drive
         return Program.Main([.. args, "--catalog", tmp.File(catalog), "--password-env", passwordVar, "--yes"]);
     }
 

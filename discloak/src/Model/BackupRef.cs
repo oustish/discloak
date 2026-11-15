@@ -20,6 +20,11 @@ public class BackupRef
     // intact, or a restage of the disc, removes the mark.
     public DateTime? DamagedUtc { get; set; }
     public string? Damage { get; set; }            // what verify found ("pack 312 differs from the catalog")
+    public List<int>? DamagedPacks { get; set; }   // (since 0.12.0) the packs that read back wrong: once they read back as
+                                                   // the catalog has them, the copy is intact again
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool DamagedAsStaged { get; set; }      // (since 0.12.0) its packs read back exactly as staged and it still failed
+                                                   // --deep: the damage was in what was staged; only --deep can clear it
 
     [JsonIgnore] public bool IsDamaged => DamagedUtc != null;
 
