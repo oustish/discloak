@@ -33,7 +33,9 @@ When testing by hand, never use the real catalog or the real agent: give a scrat
   the non-parallel collection (`[Collection(nameof(InterruptTests))]`): `Console.Out` and `Interrupt` are the whole
   process's.
 - **Docs**: the command's help text (`Details`), the pages under `docs/` it touches, `discloak/HANDOFF.md` (the code map
-  and the test table), and [`CHANGELOG.md`](CHANGELOG.md).
+  and the test table), and [`CHANGELOG.md`](CHANGELOG.md). A help text longer than a few lines is laid out like
+  `verify --help`: a short description, then sections separated by blank lines (`Options:` and others), options in an
+  aligned column; lines up to about 118 characters.
 - **Formats**: a disc format that has been burned stays readable by every later version (today `discloak-pack-1` and
   `discloak-key-2` key files, and under their names before 0.8.0 `bdxl-pack-1`, `bdxl-key-1`/`bdxl-key-2`, `bdxl.key`).
   The labels inside the cryptography (`"bdxl-enc2 "`, `"bdxl catalog integrity"`, ...) never change: see

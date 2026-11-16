@@ -5,59 +5,68 @@ public sealed class StageCommand : ICommand
     public string Name => "stage";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Copy the next disc's worth of files into a folder, ready to burn";
-    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-catalog] [--without-program] [--append <label> [--mount <path>]]" +
+    public string Usage => "stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--packing largest|sequential] [--with-catalog] [--without-program] [--append <label> [--mount <path>]]" +
                            " | " + StageRefresh.Usage;
     public bool Interruptible => true;
     public string Details => """
-        Creates <destDir>/<label>/ for each disc. The files (compressed if set, see 'compression') are laid end to end
-        in one stream of data, cut into packs of 64 MiB (data/000/000001.pack ...), each pack encrypted on its own with
-        the catalog's master key (AES-256-GCM); the last pack is filled up with zeros. Every file is checked against
-        its hash as it is read. Nothing on the disc shows the names, sizes or number of the files. The disc also gets
-        an encrypted manifest (manifest.enc: where each file lies in the stream, padded to whole packs) and, readable
-        without the password: packs.sha256 (the packs' hashes), disc.json (label, date, key id), discloak.key (the master
-        key, wrapped by today's password) and README.txt (the formats, to read the disc without discloak).
-          --max-discs N    stage up to N discs (default 1): the fullest first; of discs equally full (to 0.1%), the one
-                           with the largest file first
-          --min-fill 0.9   only stage discs that would be at least 90% full
-          --split          a file larger than every blank disc is cut into parts, one per disc. 'restore' collects the
-                           parts disc by disc and joins them; the file counts as backed up only when every part is on a
-                           disc. Once a file has parts on discs, its remaining parts are staged even without --split.
-          --with-catalog   also put a catalog backup (with repair data) into <disc>/_catalog
-          --without-program   leave out <disc>/_program: by default every disc (and every appended session) gets the
-                           program that staged it - discloak.exe, self-contained, about 37 MB - with its source code
-                           and the licenses, so it can be read with nothing else. Plan keeps room for it.
-          --append L       fill the free space of the burned disc L with a new session instead of using a blank disc.
-                           Only the pending files that fit go into <destDir>/L.s2/ (s3, s4 ... later): packs that
-                           continue the disc's numbering, their own manifest (manifest.s2.enc: only these files; the
-                           earlier ones stay), packs.sha256 and disc.json (both replace the old ones) and, with
-                           --with-catalog, _catalog. The disc must not be finalized, and the burning program
-                           must continue the disc's file system (multisession / "import previous session"), or the
-                           earlier files disappear from view. Free space = disc size - earlier sessions - the disc's
-                           reserve, which every session needs again (metadata and the medium's session overhead).
-                           A changed file whose older version is on the disc is stored again, so both versions stay
-                           restorable. Only a disc encrypted with a key of this catalog can take a session.
-                           Afterwards: 'burned L' for the session, or 'discard L' to take it back.
-          --mount P        with --append: the disc is in the drive at P - its label (and key) is checked, and the free
-                           space the drive reports is used if it is smaller.
-        stage refresh <folder>: brings disc folders that are staged but not burned yet up to date - a disc folder, or
-        every disc folder in a staging folder. Run it just before burning: a disc staged earlier (or together with
-        others, --max-discs) then carries the catalog as it is now and the program running now. In each folder:
-        _catalog is written again from the catalog as it is now, _program is replaced by this program (when it is
-        another one), README.txt and discloak.key (the catalog's key file: a password changed since staging) are
-        written again. A folder gets what it already has; the packs, manifest, packs.sha256 and disc.json stay as they
-        are, so nothing about the packs changes. Folders of burned discs, discarded or restaged discs and other
-        catalogs are skipped. If the new files would not fit on the disc (a catalog backup that outgrew the reserve),
-        the folder is left as it was (exit code 2).
-          --add-catalog    also add _catalog to a folder that has none
-          --add-program    also add _program to a folder that has none
-          --dry-run        only say what would change
+        Writes the folder of the next disc(s), <destDir>/<label>/, ready to burn. Labels are <prefix><counter>, e.g.
+        DISC-0007 (see 'settings').
+
+        On the disc:
+          data/000/000001.pack ...  the files (compressed if set, see 'compression') laid end to end in one stream, cut into
+                                    packs of 64 MiB, each encrypted on its own with the catalog's master key (AES-256-GCM); the
+                                    last pack is filled up with zeros. Nothing shows the names, sizes or number of the files
+          manifest.enc              encrypted: where each file lies in the stream, padded to whole packs
+          packs.sha256, disc.json   the packs' hashes; the label, date and key id - readable without the password
+          discloak.key              the master key, wrapped by today's password
+          README.txt                the formats, to read the disc without discloak
+          _program/                 the program that staged it (discloak.exe, self-contained, about 37 MB), its source code
+                                    and the licenses, so the disc can be read with nothing else; plan keeps room for it
+          _catalog/                 with --with-catalog: a catalog backup with repair data
+        Every file is checked against its hash as it is read. A file that changed since 'scan' or cannot be read is left out;
+        the space it took in its pack stays unused.
+
+        Options:
+          --max-discs N      stage up to N discs (default 1): the fullest first; of discs equally full (to 0.1%), the one with
+                             the largest file first. With sequential packing: the next N discs of the sequence
+          --min-fill 0.9     only stage discs that would be at least 90% full
+          --packing P        this run only: largest or sequential (default: the setting 'packing'; see 'plan --help')
+          --split            a file larger than every blank disc is cut into parts, one per disc; 'restore' joins them. It
+                             counts as backed up only when every part is on a disc. Once a file has parts on discs, its
+                             remaining parts are staged even without --split
+          --with-catalog     also put a catalog backup (with repair data) into <disc>/_catalog
+          --without-program  leave out <disc>/_program
+
+        A new session for a burned disc:
+          --append L         fill the free space of the burned disc L with a new session instead of using a blank disc:
+                             <destDir>/L.s2/ (s3, s4 ... later) with packs that continue the disc's numbering, their own
+                             manifest (manifest.s2.enc: only these files; the earlier ones stay), packs.sha256 and disc.json
+                             (both replace the old ones) and, with --with-catalog, _catalog
+          --mount P          with --append: the disc is in the drive at P - its label and key are checked, and the free space
+                             the drive reports is used if it is smaller
+          The disc must not be finalized, and the burning program must continue the disc's file system (multisession /
+          "import previous session"), or the earlier files disappear from view. Free space = disc size - earlier sessions -
+          the disc's reserve, which every session needs again. A changed file whose older version is on the disc is stored
+          again, so both versions stay restorable. Only a disc encrypted with a key of this catalog can take a session.
+          Afterwards: 'burned L' for the session, or 'discard L' to take it back.
+
+        stage refresh <folder>: brings disc folders that are staged but not burned yet up to date - one disc folder, or every
+        disc folder in a staging folder. Run it just before burning:
+          _catalog                  written again from the catalog as it is now
+          _program                  replaced by this program, when it is another one
+          README.txt, discloak.key  written again if they differ (the key file: e.g. after a password change)
+        A folder gets what it already has; the packs, manifest, packs.sha256 and disc.json are not touched. Folders of
+        burned, discarded or restaged discs, and of other catalogs, are skipped. If the new files would not fit on the disc (a
+        catalog backup that outgrew the reserve), the folder stays as it was (exit code 2).
+          --add-catalog      also add _catalog to a folder that has none
+          --add-program      also add _program to a folder that has none
+          --dry-run          only say what would change
         Removing _catalog or _program from a staged folder is done by hand (delete the folder).
-        Labels are <prefix><counter>, e.g. DISC-0007 (see 'settings').
-        Every file is printed as soon as it is stored, with the disc's progress by bytes, speed and time left; while a
-        large file is copied, a status line shows how far it is (not written when the output is redirected).
-        Ctrl+C stops after the file being copied (that one is left out): the disc (or session) is finished with the
-        files copied so far - a complete, smaller folder you can burn or 'discard' - and no further disc is started.
-        A file that changed since 'scan' or cannot be read is left out too; the space it took in its pack stays unused.
+
+        Progress: every file is printed as soon as it is stored, with the disc's progress by bytes, speed and time left; a
+        status line shows how far a large file is (not written when the output is redirected).
+        Ctrl+C stops after the file being copied (that one is left out): the disc or session is finished with the files
+        copied so far - a complete, smaller folder you can burn or 'discard' - and no further disc is started.
         """;
 
     public int Run(Ctx c)
@@ -68,7 +77,7 @@ public sealed class StageCommand : ICommand
         if (c.Opt.Get("append") is { } appendTo) return Append(c, destDir, appendTo);
         int maxDiscs = c.Opt.GetInt("max-discs", 1);
         double minFill = double.Parse(c.Opt.GetOr("min-fill", "0"), CultureInfo.InvariantCulture);
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"), programSpace: DiscProgram.SpaceFor(c.Opt));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), programSpace: DiscProgram.SpaceFor(c.Opt), packing: Packing.For(c.Opt, c.Settings));
         if (c.Cat.Blanks.Count == 0)
         {
             Console.WriteLine("No blank discs are registered. Register some first, e.g.:  blanks add 5 --size 96882130944 --reserve 200MB");
@@ -76,10 +85,12 @@ public sealed class StageCommand : ICommand
         }
         Archive.PrintTooBig(plan.TooBig);
 
-        // the fullest discs first (a half-empty one waits for more data); discs that are equally full to 0.1% - as
-        // nearly all are - in the order of their largest file, so the largest pending file goes first
-        var chosen = plan.Bins.Where(b => b.Pieces.Count > 0 && b.Used >= minFill * b.Usable)
-            .OrderByDescending(b => (int)(1000.0 * b.Used / b.Usable)).ThenByDescending(b => b.Pieces.Max(p => p.Length))
+        // largest: the fullest discs first (a half-empty one waits for more data); discs that are equally full to 0.1%
+        // - as nearly all are - in the order of their largest file, so the largest pending file goes first.
+        // sequential: the discs in the order of the sequence
+        var full = plan.Bins.Where(b => b.Pieces.Count > 0 && b.Used >= minFill * b.Usable);
+        var chosen = (plan.Packing == Packing.Sequential ? full
+                : full.OrderByDescending(b => (int)(1000.0 * b.Used / b.Usable)).ThenByDescending(b => b.Pieces.Max(p => p.Length)))
             .Take(maxDiscs).ToList();
         if (chosen.Count == 0)
         {
@@ -153,7 +164,7 @@ public sealed class StageCommand : ICommand
         var target = AppendTarget.Open(c, label);
         var disc = target.Disc;
 
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()], DiscProgram.SpaceFor(c.Opt));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()], DiscProgram.SpaceFor(c.Opt), Packing.For(c.Opt, c.Settings));
         var bin = plan.Bins[0];
         Console.WriteLine($"{disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +
                           $"({SizeText.Bytes(target.Reserve)} bytes stay reserved for its manifest, disc.json and catalog backup).");

@@ -8,18 +8,20 @@ public sealed class CopiesCommand : ICommand
     public string Usage => "copies [list] | copies set <alias> N | copies set --default N | copies clear <alias>";
     public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => $"""
-        Every file is stored once by default. A location (alias) can ask for more: 'plan' and 'stage' then keep
-        planning further copies of its files until each is on that many different discs - never two copies of one
-        file on the same disc, so losing one disc never loses two copies. A file whose content also lives in another
-        location gets the higher of the two numbers. Up to {Settings.MaxCopies}.
-        Staged discs already count for planning (so the next 'stage' does not plan the same copy again), but a copy
-        only counts as made when its disc is burned: 'status', 'copies list' and 'find' count burned discs only.
-          copies list           the settings and, per location, how many files have fewer burned copies than wanted
-          copies set <alias> N  this location wants N copies
+        Every file is stored once by default. A location (alias) can ask for more: 'plan' and 'stage' then keep planning
+        further copies of its files until each is on that many different discs - never two copies of one file on the same
+        disc, so losing one disc never loses two copies. A file whose content also lives in another location gets the higher
+        of the two numbers. Up to {Settings.MaxCopies}.
+
+          copies list              the settings and, per location, how many files have fewer burned copies than wanted
+          copies set <alias> N     this location wants N copies
           copies set --default N   every location without its own number
-          copies clear <alias>  the location uses the default again
-        Lowering the number removes nothing from discs; 'lost'/'destroyed' discs stop counting, and their files are
-        planned again.
+          copies clear <alias>     the location uses the default again
+
+        Staged discs already count for planning (so the next 'stage' does not plan the same copy again), but a copy only
+        counts as made when its disc is burned: 'status', 'copies list' and 'find' count burned discs only.
+        Lowering the number removes nothing from discs. Lost and destroyed discs, and copies 'verify' found damaged, stop
+        counting: their files are planned again.
         """;
 
     public int Run(Ctx c)

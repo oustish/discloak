@@ -12,32 +12,39 @@ public sealed class CatalogCommand : ICommand
     public string Summary => "Integrity check, older versions, export/import, backups with repair data, the mirror";
     public string Usage => "catalog check | accept | history | rollback <id> | export <dir> | import <dir> [--keep] | backup create <dir> | backup verify <dir> [--repair] | backup restore <dir> [--force] | mirror status | mirror sync | mirror restore [--recovery]";
     public string Details => """
-        The catalog is stored encrypted. catalog.hash.json holds a hash of every stored file and an HMAC over that
-        list, checked every time the catalog is loaded; if a file is damaged, altered or mixed in from another save,
-        other commands refuse to run.
-          catalog check              verify only, nothing else
-          catalog accept             every file still decrypts but the hash list does not match: record it anew (previous state kept)
-          catalog history            older versions (one copy is kept before each command that changes the catalog)
-          catalog rollback <id>      go back to one of them (the current state is saved first; --force for a damaged one)
-          catalog export <dir>       write the catalog as plain JSON into an empty folder (to read or edit it - it is NOT encrypted)
-          catalog import <dir>       replace the catalog with plain JSON from such a folder (the current state is kept in
-                                     history), then wipe the folder: every file in it overwritten with random bytes and
-                                     deleted, and the folder removed - only once the import is saved; --keep leaves it.
-                                     A folder with subfolders or links, or one that looks like a catalog, is refused.
-                                     The wipe reaches the files themselves; an SSD may keep the old blocks until it
-                                     reclaims them, and shadow copies, synced folders, NAS snapshots and editors' own
-                                     backups (Windows 11 Notepad keeps its open tabs) keep copies of their own - best
-                                     export onto an encrypted drive (BitLocker).
-          catalog backup create <dir>            copy of the encrypted catalog + discloak.key + Reed-Solomon repair data (--parity-percent 25)
-          catalog backup verify <dir> [--repair] check / fix a backup (no password needed)
-          catalog backup restore <dir> [--force] put a backup back (password, or --recovery for the recovery key, when restoring
-                                                 into an empty folder; into this catalog, the current discloak.key and password stay)
-        Every staged disc with --with-catalog carries the same kind of backup in _catalog.
-        The mirror ('settings set mirror <folder>') is a second copy kept in step by every save:
-          catalog mirror status      is it there and in step?
-          catalog mirror sync        copy the catalog over the mirror (after it was not connected, or a save did not reach it)
-          catalog mirror restore     take the catalog from the mirror (the catalog is damaged or behind; its current state goes
-                                     to history; the mirror's discloak.key comes along, so its password applies)
+        The catalog is stored encrypted. catalog.hash.json holds a hash of every stored file and an HMAC over that list,
+        checked every time the catalog is loaded; if a file is damaged, altered or mixed in from another save, other commands
+        refuse to run.
+
+        Checking and history:
+          catalog check            check the catalog, nothing else
+          catalog accept           every file still decrypts but the hash list does not match: record it anew (the previous
+                                   state is kept)
+          catalog history          older versions (one is kept before each command that changes the catalog)
+          catalog rollback <id>    go back to one of them (the current state is saved first; --force for a damaged one)
+
+        Export and import - plain JSON, NOT encrypted:
+          catalog export <dir>     write the catalog as plain JSON into an empty folder, to read or edit it
+          catalog import <dir>     replace the catalog with plain JSON from such a folder (the current state is kept in
+                                   history), then wipe the folder once the import is saved: every file overwritten with random
+                                   bytes and deleted, the folder removed; --keep leaves it. A folder with subfolders or links,
+                                   or one that looks like a catalog, is refused
+          The wipe reaches the files themselves; an SSD may keep the old blocks until it reclaims them, and shadow copies,
+          synced folders, NAS snapshots and editors' own backups (Windows 11 Notepad keeps its open tabs) keep copies of their
+          own - best export onto an encrypted drive (BitLocker).
+
+        Backups - the same kind every disc staged with --with-catalog carries in _catalog:
+          catalog backup create <dir>             the encrypted catalog, discloak.key and Reed-Solomon repair data
+                                                  (--parity-percent 25)
+          catalog backup verify <dir> [--repair]  check, or repair, a backup (no password needed)
+          catalog backup restore <dir> [--force]  put a backup back: into an empty folder with its password (--recovery: the
+                                                  recovery key); into this catalog, the current discloak.key and password stay
+
+        Mirror - a second copy kept in step by every save ('settings set mirror <folder>'):
+          catalog mirror status    is it there and in step?
+          catalog mirror sync      copy the catalog over the mirror (after it was not connected, or a save did not reach it)
+          catalog mirror restore   take the catalog from the mirror (the catalog is damaged or behind): its current state goes
+                                   to history, and the mirror's discloak.key comes along, so its password applies
         """;
     public bool AllowBrokenCatalog => true;
 

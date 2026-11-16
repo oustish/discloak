@@ -12,32 +12,32 @@ public sealed class ScanCommand : ICommand
     public string Usage => "scan [<folder>] [--name <alias>] [--threads N] [--full]";
     public bool Interruptible => true;
     public string Details => """
-        With a folder: adds it to the catalog (first time) or rescans it. Every file gets a SHA-256 hash; unchanged
-        files (same size and modified time) are not read again. Files that disappeared are marked as missing.
-        A missing file whose identical content turns up under another path counts as moved/renamed: its catalog entry
-        (with its copies on discs and its history) moves to the new path.
-        Without a folder: rescans ALL known locations. A location that is not reachable (unplugged drive) is
-        skipped, nothing is marked as missing.
+        Adds a folder to the catalog (the first time) or scans it again; without a folder, scans every known location again.
+        Every file gets a SHA-256; unchanged files (same size and modified time) are not read again.
 
-          --name <alias>   name of the folder on discs and in the catalog (default: the folder name)
-          --threads N      hash with N threads (default: 'settings' default-threads, 1)
-          --full           ignore size/time and hash everything again
-          --catalog <dir>  where the catalog lives (default ./catalog)
+        What it records:
+          - files that disappeared are marked as missing; a location that is not reachable (an unplugged drive) is skipped,
+            and nothing in it is marked as missing
+          - a missing file whose identical content turns up under another path counts as moved or renamed: its entry (its
+            copies on discs, its history) moves to the new path
+          - files matching an ignore rule ('ignore') are catalogued as ignored: not hashed, never staged
+          - for files that will be stored compressed ('compression'), the same read counts the exact size of their compressed
+            copy, so 'plan' and 'stage' fill discs exactly. When a location's compression setting changes, its unchanged files
+            are read once more to count it again
 
-        Files matching an ignore rule (see 'ignore') are added to the catalog and marked as ignored, but are not
-        hashed and never staged.
-        Compression (see 'compression'): for files that will be stored compressed, the same read also counts the exact
-        size of their compressed copy, so 'plan' and 'stage' fill discs exactly. When the compression
-        setting of a location changes, its unchanged files are read once more to count it again.
-        Every hashed file is printed as soon as it is done, with progress by bytes, speed and time left; while large
-        files take long, a status line below shows how far they are (rewritten in place, not written when the output
-        is redirected). The catalog is saved every 2 minutes.
-        A file that changes while it is being read (still being written to) is skipped and left as it was; the next
-        scan reads it again. Sizes are taken from the file itself, not the folder listing (which Windows can show out
-        of date for hard-linked files).
-        Ctrl+C stops cleanly: the files being hashed are dropped, what was hashed is saved, nothing is marked as
-        missing in that location, and the summary says what was left; running the scan again continues. A second
-        Ctrl+C stops at once.
+        Options:
+          --name <alias>   the folder's name on discs and in the catalog (default: the folder name)
+          --threads N      hash with N threads (default: the setting default-threads, 1)
+          --full           ignore size and time: hash everything again
+
+        A file that changes while it is read (still being written) is skipped and left as it was; the next scan reads it
+        again. Sizes come from the file itself, not the folder listing (which Windows can show out of date for hard-linked
+        files).
+
+        Progress: every hashed file is printed when it is done, with progress by bytes, speed and time left; a status line
+        shows how far large files are (not written when the output is redirected). The catalog is saved every 2 minutes.
+        Ctrl+C stops cleanly: the files being hashed are dropped, what was hashed is saved, nothing in that location is marked
+        as missing, and the summary says what was left; running the scan again continues. A second Ctrl+C stops at once.
         """;
 
     sealed class WorkItem

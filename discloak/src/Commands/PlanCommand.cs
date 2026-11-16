@@ -5,17 +5,29 @@ public sealed class PlanCommand : ICommand
     public string Name => "plan";
     public string Group => CommandGroup.Indexing;
     public string Summary => "Show which files would go on which blank disc (changes nothing)";
-    public string Usage => "plan [--split] [--without-program] [--append <label> [--mount <path>]]";
+    public string Usage => "plan [--split] [--packing largest|sequential] [--without-program] [--append <label> [--mount <path>]]";
     public bool ReadOnlyFor(Options opt) => true;
     public string Details => """
-        Allocates all pending files to the blank discs registered with 'blanks'. Prints how full each disc would be
-        and, if the data does not fit on the designated discs, which files are left over and roughly how many
-        more discs are needed. Exit code 2 = not everything fits.
-        Sizes are those 'stage' writes (compressed where set); a disc's room is what its packs can hold.
-          --split     cut files larger than every blank disc into parts (see 'stage --help')
-          --append L  instead: what 'stage --append L' would put into a new session of the burned disc L
-          --without-program   as 'stage --without-program': no room kept for the program folder
-        Pending = on the source, not ignored, and no live disc holds identical content (hash-based dedup).
+        Allocates the pending files to the blank discs registered with 'blanks' and prints how full each disc would be - and,
+        if not everything fits, which files are left over and roughly how many more discs are needed. Changes nothing; 'stage'
+        uses exactly the same allocation. Exit code 2: not everything fits.
+        Pending = on the source, not ignored, and no live disc holds identical content (duplicates are stored once). Sizes
+        are those 'stage' writes (compressed where set); a disc's room is what its packs can hold.
+
+        Options:
+          --split            cut files larger than every blank disc into parts (see 'stage --help')
+          --append L         instead: what 'stage --append L' would put into a new session of the burned disc L
+          --without-program  as 'stage --without-program': no room kept for the program folder
+          --packing P        this run only (default: the setting 'packing', largest unless set)
+
+        Packing:
+          largest      largest file first, each into the disc it fills best: the fullest discs (the default)
+          sequential   in the order of the source folders, as Explorer sorts them (folder by folder, subfolders first, "Track
+                       2" before "Track 10"), disc after disc: a folder's files stay together, except where a disc ends. A file
+                       that does not fit starts the next disc; nothing goes back to fill the space left. The second copies
+                       ('copies') follow the first ones on discs of their own: copies never share a disc. The plan shows where
+                       each disc's stretch starts and ends
+        'settings set packing sequential' makes it the default.
         """;
 
     /// <summary>
@@ -25,8 +37,9 @@ public sealed class PlanCommand : ICommand
     public int Run(Ctx c)
     {
         if (c.Opt.Get("append") is { } appendTo) return PlanAppend(c, appendTo);
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"), programSpace: DiscProgram.SpaceFor(c.Opt));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), programSpace: DiscProgram.SpaceFor(c.Opt), packing: Packing.For(c.Opt, c.Settings));
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
+        Console.WriteLine($"Packing: {Packing.Describe(plan.Packing)}");
         int splitFiles = plan.Pending.Where(p => p.IsPart).Select(p => p.File).Distinct().Count();
         if (splitFiles > 0)
             Console.WriteLine($"({splitFiles:N0} file(s) are split across discs: {plan.Pending.Count(p => p.IsPart):N0} part(s) still to store.)");
@@ -50,6 +63,8 @@ public sealed class PlanCommand : ICommand
             int parts = bin.Pieces.Count(p => p.IsPart);
             Console.WriteLine($"  {bin.Blank.Id}  {bin.Blank.Capacity,18:N0} B disc: {bin.Pieces.Count,8:N0} files, {bin.Used,18:N0} bytes " +
                               $"({100.0 * bin.Used / bin.Usable:F1}% of usable)" + (parts > 0 ? $"  incl. {parts} part(s) of split files" : ""));
+            if (plan.Packing == Packing.Sequential)   // where the disc's stretch of the sequence starts and ends
+                Console.WriteLine($"          from {bin.Pieces[0].Name}\n          to   {bin.Pieces[^1].Name}");
         }
         int unused = plan.Bins.Count(b => b.Pieces.Count == 0);
         if (unused > 0) Console.WriteLine($"  {unused} blank disc(s) would stay unused.");
@@ -81,7 +96,7 @@ public sealed class PlanCommand : ICommand
     static int PlanAppend(Ctx c, string label)
     {
         var target = AppendTarget.Open(c, label);
-        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()], DiscProgram.SpaceFor(c.Opt));
+        var plan = c.Arc.MakePlan(c.Opt.Has("split"), [target.AsBlank()], DiscProgram.SpaceFor(c.Opt), Packing.For(c.Opt, c.Settings));
         var bin = plan.Bins[0];
         Console.WriteLine($"Pending: {plan.PendingFiles:N0} file(s), {SizeText.Bytes(plan.PendingBytes)} bytes{plan.CopiesNote}");
         Console.WriteLine($"{target.Disc.Label}: {SizeText.Bytes(target.Free)} bytes free for files in session {target.Session} " +

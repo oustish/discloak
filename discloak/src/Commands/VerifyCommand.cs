@@ -5,65 +5,78 @@ public sealed class VerifyCommand : ICommand
     public string Name => "verify";
     public string Group => CommandGroup.MakingDiscs;
     public string Summary => "Re-read a disc and compare it with the catalog";
-    public string Usage => "verify <label> <mountedDiscPath> [--deep] [--packs 312,680-690] [--files <text>] [--no-cache] [--retries N] [--mark-burned] [--as-disc]";
+    public string Usage => "verify [<label>] <mountedDiscPath> [--deep] [--packs 312,680-690] [--files <text>] [--no-cache] [--retries N] [--mark-burned] [--as-disc]";
     public bool Interruptible => true;
     public string Details => """
-        Reads every pack of the disc and compares its SHA-256 with the catalog - nothing is decrypted, so no password
-        is needed for that part. --deep also decrypts every pack (each 1 MiB chunk is authenticated) and checks every
-        file on the disc against its hash, in the same single read of the disc.
-        First the disc's other files are checked: disc.json (the disc and its key), packs.sha256 (the same pack hashes
-        as the catalog), every manifest (its SHA-256 as the catalog has it; --deep also decrypts it and compares its
-        files with the catalog), discloak.key (this catalog's), README.txt and the catalog backup in _catalog (every file
-        against its repair data). A disc staged before the catalog kept its manifests' hashes gets them recorded by
-        its first --deep verify that finds them intact.
-        A status line shows the pack being read, the progress by bytes, speed and time left, and the file whose data
-        is being read (rewritten in place, not written when the output is redirected). --deep also prints every file
-        as soon as it is checked (OK or DAMAGED). A damaged pack is reported as soon as it is read.
-        A read that fails, or a pack or chunk that comes back wrong, is read again from the disc itself (past the
-        Windows file cache) before it counts as damaged: a drive, or its cable, can fail once and read right the next
-        time. Such a read is printed as RE-READ - a warning sign about the disc, the drive or its connection.
-        A damaged pack is named with the files that have data in it. Their copies on this disc are recorded as damaged
-        in the catalog (with --deep: only the files that do not come back intact): they no longer count as backups, so
-        files still on their source are pending again, and restore tries such a copy last. The mark names the packs that
-        read back wrong; a later verify that reads those packs back as the catalog has them (--packs of just those is
-        enough), or --deep that checks the whole file intact, removes it, with a warning (failing, then passing, points
-        to unreliable reads). Damage --deep finds in packs that read back exactly as staged was already in what was
-        staged: only --deep clears it, and burning those packs again would not help - stage the files again instead.
-        On a disc that is not marked as burned yet, the damaged packs can be burned again from the staging folder as a
-        new session, if the disc is not finalized; otherwise the files can be restored from another copy, or the disc
-        rebuilt with 'restage' (which reuses the intact packs).
-        Copies recorded by 'scandisc' are marked 'unverified' until this has checked their packs.
-        A disc or a folder: what verify finds is recorded in the catalog (damage marks set and cleared, 'unverified'
-        cleared, --mark-burned) only when it reads a disc in an optical drive. A folder anywhere else - the staging
-        folder, a copy of a disc on another drive - is checked the same way, but nothing is recorded: it says nothing
-        about the disc. The first lines say which it is.
-          --packs L      only these packs: "312", "312,683", "300-310". With --deep, every file whose data lies
-                         wholly in them is checked against its hash; a file that reaches beyond them only has its
-                         part in them decrypted. The disc's other files are checked as always.
-          --files T      only the packs of the files matching T on this disc (as 'find' and 'restore' match: part of
-                         the path, a hash prefix, or "*"); with --deep each of them is checked whole against its hash.
-                         With --packs: the packs of both. 'find' shows the packs of every copy.
-          --no-cache     read every byte from the disc itself. Without it, Windows may hand over what it still keeps in
-                         memory from an earlier read of the disc since it was inserted (ejecting the disc empties
-                         that): still the disc's data, but not proof that it reads back now - which matters when a
-                         disc stays in the drive for days. With it, the 100 GB read also do not push out what
-                         Windows keeps in memory for other programs.
-          --retries N    how often a failed read is tried again (default 2; 0: never).
-          --mark-burned  if every pack, file and the disc's other files check out, mark the disc (or its staged
-                         session) as burned, as 'burned' does - today's date. Not with --packs or --files, and only
-                         for a disc in an optical drive.
-          --as-disc      the folder is the disc, although its drive does not report itself as an optical drive.
-        Ctrl+C stops after the pack being read and reports what was checked so far.
+        Reads a disc back and compares it with the catalog. Every pack's SHA-256 is compared with the catalog - nothing is
+        decrypted, so no password is needed. --deep also decrypts every pack (each 1 MiB chunk is authenticated) and checks
+        every file against its hash, in the same single read.
+        The label can be left out: the disc names itself in its disc.json. Given, it is checked against it.
+
+        The disc's other files are checked first, a line each:
+          disc.json       which disc this is, and its key
+          packs.sha256    the same pack hashes as the catalog
+          manifests       their SHA-256 as the catalog has it; --deep also decrypts them and compares their files with the
+                          catalog (and records the hashes of a disc staged before the catalog kept them)
+          discloak.key    this catalog's
+          README.txt, _program (the exe, its source zip) and _catalog (every file against its repair data)
+
+        Reads that fail: a pack, chunk or header that cannot be read, or comes back wrong, is read again from the disc itself
+        (past the Windows file cache) before it counts as damaged. One that comes right on a retry is printed as RE-READ: the
+        data is intact, but it is a warning sign about the disc, the drive or its connection.
+
+        A disc or a folder: what verify finds is recorded in the catalog only when it reads a disc in an optical drive. A
+        folder elsewhere - the staging folder, a copy of a disc - is checked the same way, but nothing is recorded. The
+        output says which it is.
+
+        What it records (a disc only):
+          - damaged copies: without --deep every file with data in a damaged pack, with --deep only the files that do not
+            come back intact. They no longer count as backups (files still on their source are pending again); restore tries
+            them last.
+          - a mark goes again, with a warning, once the packs that read back wrong read back as the catalog has them (--packs
+            of just those is enough), or --deep checks the whole file intact. Damage --deep finds in packs that read back
+            exactly as staged was already in what was staged: only --deep clears it.
+          - copies recorded by 'scandisc' stop being 'unverified' once their packs check out.
+
+        What to do about damage (verify says it too): a disc not marked as burned yet and not finalized can get its damaged
+        packs burned again from the staging folder, as a new session; otherwise restore the files from another copy, or
+        rebuild the disc with 'restage' (which reuses the intact packs). Damage already in what was staged needs the files
+        staged again.
+
+        Options:
+          --deep         also decrypt every pack and check every file against its hash
+          --packs L      only these packs: 312, 312,683, 300-310. With --deep, files wholly in them are checked against their
+                         hash; a file that reaches beyond them only has its part in them decrypted
+          --files T      only the packs of the files matching T on this disc (as 'find' matches: part of the path, a hash
+                         prefix, or *); with --deep each of them is checked whole. With --packs: the packs of both
+          --no-cache     read every byte from the disc itself, none from what Windows still keeps in memory from an earlier
+                         read since the disc was inserted (the disc's data, but not proof that it reads back now). It also
+                         keeps the read from pushing other programs' data out of memory
+          --retries N    how often a failed read is tried again (default 2; 0: never)
+          --mark-burned  if every pack, file and the disc's other files check out, mark the disc (or its staged session) as
+                         burned, as 'burned' does, with today's date. A disc only; not with --packs or --files
+          --as-disc      the folder is the disc, although its drive does not report itself as an optical drive
+
+        Progress: a status line shows the pack, the progress by bytes, speed, time left and the file being read (not written
+        when the output is redirected). --deep prints every file as it is checked (OK or DAMAGED); a damaged pack is
+        reported as soon as it is read.
+        Ctrl+C stops after the pack being read and reports what was checked so far. Exit code 3: something is damaged.
         """;
 
     public int Run(Ctx c)
     {
-        var disc = c.Arc.FindDisc(c.Arg(0, Usage));
-        string mount = Path.GetFullPath(c.Arg(1, Usage));
+        // verify [<label>] <path>: without a label, the disc names itself in its disc.json
+        if (c.Args.Count is < 1 or > 2) throw new UserException("Usage: " + Usage);
+        string mount = Path.GetFullPath(c.Args[^1]);
+        if (!Directory.Exists(mount)) throw new UserException($"Not a folder: {mount}");
+        string label = c.Args.Count == 2 ? c.Args[0]
+            : DiscFiles.ReadInfo(mount)?.Label ?? throw new UserException(
+                $"{mount} has no {DiscFiles.InfoName} that can be read, so it does not say which disc it is: give the label, " +
+                $"discloak verify <label> {mount}");
+        var disc = c.Arc.FindDisc(label);
         bool deep = c.Opt.Has("deep"), noCache = c.Opt.Has("no-cache"), markBurned = c.Opt.Has("mark-burned");
         int retries = c.Opt.GetInt("retries", PackReader.DefaultRetries);
         if (retries < 0) throw new UserException("--retries needs 0 or more.");
-        if (!Directory.Exists(mount)) throw new UserException($"Not a folder: {mount}");
         if (markBurned) BurnedCommand.CheckCanMark(disc);
         var drive = DiscFiles.FindDrive(mount);
         bool onDisc = c.Opt.Has("as-disc") || drive?.DriveType == DriveType.CDRom;   // only a disc's state is recorded

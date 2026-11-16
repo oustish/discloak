@@ -334,6 +334,70 @@ public class EndToEndTests : IDisposable
         restore();
     }
 
+    /// <summary>Four "albums" of five 60 KB tracks: more than one 1 MB disc holds.</summary>
+    void Albums()
+    {
+        int seed = 0;
+        foreach (string album in new[] { "Artist/Album 1", "Artist/Album 2", "Artist/Album 10", "Other/Live" })
+            for (int t = 1; t <= 5; t++) tmp.RandomFile($"src/{album}/Track {t}.bin", 60_000, seed: ++seed);
+    }
+
+    [Fact]
+    public void Sequential_packing_lays_the_files_onto_discs_in_the_order_of_the_source_folders()
+    {
+        Albums();
+        Discloak("blanks", "add", "4", "--size", "1MB");
+        Discloak("scan", tmp.File("src"), "--name", "S");
+        Assert.Equal(0, Discloak("settings", "set", "packing", "sequential"));
+
+        string plan = Run("plan").Text;
+        Assert.Contains("Packing: sequential", plan);
+        Assert.Contains("from S/Artist/Album 1/Track 1.bin", plan);   // where the first disc's stretch starts
+        Assert.Contains("Packing: largest", Run("plan", "--packing", "largest").Text);
+        Assert.NotEqual(0, Discloak("plan", "--packing", "random"));
+
+        Assert.Equal(0, Discloak("stage", tmp.File("stg"), "--max-discs", "4"));
+        var files = TestKeys.Load(tmp.File("cat")).Files;
+        var onDiscs = files.Select(f => (File: f.RelPath, f.Backups.Single().Disc, f.Backups.Single().At))
+                           .OrderBy(x => x.Disc, StringComparer.Ordinal).ThenBy(x => x.At).Select(x => x.File).ToList();
+        Assert.Equal(files.Select(f => f.RelPath).Order(ExplorerOrder.Instance), onDiscs);   // "Album 2" before "Album 10"
+        Assert.True(files.Select(f => f.Backups.Single().Disc).Distinct().Count() >= 2);
+        Assert.Equal(0, Discloak("verify", "DISC-0001", Disc("DISC-0001"), "--deep"));
+    }
+
+    [Fact]
+    public void Copies_never_share_a_disc_whichever_packing_each_run_uses()
+    {
+        Albums();
+        Discloak("blanks", "add", "6", "--size", "1MB");
+        Discloak("scan", tmp.File("src"), "--name", "S");
+        Assert.Equal(0, Discloak("copies", "set", "S", "2"));
+        Assert.Equal(0, Discloak("stage", tmp.File("stg"), "--packing", "sequential", "--max-discs", "2"));
+        Assert.Equal(0, Discloak("stage", tmp.File("stg"), "--packing", "largest", "--max-discs", "6"));
+        var files = TestKeys.Load(tmp.File("cat")).Files;
+        Assert.All(files, f =>
+        {
+            Assert.Equal(2, f.Backups.Count);
+            Assert.NotEqual(f.Backups[0].Disc, f.Backups[1].Disc);
+        });
+    }
+
+    [Fact]
+    public void Verify_takes_the_label_from_the_discs_disc_json_when_it_is_left_out()
+    {
+        string disc = ThreePackDisc();
+        var (code, text) = Run("verify", disc);
+        Assert.Equal(0, code);
+        Assert.Contains($"Verifying DISC-0001 in {disc}", text);
+        DamageB(disc);
+        Assert.Equal(3, Discloak("verify", disc, "--deep"));           // a damaged disc is found the same way
+
+        Assert.NotEqual(0, Discloak("verify", "DISC-0002", disc));      // given, the label is checked against disc.json
+        File.Delete(Path.Combine(disc, DiscFiles.InfoName));
+        Assert.NotEqual(0, Discloak("verify", disc));                   // no disc.json: the label is needed
+        Assert.Equal(3, Discloak("verify", "DISC-0001", disc));         // ... and works (disc.json reported missing)
+    }
+
     [Fact]
     public void Verify_files_reads_only_the_packs_of_the_matching_files_and_find_shows_them()
     {

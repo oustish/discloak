@@ -9,17 +9,21 @@ public sealed class ScanDiscCommand : ICommand
     public bool ReadOnlyFor(Options opt) => opt.Has("dry-run");
     public bool Interruptible => true;
     public string Details => """
-        Reads a disc made by discloak (or a folder laid out like one): its disc.json, its encrypted manifests (with the
-        catalog's keys) and packs.sha256, and links its files to the catalog - files the catalog does not know get new
-        entries. This is how a catalog is rebuilt from the discs ('init --key-from <disc>' first), or brought up to
-        date after a rollback. Nothing is decrypted but the manifests; the copies count as 'unverified' until
-        'verify' has checked the disc's packs.
+        Reads a disc made by discloak (or a folder laid out like one) - its disc.json, its encrypted manifests (with the
+        catalog's keys) and packs.sha256 - and links its files to the catalog; files the catalog does not know get new
+        entries. This is how a catalog is rebuilt from the discs ('init --key-from <disc>' first), or brought up to date
+        after a rollback. Nothing but the manifests is decrypted: the copies count as 'unverified' until 'verify' has checked
+        the disc's packs.
+
+        Options:
           --date yyyy-MM-dd  when it was burned (default: the date in disc.json)
-          --capacity 100GB   size of the disc (lets 'stage --append' add to it)      --cost 24.99   what it cost
+          --capacity 100GB   the size of the disc (lets 'stage --append' add to it)
+          --cost 24.99       what it cost
           --update           the disc is already in the catalog: merge what is on it
           --dry-run          show what would happen, change nothing
-        A disc of another catalog (another master key) needs that catalog, or one made with 'init --key-from <disc>'.
-        Discs written without discloak cannot be recorded.
+
+        A disc of another catalog (another master key) needs that catalog, or one made with 'init --key-from <disc>'. Discs
+        written without discloak cannot be recorded.
         """;
 
     public int Run(Ctx c)

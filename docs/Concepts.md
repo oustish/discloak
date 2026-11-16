@@ -61,6 +61,21 @@ the disc's encrypted manifest (its path and hashes, roughly 300-500 bytes). The 
 is filled up with zeros) and one more 64 MiB for the manifest (padded the same way). `plan`, `stage` and `--append`
 count all of it.
 
+<a id="packing"></a>**Packing** - how the pending files are laid onto the blank discs (the setting `packing`, or
+`--packing` for one `plan` or `stage`):
+
+- `largest` (the default): the largest file first, each into the disc it fills best. The discs come out as full as
+  they can be; files of one folder end up on whichever discs they fit.
+- `sequential`: in the order of the source folders, as Explorer sorts them - folder by folder, a folder's subfolders
+  before its files, `Track 2` before `Track 10` - disc after disc. A folder's files stay together (a music album, a
+  photo series), except where a disc ends: then the folder goes on at the start of the next disc. A file that does not
+  fit starts the next disc, and nothing goes back to fill the space left, so each disc ends with a gap smaller than
+  that file (small when the files are small). On the disc the files lie in that order too, so restoring a folder reads
+  one stretch of the disc. With several copies wanted ([Copies](Guide-Copies.md)), the second copies follow the first
+  ones, starting on a disc of their own; copies of a file never share a disc, whichever packing each run used.
+  Only what is pending at the time is in the sequence: a file added later to a folder that is already on a disc goes
+  onto a later disc.
+
 <a id="reserve"></a>The **reserve** is space kept free on each disc. It has to hold the file system's own fixed overhead
 (volume descriptors, the metadata partition), the disc's folders and its own small files (`disc.json`, `discloak.key`,
 `README.txt`; the manifest is counted with the files) and, with `--with-catalog`, the catalog backup: the catalog's

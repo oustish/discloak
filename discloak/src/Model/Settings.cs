@@ -11,6 +11,7 @@ public class Settings
     public List<string> IgnoreRules { get; set; } = new(); // .gitignore syntax, applied relative to every source folder
     public CompressionSetting Compression { get; set; } = new();   // default for every alias (see Compression)
     public Dictionary<string, CompressionSetting> CompressionByAlias { get; set; } = new();   // alias -> its own setting
+    public string Packing { get; set; } = Discloak.Packing.Largest;   // how 'plan'/'stage' lay files onto discs (see Packing)
     public int Copies { get; set; } = 1;                  // copies on different discs wanted of every file (see 'copies') ...
     public Dictionary<string, int> CopiesByAlias { get; set; } = new();   // ... unless its location (alias) has its own number
     public const int MaxCopies = 9;
@@ -24,7 +25,7 @@ public class Settings
     public bool LockOnSleep { get; set; } = true;         // 'unlock': locked when the computer goes to sleep
 
     public static readonly string[] Keys =
-        { "label-prefix", "currency", "history-keep", "default-threads", "unlock-idle", "unlock-max", "lock-on-win-l", "lock-on-sleep" };
+        { "label-prefix", "currency", "history-keep", "default-threads", "packing", "unlock-idle", "unlock-max", "lock-on-win-l", "lock-on-sleep" };
 
     public string Get(string key) => key.ToLowerInvariant() switch
     {
@@ -32,6 +33,7 @@ public class Settings
         "currency" => Currency,
         "history-keep" => HistoryKeep.ToString(CultureInfo.InvariantCulture),
         "default-threads" => DefaultThreads.ToString(CultureInfo.InvariantCulture),
+        "packing" => Packing,
         "unlock-idle" => SizeText.Duration(TimeSpan.FromMinutes(UnlockIdleMinutes)),
         "unlock-max" => SizeText.Duration(TimeSpan.FromMinutes(UnlockMaxMinutes)),
         "lock-on-win-l" => LockOnSessionLock ? "yes" : "no",
@@ -60,6 +62,9 @@ public class Settings
                 if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int threads) || threads < 1 || threads > 64)
                     throw new UserException("default-threads must be a number between 1 and 64.");
                 DefaultThreads = threads;
+                break;
+            case "packing":
+                Packing = Discloak.Packing.Parse(value);
                 break;
             case "unlock-idle":
                 UnlockIdleMinutes = Minutes(value, "unlock-idle");

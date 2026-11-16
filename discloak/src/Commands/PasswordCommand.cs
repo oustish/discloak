@@ -8,24 +8,28 @@ public sealed class PasswordCommand : ICommand
     public string Usage => "password change [--rotate-key] [--recovery] [--new-password-env VAR] [--kdf-memory <size>] [--kdf-passes N] | password check [<folder>] [--recovery]";
     public bool NeedsCatalog => false;   // unlocks discloak.key itself (with the password or the recovery key)
     public string Details => """
-        Asks for the current password (or, with --recovery, the recovery key: DISCLOAK_RECOVERY_KEY or typed), then the
-        new one twice (or from the variable named by --new-password-env, default DISCLOAK_NEW_PASSWORD). The Argon2id
-        settings are measured again unless --kdf-memory / --kdf-passes are given.
-        Without --rotate-key only discloak.key changes: the master key stays, nothing else is rewritten.
-          --rotate-key   also start a new master key (for when the old password or key may have leaked). The catalog
-                         is re-encrypted with it, and every new disc, catalog backup and session uses it. Older keys
-                         stay in the catalog's key ring (in discloak.key, under the new password), so every disc stays
-                         readable, appended sessions and 'restage' keep a disc's own key. The recovery key, if there
-                         is one, is replaced too (shown once). What a leaked old password or key can still open is
-                         only what was made before: the discs (and their _catalog backups) of that time.
-        Discs keep the discloak.key they were staged with: they still open with the password of that time.
-        The new password is typed twice: the second time copy it from where you saved it (password manager), so a
-        wrongly saved entry shows up now and not when you need it. Then you confirm that it is saved.
+        password change: asks for the current password (or with --recovery the recovery key: DISCLOAK_RECOVERY_KEY, or typed),
+        then the new one twice (or from the variable named by --new-password-env, default DISCLOAK_NEW_PASSWORD). Only
+        discloak.key changes: the master key stays, nothing else is rewritten.
+        Type the new password the second time by copying it from where you saved it (a password manager), so a wrongly saved
+        entry shows up now and not when you need it; then confirm that it is saved.
 
-        password check [<folder>]   does this password (or with --recovery: this recovery key) open the discloak.key in
-                                    the catalog, or in <folder> (a disc, a catalog backup)? Changes nothing and never
-                                    uses the agent. Also tells when that discloak.key's password was set, which helps to
-                                    find the right entry (or entry history) in a password manager.
+        Options:
+          --recovery     open the catalog with the recovery key instead of the current password
+          --kdf-memory / --kdf-passes   Argon2id settings (measured again by default)
+          --rotate-key   also start a new master key (for when the old password or key may have leaked):
+                           - the catalog is encrypted again with it, and every new disc, catalog backup and session uses it
+                           - older keys stay in the catalog's key ring (in discloak.key, under the new password), so every
+                             disc stays readable; appended sessions and 'restage' keep a disc's own key
+                           - the recovery key, if there is one, is replaced too (shown once)
+                         A leaked old password or key can still open only what was made before: the discs (and their _catalog
+                         backups) of that time.
+
+        Discs keep the discloak.key they were staged with: they still open with the password of that time.
+
+        password check [<folder>]: does this password (--recovery: this recovery key) open the discloak.key in the catalog, or
+        in <folder> (a disc, a catalog backup)? Changes nothing and never uses the agent. Also tells when that discloak.key's
+        password was set, which helps to find the right entry (or its history) in a password manager.
         """;
 
     public int Run(Ctx c)

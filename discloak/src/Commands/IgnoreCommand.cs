@@ -12,14 +12,16 @@ public sealed class IgnoreCommand : ICommand
     public string Usage => "ignore [list] | add <pattern>... | remove <pattern|number>... | test <path> | apply";
     public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list", "test");
     public string Details => """
-        Rules live in settings.json inside the catalog and are matched against paths relative to each scanned folder.
+        Rules use .gitignore syntax. They live in the catalog's settings and are matched against paths relative to each
+        scanned folder:
           ignore add "node_modules/" "*.tmp" "/cache/**" "!keep.tmp"
           ignore test photos/2020/Thumbs.db
-        Ignored files stay in the catalog (marked 'ignored') but are not hashed and never staged. When a rule starts
-        matching files that are already catalogued:
-          - not on any disc: they are marked ignored and will not be staged;
-          - already burned: no new backup is made, but 'restage' of the old disc still includes them.
-        Changing rules re-evaluates the catalog immediately ('ignore apply' repeats that).
+
+        Ignored files stay in the catalog (marked 'ignored') but are not hashed and never staged. When a rule starts matching
+        files that are already catalogued:
+          - not on any disc: they are marked ignored and will not be staged
+          - already burned: no new backup is made, but 'restage' of the old disc still includes them
+        Changing rules re-evaluates the catalog at once ('ignore apply' repeats that).
         """;
 
     public int Run(Ctx c)
