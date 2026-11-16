@@ -8,19 +8,23 @@ public sealed class CompressionCommand : ICommand
     public string Usage => "compression [list] | compression set <alias> off|auto|on [--level N] | compression set --default off|auto|on [--level N] | compression clear <alias>";
     public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => $"""
-        Staged copies can be compressed (zstd) inside their encryption: every 1 MiB piece of a file is compressed on its
-        own and kept compressed only if that made it smaller, so nothing ever grows by more than a byte per MiB.
+        Staged copies can be compressed (zstd) inside their encryption: every 1 MiB piece of a file is compressed on its own
+        and kept compressed only if that made it smaller, so nothing ever grows by more than a byte per MiB.
+
+        Modes:
           off    never (the default)
-          auto   every file except those whose extension says they are compressed already (photos, video, audio,
-                 archives, office documents: {string.Join(" ", Compression.CompressedExtensions.Take(12))} ...)
+          auto   every file except those whose extension says they are compressed already (photos, video, audio, archives,
+                 office documents: {string.Join(" ", Compression.CompressedExtensions.Take(12))} ...)
           on     every file
-          --level N   zstd level {Compression.MinLevel}-{Compression.MaxLevel} (default {Compression.DefaultLevel}): higher packs a little
-                      tighter and is much slower, for 'scan' and 'stage' alike
-        A location (alias) uses its own setting, or the default. After a change, run 'scan': it reads the affected
-        files once more to count the exact size of their compressed copies, which 'plan' and 'stage' use to fill
-        discs (until then they count the uncompressed size, so nothing ever overfills). Parts of split files are
-        never compressed. Copies already on discs stay as they are; restoring needs no setting at all.
+          --level N   zstd level {Compression.MinLevel}-{Compression.MaxLevel} (default {Compression.DefaultLevel}): higher packs a little tighter and is much
+                      slower, for 'scan' and 'stage' alike
+
           compression list    the settings and, per location, how much the counted files shrink
+
+        A location (alias) uses its own setting, or the default. After a change, run 'scan': it reads the affected files once
+        more to count the exact size of their compressed copies, which 'plan' and 'stage' use to fill discs (until then they
+        count the uncompressed size, so nothing ever overfills). Parts of split files are never compressed. Copies already on
+        discs stay as they are; restoring needs no setting at all.
         """;
 
     public int Run(Ctx c)

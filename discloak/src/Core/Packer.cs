@@ -44,4 +44,43 @@ public static class Packer
         }
         return (bins, unplaced);
     }
+
+    /// <summary>
+    /// Sequential packing (setting 'packing sequential'): the pieces in the order given, disc after disc (the blank
+    /// discs in Allocate's order): each piece goes onto the disc being filled; one that does not fit there starts the
+    /// next disc it fits on, and nothing goes back to fill the space left behind. A piece that fits on no disc left is
+    /// returned (and the rest go on). Each run (the first copies, the second copies, ...) starts on a disc no earlier
+    /// run used, so copies of one file never share a disc; groupOf/holds are kept as in Allocate as well.
+    /// </summary>
+    public static (List<Bin> Bins, List<Piece> Unplaced) Sequential(
+        IEnumerable<IEnumerable<Piece>> runs, IReadOnlyList<BlankDisc> blanks, Func<Piece, long> sizeOf,
+        Func<Piece, string?>? groupOf = null, Func<BlankDisc, string, bool>? holds = null, Func<BlankDisc, long>? roomOf = null)
+    {
+        var bins = blanks.OrderBy(b => b.Id, StringComparer.Ordinal).Select(b => new Bin(b, roomOf?.Invoke(b) ?? b.Usable)).ToList();
+        var groups = bins.Select(_ => new HashSet<string>(StringComparer.OrdinalIgnoreCase)).ToList();
+        var unplaced = new List<Piece>();
+        int fresh = 0;   // the first disc no run has used yet
+        foreach (var run in runs)
+        {
+            int current = fresh;
+            foreach (var piece in run)
+            {
+                long size = sizeOf(piece);
+                int target = current;
+                while (target < bins.Count && bins[target].Free < size) target++;
+                string? group = groupOf?.Invoke(piece);
+                if (target == bins.Count ||
+                    group != null && (groups[target].Contains(group) || holds?.Invoke(bins[target].Blank, group) == true))
+                {
+                    unplaced.Add(piece);
+                    continue;
+                }
+                current = target;
+                bins[current].Add(piece, size);
+                if (group != null) groups[current].Add(group);
+                fresh = Math.Max(fresh, current + 1);
+            }
+        }
+        return (bins, unplaced);
+    }
 }

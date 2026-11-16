@@ -7,16 +7,19 @@ public sealed class UnlockCommand : ICommand
     public string Summary => "Keep the catalog unlocked for a while (no password per command)";
     public string Usage => "unlock [--idle 30m] [--max 8h] | unlock --status";
     public string Details => """
-        Asks for the password once and hands the catalog's master key to a background agent; until it is locked,
-        commands on this catalog take the key from the agent instead of asking. The agent keeps keys in memory only
-        (never on disk), one per catalog, for this Windows user only.
+        Asks for the password once and hands the catalog's master key to a background agent; until it is locked, commands
+        on this catalog take the key from the agent instead of asking. The agent keeps keys in memory only (never on disk),
+        one per catalog, for this Windows user only.
+
         A catalog is locked again:
           - after --idle without any command using it        (default: settings unlock-idle, 30m)
           - after --max at the latest                         (default: settings unlock-max, 8h)
           - when Windows is locked (Win+L) or goes to sleep   (settings lock-on-win-l / lock-on-sleep)
           - by 'lock' (this catalog) or 'lock --all', and when you sign out
-        The agent runs from a copy of the program in %LOCALAPPDATA%\discloak\agent and ends when it holds no key.
+
           unlock --status    what is unlocked, and until when
+
+        The agent runs from a copy of the program in %LOCALAPPDATA%\discloak\agent and ends when it holds no key.
         DISCLOAK_AGENT=off turns the agent off for a command (it then always asks for the password).
         """;
 

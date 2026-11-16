@@ -8,11 +8,13 @@ public sealed class RecoveryKeyCommand : ICommand
     public string Usage => "recovery-key create | remove";
     public bool NeedsFilesFor(Options opt) => false;   // discloak.key only
     public string Details => """
-        The recovery key is a second way to open the master key, for when the password is lost:
-        'password change --recovery' sets a new password with it. It is 32 random bytes shown once as text; discloak
-        keeps only a copy of the master key locked by it (in discloak.key).
+        The recovery key is a second way to open the master key, for when the password is lost: 'password change --recovery'
+        sets a new password with it. It is 32 random bytes, shown once as text; discloak keeps only a copy of the master key
+        locked by it (in discloak.key).
+
           recovery-key create    make one (replaces the old one: that one stops opening the catalog)
           recovery-key remove    the password becomes the only way in
+
         Discs staged earlier keep the discloak.key of their time, with or without the recovery key it had then.
         """;
 

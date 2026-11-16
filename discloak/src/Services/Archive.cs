@@ -155,7 +155,8 @@ public sealed class Archive
     /// the part size of a new split, still follow the blank discs.
     /// </summary>
     /// <param name="programSpace">kept free on every disc for the program folder (DiscProgram.SpaceFor)</param>
-    public PlanResult MakePlan(bool split = false, IReadOnlyList<BlankDisc>? into = null, long programSpace = 0)
+    /// <param name="packing">Packing.Largest (Allocate) or Packing.Sequential (Packer.Sequential, in ExplorerOrder)</param>
+    public PlanResult MakePlan(bool split = false, IReadOnlyList<BlankDisc>? into = null, long programSpace = 0, string packing = Packing.Largest)
     {
         var live = LiveCopies();
         var onDiscs = into != null ? LiveCopies(withDamaged: true) : live;   // a damaged copy still takes up its disc
@@ -175,6 +176,8 @@ public sealed class Archive
         Func<Piece, long> sizeOf = p => StoredSizeOf(cat.Settings, p) + DiscSpace.ManifestShare(p);
         long PartSizeFor(FileRecord f) => largest - DiscSpace.ManifestShare(new Piece(f, 1, 2, 0, 0));
         var pending = new List<Piece>();
+        var copyOf = new List<int>();   // per pending piece: which of its missing copies it is (0: the first) - sequential runs
+        void Want(Piece p, int copy) { pending.Add(p); copyOf.Add(copy); }
         var tooBig = new List<FileRecord>();
         int furtherCopies = 0;
 
@@ -188,16 +191,16 @@ public sealed class Archive
             if (layout != null)   // continue the layout: each part until it is on enough discs
             {
                 foreach (var piece in SplitLayout.Pieces(f, layout.PartSize))
-                    for (int n = layout.DiscsWith(piece.Part); n < missing; n++) pending.Add(piece);
+                    for (int n = layout.DiscsWith(piece.Part); n < missing; n++) Want(piece, n - layout.DiscsWith(piece.Part));
             }
             else if (cat.Blanks.Count > 0 && sizeOf(Piece.Whole(f)) > largest)
             {
                 if (split && PartSizeFor(f) is > 0 and long partSize)
-                    for (int n = 0; n < missing; n++) pending.AddRange(SplitLayout.Pieces(f, partSize));
-                else { tooBig.Add(f); pending.Add(Piece.Whole(f)); }
+                    for (int n = 0; n < missing; n++) foreach (var piece in SplitLayout.Pieces(f, partSize)) Want(piece, n);
+                else { tooBig.Add(f); Want(Piece.Whole(f), 0); }
             }
             else
-                for (int n = 0; n < missing; n++) pending.Add(Piece.Whole(f));
+                for (int n = 0; n < missing; n++) Want(Piece.Whole(f), n);
             if (hasOne) furtherCopies += pending.Count - before;
         }
 
@@ -207,11 +210,19 @@ public sealed class Archive
         bool Holds(BlankDisc disc, string sha) => onDiscs[sha].Any(b => b.Disc.Equals(disc.Id, StringComparison.OrdinalIgnoreCase));
 
         var tooBigSet = tooBig.ToHashSet();
-        var (bins, leftover) = Packer.Allocate(pending.Where(p => !tooBigSet.Contains(p.File)), into ?? cat.Blanks, sizeOf,
-                                               GroupOf, into != null ? Holds : null, roomOf);
+        var placeable = pending.Select((p, i) => (Piece: p, Copy: copyOf[i])).Where(x => !tooBigSet.Contains(x.Piece.File)).ToList();
+        var (bins, leftover) = packing == Packing.Sequential
+            // the first copies of everything in the order of the source folders, then the second copies, ...
+            ? Packer.Sequential(placeable.GroupBy(x => x.Copy).OrderBy(g => g.Key)
+                                         .Select(g => g.Select(x => x.Piece).OrderBy(SequenceKey, ExplorerOrder.Instance).ThenBy(p => p.Part)),
+                                into ?? cat.Blanks, sizeOf, GroupOf, into != null ? Holds : null, roomOf)
+            : Packer.Allocate(placeable.Select(x => x.Piece), into ?? cat.Blanks, sizeOf, GroupOf, into != null ? Holds : null, roomOf);
         var unplaced = leftover.Concat(pending.Where(p => tooBigSet.Contains(p.File))).ToList();
-        return new PlanResult(bins, unplaced, tooBig, pending, furtherCopies);
+        return new PlanResult(bins, unplaced, tooBig, pending, furtherCopies, packing);
     }
+
+    /// <summary>Where a piece stands in the sequential order: its location, then its path ("Music/Artist/Album/01.flac").</summary>
+    static string SequenceKey(Piece p) => p.File.RootName + "/" + p.File.RelPath;
 
     /// <summary>Bytes a piece takes in a disc's data stream: a part as it is, a whole file compressed if scan counted that.</summary>
     public static long StoredSizeOf(Settings s, Piece p) => p.IsPart ? p.Length : Compression.PlannedStoredSize(s, p.File);

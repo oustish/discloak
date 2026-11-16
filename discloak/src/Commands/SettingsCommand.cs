@@ -10,15 +10,25 @@ public sealed class SettingsCommand : ICommand
     public bool ReadOnlyFor(Options opt) => opt.Args.Count == 0 || opt.Args[0].Equals("show", StringComparison.OrdinalIgnoreCase);
     public bool FixesMirror(Options opt) => opt.Args.Count > 1 && opt.Args[1].Equals("mirror", StringComparison.OrdinalIgnoreCase);
     public string Details => """
-        Keys: label-prefix, currency, history-keep, default-threads, unlock-idle, unlock-max, lock-on-win-l, lock-on-sleep, mirror.
-        unlock-idle / unlock-max (e.g. 30m, 8h): when an unlocked catalog locks again; lock-on-win-l / lock-on-sleep
-        (yes/no): lock it when Windows is locked or goes to sleep (see 'unlock').
-        label-prefix: new discs are named <prefix><counter>. The counter is shared by all prefixes, so changing the
-        prefix continues the numbering. Existing labels are not renamed. It goes back only when 'discard' takes the
-        newest discs out of the catalog: the next disc takes the number after the highest one still there.
-        mirror <folder>|none: a second copy of the catalog, kept in step by every save (ideally on another drive). While it
-        is set, nothing that changes the catalog runs unless the mirror is there and holds exactly the same (read-only
-        commands only warn); see 'catalog mirror'. An empty folder gets a copy at once.
+        'settings' (or 'settings show') lists every setting; 'settings set <key> <value>' changes one.
+
+        Keys:
+          label-prefix     new discs are named <prefix><counter>. The counter is shared by all prefixes, so changing the
+                           prefix continues the numbering; existing labels are not renamed. It goes back only when 'discard'
+                           takes the newest discs out: the next disc takes the number after the highest one still there
+          currency         shown next to costs
+          history-keep     how many older catalog versions are kept (default 10)
+          default-threads  the default for 'scan --threads' (default 1)
+          packing          how 'plan' and 'stage' lay files onto discs: largest (the default: largest file first, the fullest
+                           discs) or sequential (in the order of the source folders; see 'plan --help')
+          unlock-idle      e.g. 30m: an unlocked catalog locks again after this long without use (see 'unlock')
+          unlock-max       e.g. 8h: ... and after this long at the latest
+          lock-on-win-l    yes/no: lock it when Windows is locked
+          lock-on-sleep    yes/no: lock it when the computer goes to sleep
+          mirror           <folder>|none: a second copy of the catalog, kept in step by every save (ideally on another
+                           drive). While it is set, nothing that changes the catalog runs unless the mirror is there and holds
+                           exactly the same (read-only commands only warn); see 'catalog mirror'. An empty folder gets a copy
+                           at once
         """;
 
     /// <summary>settings [show] | settings set &lt;key&gt; &lt;value&gt;</summary>

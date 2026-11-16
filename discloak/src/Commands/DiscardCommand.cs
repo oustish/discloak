@@ -8,11 +8,12 @@ public sealed class DiscardCommand : ICommand
     public string Usage => "discard <label>";
     public string Details => """
         Its files become pending again and its blank disc goes back to the inventory. The staged folder is not deleted.
-        Its number is given back when no higher one is in the catalog: the next disc takes the number after the highest
-        one still there (discard DISC-0004 and DISC-0003 while DISC-0002 is burned, and the next disc is DISC-0003 again;
-        free numbers below a disc that stays are not reused). Lost and destroyed discs keep their numbers.
-        For a burned disc with a session staged by 'stage --append', only that session is taken back; what was burned
-        before stays recorded.
+        For a burned disc with a session staged by 'stage --append', only that session is taken back; what was burned before
+        stays recorded.
+
+        Its number is given back when no higher one is in the catalog: the next disc takes the number after the highest one
+        still there (discard DISC-0004 and DISC-0003 while DISC-0002 is burned, and the next disc is DISC-0003 again; free
+        numbers below a disc that stays are not reused). Lost and destroyed discs keep their numbers.
         """;
 
     public int Run(Ctx c)

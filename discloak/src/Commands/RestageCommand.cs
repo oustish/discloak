@@ -8,17 +8,24 @@ public sealed class RestageCommand : ICommand
     public string Usage => "restage <label> <destDir> [--from dirA;dirB] [--allow-partial] [--without-program]";
     public bool Interruptible => true;
     public string Details => """
-        Writes the disc's packs again, with the same layout: every file at the same place in the data stream. A pack
-        is copied as it is from a --from folder (the old disc, a copy of it, or an interrupted restage) if its hash
-        matches; any other pack is rebuilt from the current source files (where their hash still matches) and
-        encrypted again with the disc's own key. Files that are ignored now are included: the disc is rebuilt the
-        way it was. Every rebuilt file is checked against its hash. A disc with appended sessions is rebuilt as one
-        folder with one manifest. Afterwards the disc is 'staged' until you run 'burned'.
-        Without --allow-partial nothing is staged if any file cannot be rebuilt; with it, such files are left out
-        (their place in the pack stays unused) and no longer count as being on the disc.
-        Every pack is printed when it is written, with the progress, speed and time left.
-        The folder gets the program (_program, see 'stage --help') if the disc has room left for it - its layout is
-        fixed, so a disc filled before it carried the program may not - unless --without-program.
+        Writes a disc's folder again, with the same layout - every file at the same place in the data stream - to burn it
+        onto a new blank (for a damaged or lost disc). Afterwards the disc is 'staged' until you run 'burned'.
+
+        Where each pack comes from:
+          - a --from folder (the old disc, a copy of it, or an interrupted restage), as it is, if its hash matches
+          - otherwise it is rebuilt from the current source files (where their hash still matches) and encrypted again with
+            the disc's own key; every rebuilt file is checked against its hash
+        Files that are ignored now are included: the disc is rebuilt the way it was. A disc with appended sessions is rebuilt
+        as one folder with one manifest. The folder gets the program (_program, see 'stage --help') if the disc has room left
+        for it - its layout is fixed - unless --without-program.
+
+        Options:
+          --from dirA;dirB   folders to copy intact packs from
+          --allow-partial    stage it even if some files cannot be rebuilt: they are left out (their place in the pack stays
+                             unused) and no longer count as being on the disc. Without it nothing is staged then
+          --without-program  no _program folder
+
+        Progress: every pack is printed when it is written, with the progress, speed and time left.
         Ctrl+C stops after the pack being written; the catalog stays unchanged and what was rebuilt is kept as
         <destDir>/<label>.partial, to be reused with --from on the next run.
         """;

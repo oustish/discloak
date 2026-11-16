@@ -79,15 +79,17 @@ N = 1–9 (default 1). Planning counts staged and burned discs; `copies list`, `
 ### plan
 Which pending files would go on which blank disc. Changes nothing.
 ```
-discloak plan [--split] [--append <label> [--mount <path>]]
+discloak plan [--split] [--packing largest|sequential] [--append <label> [--mount <path>]]
 ```
 | Option | |
 |---|---|
 | `--split` | cut files larger than every blank disc into parts |
+| `--packing P` | this run only: `largest` or `sequential` ([Packing](Concepts.md#packing)); default: the setting `packing` |
 | `--append <label>` | what a new session of this burned disc would hold |
 | `--mount <path>` | with `--append`: the disc is in the drive (label checked, drive's free space used) |
 
-Exit code 2: not everything fits.
+Exit code 2: not everything fits. It says which packing it used; with `sequential` it shows where each disc's stretch
+of the sequence starts and ends (`from S/Artist/Album 1/Track 1.flac` / `to …`).
 
 ### blanks
 Your stock of blank discs.
@@ -121,7 +123,8 @@ discloak stage <destDir> [--max-discs N] [--min-fill 0.9] [--split] [--with-cata
 ```
 | Option | |
 |---|---|
-| `--max-discs N` | stage up to N discs (default 1): the fullest first; of equally full ones (to 0.1%), the one with the largest file first |
+| `--max-discs N` | stage up to N discs (default 1): the fullest first; of equally full ones (to 0.1%), the one with the largest file first. With sequential packing: the next N discs of the sequence |
+| `--packing P` | this run only: `largest` or `sequential` ([Packing](Concepts.md#packing)); default: the setting `packing` |
 | `--min-fill 0.9` | only stage discs at least 90% full |
 | `--split` | cut files larger than every blank disc into parts |
 | `--with-catalog` | add a catalog backup with repair data (`_catalog\`) |
@@ -171,8 +174,11 @@ discloak burned <label> [--date yyyy-MM-dd]
 ### verify
 Re-read a disc and compare it with the catalog.
 ```
-discloak verify <label> <mountedDiscPath> [--deep] [--packs 312,680-690] [--files <text>] [--no-cache] [--retries N] [--mark-burned] [--as-disc]
+discloak verify [<label>] <mountedDiscPath> [--deep] [--packs 312,680-690] [--files <text>] [--no-cache] [--retries N] [--mark-burned] [--as-disc]
 ```
+The label can be left out: the disc names itself in its `disc.json` (`discloak verify G:\`). Given, it is checked
+against it; it is needed only when `disc.json` cannot be read.
+
 **A disc, or a folder.** What verify finds is recorded in the catalog (damage marks set and cleared, `unverified`
 cleared, `--mark-burned`) only when it reads a **disc in an optical drive**. A folder anywhere else - the staging folder,
 a copy of a disc on another drive - is checked the same way and its damage reported, but nothing is recorded: it says
@@ -426,6 +432,7 @@ discloak settings set <key> <value>
 | `currency` | | shown next to costs |
 | `history-keep` | 10 | catalog versions kept in `history\` |
 | `default-threads` | 1 | default for `scan --threads` |
+| `packing` | `largest` | how `plan` and `stage` lay files onto discs: `largest` or `sequential` ([Packing](Concepts.md#packing)) |
 | `unlock-idle` | 30m | an unlocked catalog locks after this long without use |
 | `unlock-max` | 8h | … and after this long at the latest |
 | `lock-on-win-l` | yes | lock when Windows is locked |

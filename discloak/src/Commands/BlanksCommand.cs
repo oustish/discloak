@@ -16,12 +16,17 @@ public sealed class BlanksCommand : ICommand
     public bool NeedsFilesFor(Options opt) => false;   // blank discs only
     public bool ReadOnlyFor(Options opt) => SubCommand.Is(opt, "list", "list");
     public string Details => """
+        The blank discs you own: their size, the space kept free on each (the reserve), and their price.
+
+          blanks                          list them
           blanks add 5 --size 96882130944 --reserve 200MB --cost 45    five discs; sizes accept 25GB, 90GiB, bytes ...
           blanks reserve 300MB            change the reserve of ALL blank discs   (--size S: only discs of that size)
           blanks cost 39.99               change the price of all blank discs
           blanks remove B0003 | all       forget a blank disc
-        The reserve is space deliberately left free (filesystem overhead, a catalog backup with --with-catalog).
-        A blank disc is used up when a disc is staged from it; 'discard' gives it back.
+
+        The reserve is space deliberately left free: the file system's overhead, the disc's small files, a catalog backup
+        (--with-catalog), and room to burn a damaged pack again. A blank disc is used up when a disc is staged from it;
+        'discard' gives it back.
         """;
 
     const string DefaultSize = "96882130944";

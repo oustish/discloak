@@ -31,6 +31,9 @@ The regular cycle: **scan → plan → stage → burn → verify → burned**. R
      whole catalog back ([Disaster Recovery](Guide-Disaster-Recovery.md)).
    - `--max-discs 3` stages up to three discs at once (folders `DISC-0001`, `DISC-0002`, `DISC-0003`).
    - `--min-fill 0.9` only stages discs that would be at least 90% full, so half-empty discs wait for more data.
+   - Want a folder's files (an album, a photo series) to stay together on a disc? `discloak settings set packing
+     sequential` fills the discs in the order of the source folders instead of largest file first
+     ([Packing](Concepts.md#packing)).
    - Staged a while ago, or several discs at once? Just before burning one, bring its folder up to date:
      `discloak stage refresh E:\Staging\DISC-0001` writes the catalog backup again (as the catalog is now: the discs
      staged after it, those burned since) and puts the program running now into `_program\`. Nothing else changes.

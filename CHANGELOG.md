@@ -4,6 +4,22 @@ What changed in each version of Discloak, called **bdxl** before 0.8.0 (the entr
 name). Versions are `major.minor.patch`; see [CONTRIBUTING.md](CONTRIBUTING.md#versions) for what raises which part.
 `discloak version` shows the version of an exe.
 
+## 0.13.0 - 2026-11-16
+
+- **Sequential packing**: `settings set packing sequential` (or `plan` / `stage --packing sequential` for one run)
+  lays the pending files onto discs in the order of the source folders, as Explorer sorts them (folder by folder,
+  subfolders first, `Track 2` before `Track 10`), disc after disc - so a folder's files (a music album) stay together,
+  except where a disc ends. A file that does not fit starts the next disc; nothing goes back to fill the space left.
+  The second copies follow the first ones on discs of their own: copies never share a disc, whichever packing a run
+  used. `plan` shows where each disc's stretch starts and ends; `stage --max-discs` takes the next discs of the
+  sequence. The default stays `largest` (largest file first, the fullest discs). New setting `packing` in the
+  catalog's settings (older versions ignore it).
+- `verify G:\` - the label can be left out: the disc names itself in its `disc.json`. Given, it is still checked
+  against it; it is needed only when `disc.json` cannot be read.
+- The `--help` of the longer commands (verify, stage, scan, plan, restage, catalog, password, init, settings and
+  others) is laid out in sections - a short description, then what it does, options and progress, each on its own -
+  instead of one block of text.
+
 ## 0.12.0 - 2026-11-15
 
 - A damage mark records the packs that read back wrong (new optional field `damagedPacks`), and goes once **those

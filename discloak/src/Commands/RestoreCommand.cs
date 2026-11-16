@@ -9,15 +9,20 @@ public sealed class RestoreCommand : ICommand
     public bool ReadOnlyFor(Options opt) => true;
     public bool Interruptible => true;
     public string Details => """
-        Finds the files in the catalog, tells you which discs it needs, and copies them from the discs you mounted.
-        Discs are recognised by disc.json (or --disc for a single mount). Only the parts of the packs a file needs are
-        read and decrypted; every file is checked against its hash. Layout: <destDir>/<alias>/<path>, or --flat.
-        A damaged spot on a disc costs only the files with data there: if another mounted disc holds a copy of such a
-        file, it is taken from there; the others are listed as FAILED, and the rest is restored.
-        Every file is printed when it is done, with the progress by bytes still to read, speed and time left; while a
-        large file is read, a status line shows how far it is (not written when the output is redirected).
-        Ctrl+C stops after the file being copied (that one is removed; parts of split files already verified are
-        kept) and lists what is left; running the same command again continues (restored files show as EXISTS).
+        Finds the files in the catalog, tells you which discs it needs, and copies them from the discs you mounted. Discs are
+        recognised by their disc.json (or --disc for a single mount). Layout: <destDir>/<alias>/<path>, or --flat.
+
+        How it reads:
+          - only the parts of the packs a file needs are read and decrypted; every file is checked against its hash
+          - a damaged spot costs only the files with data there: a file with a copy on another mounted disc is taken from
+            there, the others are listed as FAILED, and the rest is restored
+          - a read that fails is tried again from the disc itself (RE-READ when it then comes right); a copy that 'verify'
+            found damaged is tried last
+
+        Progress: every file is printed when it is done, with the progress by bytes still to read, speed and time left; a
+        status line shows how far a large file is (not written when the output is redirected).
+        Ctrl+C stops after the file being copied (that one is removed; verified parts of split files are kept) and lists what
+        is left; running the same command again continues (restored files show as EXISTS).
         """;
 
     /// <summary>Copies files back from mounted discs. Layout under destDir: source alias/relative path (or --flat).</summary>
